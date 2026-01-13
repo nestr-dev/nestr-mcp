@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output (we build in Docker)
+build/
+
+# Development files
+*.log
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# GitHub
+.github/
+
+# Documentation (not needed in image)
+*.md
+!README.md
+
+# Tests
+*.test.ts
+*.spec.ts
+__tests__/
+coverage/

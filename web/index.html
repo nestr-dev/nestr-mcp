@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nestr MCP Server - Connect AI to Your Workspace</title>
+  <meta name="description" content="Connect Claude, Cursor, Raycast, and other AI assistants to your Nestr workspace using the Model Context Protocol (MCP).">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="https://app.nestr.io/favicon.ico">
+</head>
+<body>
+  <header>
+    <div class="container">
+      <div class="logo">
+        <svg width="32" height="32" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="50" cy="50" r="45" stroke="currentColor" stroke-width="6"/>
+          <circle cx="50" cy="50" r="25" fill="currentColor"/>
+        </svg>
+        <span>Nestr MCP</span>
+      </div>
+      <nav>
+        <a href="https://app.nestr.io" target="_blank">Open Nestr</a>
+        <a href="https://help.nestr.io" target="_blank">Help</a>
+        <a href="https://github.com/nestr-dev/nestr-mcp" target="_blank">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="container">
+        <h1>Connect AI to Your Nestr Workspace</h1>
+        <p class="subtitle">
+          Use the Model Context Protocol (MCP) to let Claude, Cursor, Raycast, and other AI assistants
+          interact with your tasks, projects, circles, and roles.
+        </p>
+        <div class="cta-buttons">
+          <a href="#setup" class="btn primary">Get Started</a>
+          <a href="#examples" class="btn secondary">See Examples</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="features">
+      <div class="container">
+        <div class="feature-grid">
+          <div class="feature">
+            <div class="feature-icon">&#128269;</div>
+            <h3>Search & Navigate</h3>
+            <p>Find tasks, projects, and roles using natural language queries across your workspace.</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">&#10003;</div>
+            <h3>Manage Tasks</h3>
+            <p>Create, update, and organize nests without leaving your AI assistant.</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">&#128101;</div>
+            <h3>Understand Structure</h3>
+            <p>Explore circles, roles, and accountabilities to know who's responsible for what.</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">&#128200;</div>
+            <h3>Track Metrics</h3>
+            <p>Get insights on workspace activity, completion rates, and team performance.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="setup" class="setup">
+      <div class="container">
+        <h2>Setup Guide</h2>
+
+        <div class="step">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <h3>Get Your Nestr API Key</h3>
+            <ol>
+              <li>Go to your <a href="https://app.nestr.io" target="_blank">Nestr workspace</a></li>
+              <li>Click the <strong>Settings</strong> icon (gear) in the top right</li>
+              <li>Navigate to the <strong>Integrations</strong> tab</li>
+              <li>Find <strong>"Workspace API access"</strong> and click <strong>Configure</strong></li>
+              <li>Click <strong>"New API key"</strong> and copy the generated key</li>
+            </ol>
+            <div class="warning">
+              <strong>Important:</strong> Store your API key securely. It provides full access to your workspace.
+              Never share it or commit it to version control.
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <h3>Choose Your Setup Method</h3>
+
+            <div class="setup-options">
+              <button class="setup-option active" data-method="hosted">
+                <div class="option-header">
+                  <h4>Cloud</h4>
+                </div>
+                <p>Connect directly to Nestr's MCP server. No installation required. Just add your API key.</p>
+                <ul class="option-pros">
+                  <li>Zero setup, works immediately</li>
+                  <li>Always up to date</li>
+                  <li>No Node.js required</li>
+                </ul>
+              </button>
+
+              <button class="setup-option" data-method="local">
+                <div class="option-header">
+                  <h4>Local</h4>
+                </div>
+                <p>Run the MCP server on your machine via npm. Best for developers or offline use.</p>
+                <ul class="option-pros">
+                  <li>Works offline</li>
+                  <li>Full control over the server</li>
+                  <li>Can pin to specific versions</li>
+                </ul>
+              </button>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <h3>Configure Your AI Client</h3>
+
+            <div class="tabs">
+              <button class="tab active" data-tab="claude-desktop">Claude Desktop</button>
+              <button class="tab" data-tab="claude-code">Claude Code</button>
+              <button class="tab" data-tab="cursor">Cursor</button>
+              <button class="tab" data-tab="raycast">Raycast</button>
+            </div>
+
+            <div class="tab-content active" id="claude-desktop">
+              <p>Edit your Claude Desktop configuration file:</p>
+              <ul>
+                <li><strong>macOS:</strong> <code>~/Library/Application Support/Claude/claude_desktop_config.json</code></li>
+                <li><strong>Windows:</strong> <code>%APPDATA%\Claude\claude_desktop_config.json</code></li>
+              </ul>
+              <p>Add the following configuration:</p>
+
+              <pre class="config-block hosted active"><code>{
+  "mcpServers": {
+    "nestr": {
+      "url": "https://mcp.nestr.io/mcp",
+      "headers": {
+        "X-Nestr-API-Key": "your-api-key-here"
+      }
+    }
+  }
+}</code></pre>
+
+              <pre class="config-block local"><code>{
+  "mcpServers": {
+    "nestr": {
+      "command": "npx",
+      "args": ["-y", "@nestr/mcp"],
+      "env": {
+        "NESTR_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}</code></pre>
+              <p>Restart Claude Desktop after saving.</p>
+            </div>
+
+            <div class="tab-content" id="claude-code">
+              <p>Run this command in your terminal:</p>
+
+              <pre class="config-block hosted active"><code>claude mcp add nestr --transport http https://mcp.nestr.io/mcp \
+  --header "X-Nestr-API-Key: your-api-key-here"</code></pre>
+
+              <pre class="config-block local"><code>claude mcp add nestr -- npx -y @nestr/mcp \
+  --env NESTR_API_KEY=your-api-key-here</code></pre>
+
+              <p>Or edit the settings file directly (<code>~/.claude/settings.json</code> on macOS/Linux):</p>
+
+              <pre class="config-block hosted active"><code>{
+  "mcpServers": {
+    "nestr": {
+      "url": "https://mcp.nestr.io/mcp",
+      "headers": {
+        "X-Nestr-API-Key": "your-api-key-here"
+      }
+    }
+  }
+}</code></pre>
+
+              <pre class="config-block local"><code>{
+  "mcpServers": {
+    "nestr": {
+      "command": "npx",
+      "args": ["-y", "@nestr/mcp"],
+      "env": {
+        "NESTR_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}</code></pre>
+              <p>Restart Claude Code after adding, or run <code>/mcp</code> to reload.</p>
+            </div>
+
+            <div class="tab-content" id="cursor">
+              <p>In Cursor, go to <strong>Settings &rarr; Cursor Settings &rarr; MCP Servers</strong>, or edit the config file:</p>
+              <ul>
+                <li><strong>macOS/Linux:</strong> <code>~/.cursor/mcp.json</code></li>
+                <li><strong>Windows:</strong> <code>%USERPROFILE%\.cursor\mcp.json</code></li>
+              </ul>
+              <p>Add the following configuration:</p>
+
+              <pre class="config-block hosted active"><code>{
+  "mcpServers": {
+    "nestr": {
+      "url": "https://mcp.nestr.io/mcp",
+      "headers": {
+        "X-Nestr-API-Key": "your-api-key-here"
+      }
+    }
+  }
+}</code></pre>
+
+              <pre class="config-block local"><code>{
+  "mcpServers": {
+    "nestr": {
+      "command": "npx",
+      "args": ["-y", "@nestr/mcp"],
+      "env": {
+        "NESTR_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}</code></pre>
+              <p>Restart Cursor after saving.</p>
+            </div>
+
+            <div class="tab-content" id="raycast">
+              <p>In Raycast, go to <strong>Settings &rarr; Extensions &rarr; AI &rarr; MCP Servers</strong>, then press <kbd>&#8984;N</kbd> to add a new server.</p>
+
+              <div class="config-block hosted active">
+                <p>Fill in the following fields:</p>
+                <table class="field-table">
+                  <tr><td><strong>Name</strong></td><td><code>Nestr</code></td></tr>
+                  <tr><td><strong>Transport</strong></td><td>HTTP</td></tr>
+                  <tr><td><strong>URL</strong></td><td><code>https://mcp.nestr.io/mcp</code></td></tr>
+                  <tr><td><strong>HTTP Headers</strong></td><td>Click "Add Item" and add:<br><code>X-Nestr-API-Key</code> = <code>your-api-key</code></td></tr>
+                </table>
+              </div>
+
+              <div class="config-block local">
+                <p>Fill in the following fields:</p>
+                <table class="field-table">
+                  <tr><td><strong>Name</strong></td><td><code>Nestr</code></td></tr>
+                  <tr><td><strong>Transport</strong></td><td>Standard Input/Output</td></tr>
+                  <tr><td><strong>Command</strong></td><td><code>npx</code></td></tr>
+                  <tr><td><strong>Arguments</strong></td><td><code>-y @nestr/mcp</code></td></tr>
+                  <tr><td><strong>Environment</strong></td><td>Click "Add Item" and add:<br><code>NESTR_API_KEY</code> = <code>your-api-key</code></td></tr>
+                </table>
+              </div>
+
+              <p>Save the server and it will be available in Raycast AI.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-number">4</div>
+          <div class="step-content">
+            <h3>Start Using It</h3>
+            <p>Once configured, the Nestr tools are automatically available to your AI assistant. No special syntax or @ mentions needed &mdash; just ask naturally:</p>
+            <ul class="example-queries">
+              <li>"What workspaces do I have access to?"</li>
+              <li>"Search for tasks related to marketing"</li>
+              <li>"Create a new project called 'Q1 Planning' in the Strategy circle"</li>
+              <li>"What are my current projects and their status?"</li>
+              <li>"Who is responsible for customer support?"</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="examples" class="examples">
+      <div class="container">
+        <h2>Example Conversations</h2>
+
+        <div class="example">
+          <div class="user-message">
+            <strong>You:</strong> What's the status of our Marketing projects?
+          </div>
+          <div class="ai-message">
+            <strong>Claude:</strong> I'll check your Marketing circle projects.
+            <br><br>
+            Found 4 projects in Marketing:
+            <ul>
+              <li><strong>Website Redesign</strong> - Status: Current, Due: Jan 30</li>
+              <li><strong>Q1 Campaign</strong> - Status: Current, Due: Feb 15</li>
+              <li><strong>Brand Guidelines Update</strong> - Status: Waiting (blocked on design review)</li>
+              <li><strong>Social Media Strategy</strong> - Status: Future</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="example">
+          <div class="user-message">
+            <strong>You:</strong> Create a task to "Review analytics dashboard" under the Product Owner role
+          </div>
+          <div class="ai-message">
+            <strong>Claude:</strong> I've created the task "Review analytics dashboard" under the Product Owner role.
+            <br><br>
+            <strong>Details:</strong>
+            <ul>
+              <li>ID: abc123</li>
+              <li>Parent: Product Owner</li>
+              <li>Status: Current (default)</li>
+            </ul>
+            Would you like me to add a due date or any additional details?
+          </div>
+        </div>
+
+        <div class="example">
+          <div class="user-message">
+            <strong>You:</strong> Who should I talk to about the API integration?
+          </div>
+          <div class="ai-message">
+            <strong>Claude:</strong> Based on your workspace structure, the <strong>Developer</strong> role in the <strong>Tech</strong> circle is responsible for API integrations.
+            <br><br>
+            <strong>Currently assigned to:</strong> Jane Smith
+            <br>
+            <strong>Accountabilities include:</strong>
+            <ul>
+              <li>Building and maintaining API integrations</li>
+              <li>Documenting technical implementations</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tools">
+      <div class="container">
+        <h2>Available Tools</h2>
+        <div class="tool-grid">
+          <div class="tool">
+            <code>nestr_list_workspaces</code>
+            <p>List accessible workspaces</p>
+          </div>
+          <div class="tool">
+            <code>nestr_search</code>
+            <p>Search for tasks, projects, roles</p>
+          </div>
+          <div class="tool">
+            <code>nestr_create_nest</code>
+            <p>Create new tasks or projects</p>
+          </div>
+          <div class="tool">
+            <code>nestr_update_nest</code>
+            <p>Update nest properties</p>
+          </div>
+          <div class="tool">
+            <code>nestr_list_circles</code>
+            <p>List organizational circles</p>
+          </div>
+          <div class="tool">
+            <code>nestr_get_circle_roles</code>
+            <p>Get roles in a circle</p>
+          </div>
+          <div class="tool">
+            <code>nestr_get_insights</code>
+            <p>Get workspace metrics</p>
+          </div>
+          <div class="tool">
+            <code>nestr_add_comment</code>
+            <p>Add comments to nests</p>
+          </div>
+        </div>
+        <p class="tool-note">
+          <a href="https://github.com/nestr-dev/nestr-mcp#available-tools" target="_blank">
+            View full tool documentation &rarr;
+          </a>
+        </p>
+      </div>
+    </section>
+
+    <section class="support">
+      <div class="container">
+        <h2>Need Help?</h2>
+        <div class="support-links">
+          <a href="https://help.nestr.io" target="_blank" class="support-link">
+            <div class="support-icon">&#128218;</div>
+            <div>
+              <strong>Documentation</strong>
+              <p>Learn more about Nestr</p>
+            </div>
+          </a>
+          <a href="https://github.com/nestr-dev/nestr-mcp/issues" target="_blank" class="support-link">
+            <div class="support-icon">&#128030;</div>
+            <div>
+              <strong>Report Issues</strong>
+              <p>Found a bug? Let us know</p>
+            </div>
+          </a>
+          <a href="https://modelcontextprotocol.io" target="_blank" class="support-link">
+            <div class="support-icon">&#128279;</div>
+            <div>
+              <strong>MCP Specification</strong>
+              <p>Learn about the protocol</p>
+            </div>
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>&copy; 2025 Nestr. Built with the <a href="https://modelcontextprotocol.io" target="_blank">Model Context Protocol</a>.</p>
+    </div>
+  </footer>
+
+  <script>
+    // Tab switching (Claude Desktop / Claude Code / Cursor)
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const tabId = tab.dataset.tab;
+
+        // Update active tab
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+
+        // Update active content
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.getElementById(tabId).classList.add('active');
+      });
+    });
+
+    // Setup method selection (hosted vs local) - updates all config blocks
+    document.querySelectorAll('.setup-option').forEach(option => {
+      option.addEventListener('click', () => {
+        const method = option.dataset.method;
+
+        // Update active option
+        document.querySelectorAll('.setup-option').forEach(o => o.classList.remove('active'));
+        option.classList.add('active');
+
+        // Update ALL config blocks across all tabs
+        document.querySelectorAll('.config-block').forEach(block => {
+          block.classList.remove('active');
+          if (block.classList.contains(method)) {
+            block.classList.add('active');
+          }
+        });
+      });
+    });
+
+  </script>
+</body>
+</html>
