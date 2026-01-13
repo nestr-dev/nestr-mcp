@@ -20,9 +20,23 @@ const COMPACT_FIELDS = {
 
 // Strip verbose fields from API responses for list operations
 function compactResponse<T>(
-  items: T[],
+  data: T[] | { status: string; meta?: unknown; data: T[] } | T,
   type: "nest" | "role" | "user" | "label" = "nest"
-): Partial<T>[] {
+): Partial<T>[] | { status: string; meta?: unknown; data: Partial<T>[] } | T {
+  // Handle wrapped response: { status, meta, data: [...] }
+  if (data && typeof data === "object" && "data" in data && Array.isArray((data as { data: unknown }).data)) {
+    const wrapped = data as { status: string; meta?: unknown; data: T[] };
+    return {
+      ...wrapped,
+      data: compactResponse(wrapped.data, type) as Partial<T>[],
+    };
+  }
+
+  // Guard: if not an array, return as-is
+  if (!Array.isArray(data)) {
+    return data;
+  }
+
   const allowedFields = new Set([
     ...COMPACT_FIELDS.base,
     ...(type === "role" ? COMPACT_FIELDS.role : []),
@@ -30,7 +44,7 @@ function compactResponse<T>(
     ...(type === "label" ? COMPACT_FIELDS.label : []),
   ]);
 
-  return items.map((item) => {
+  return data.map((item) => {
     const compact: Partial<T> = {};
     for (const key of Object.keys(item as object)) {
       if (allowedFields.has(key)) {
