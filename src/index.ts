@@ -4,8 +4,9 @@
  *
  * Run with: npx @nestr/mcp
  *
- * Required environment variables:
- *   NESTR_API_KEY - Your Nestr API key (get from workspace settings)
+ * Authentication (one of the following):
+ *   NESTR_API_KEY    - Your Nestr API key (get from workspace settings)
+ *   NESTR_OAUTH_TOKEN - OAuth Bearer token from Nestr OAuth flow
  *
  * Optional environment variables:
  *   NESTR_API_BASE - API base URL (default: https://app.nestr.io/api)
@@ -15,19 +16,25 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createServer } from "./server.js";
 
 async function main() {
-  // Validate API key is present
-  if (!process.env.NESTR_API_KEY) {
-    console.error("Error: NESTR_API_KEY environment variable is required.");
+  // Validate authentication is present
+  if (!process.env.NESTR_API_KEY && !process.env.NESTR_OAUTH_TOKEN) {
+    console.error("Error: Authentication required.");
     console.error("");
-    console.error("To get your API key:");
-    console.error("1. Go to your Nestr workspace");
-    console.error("2. Click Settings (gear icon)");
-    console.error("3. Go to Integrations tab");
-    console.error("4. Find 'Workspace API access' and click Configure");
-    console.error("5. Create a new API key");
+    console.error("Option 1: OAuth Token (Recommended)");
+    console.error("  OAuth respects your user-specific permissions in Nestr.");
+    console.error("  Use an OAuth Bearer token from the Nestr OAuth flow.");
     console.error("");
-    console.error("Then set the environment variable:");
-    console.error("  export NESTR_API_KEY=your-api-key");
+    console.error("  Then set: export NESTR_OAUTH_TOKEN=your-oauth-token");
+    console.error("");
+    console.error("Option 2: API Key");
+    console.error("  API keys have full workspace access (ignores user permissions).");
+    console.error("  1. Go to your Nestr workspace");
+    console.error("  2. Click Settings (gear icon)");
+    console.error("  3. Go to Integrations tab");
+    console.error("  4. Find 'Workspace API access' and click Configure");
+    console.error("  5. Create a new API key");
+    console.error("");
+    console.error("  Then set: export NESTR_API_KEY=your-api-key");
     console.error("");
     console.error("Or configure in your MCP client (e.g., Claude Desktop):");
     console.error(JSON.stringify({
@@ -36,7 +43,7 @@ async function main() {
           command: "npx",
           args: ["-y", "@nestr/mcp"],
           env: {
-            NESTR_API_KEY: "your-api-key"
+            NESTR_OAUTH_TOKEN: "your-oauth-token"
           }
         }
       }

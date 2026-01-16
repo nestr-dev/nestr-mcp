@@ -374,18 +374,31 @@ export class NestrClient {
   }
 }
 
-// Factory function to create client from environment
+/**
+ * Factory function to create client from environment variables
+ *
+ * Supports two authentication methods:
+ * 1. NESTR_OAUTH_TOKEN - OAuth Bearer token (recommended - respects user permissions)
+ * 2. NESTR_API_KEY - API key from workspace settings (full workspace access)
+ *
+ * If both are set, NESTR_API_KEY takes precedence for backwards compatibility.
+ */
 export function createClientFromEnv(): NestrClient {
   const apiKey = process.env.NESTR_API_KEY;
-  if (!apiKey) {
+  const oauthToken = process.env.NESTR_OAUTH_TOKEN;
+
+  const authToken = apiKey || oauthToken;
+
+  if (!authToken) {
     throw new Error(
-      "NESTR_API_KEY environment variable is required. " +
-      "Get your API key from your Nestr workspace settings > Integrations > Workspace API access."
+      "Authentication required. Set one of the following environment variables:\n" +
+      "  - NESTR_API_KEY: API key from workspace settings > Integrations > Workspace API access\n" +
+      "  - NESTR_OAUTH_TOKEN: OAuth Bearer token from Nestr OAuth flow"
     );
   }
 
   return new NestrClient({
-    apiKey,
+    apiKey: authToken,
     baseUrl: process.env.NESTR_API_BASE,
   });
 }
