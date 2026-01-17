@@ -6,6 +6,8 @@
 export interface NestrClientConfig {
   apiKey: string;
   baseUrl?: string;
+  /** MCP client name (e.g., "claude-desktop", "cursor") for tracking */
+  mcpClient?: string;
 }
 
 export interface Nest {
@@ -77,10 +79,12 @@ export class NestrApiError extends Error {
 export class NestrClient {
   private apiKey: string;
   private baseUrl: string;
+  private mcpClient?: string;
 
   constructor(config: NestrClientConfig) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl || "https://app.nestr.io/api";
+    this.mcpClient = config.mcpClient;
   }
 
   private async fetch<T>(
@@ -89,12 +93,21 @@ export class NestrClient {
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
 
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.apiKey}`,
+      "Content-Type": "application/json",
+    };
+
+    // Add MCP client header for tracking which AI agent made the request
+    if (this.mcpClient) {
+      headers["X-MCP-Client"] = this.mcpClient;
+    }
+
     const response = await fetch(url, {
       ...options,
       headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json",
-        ...options.headers,
+        ...headers,
+        ...(options.headers as Record<string, string>),
       },
     });
 

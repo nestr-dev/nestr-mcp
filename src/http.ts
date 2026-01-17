@@ -375,6 +375,7 @@ interface SessionData {
   transport: StreamableHTTPServerTransport;
   server: Server;
   authToken: string; // API key or OAuth token
+  mcpClient?: string; // MCP client name (e.g., "claude-desktop")
 }
 const sessions: Record<string, SessionData> = {};
 
@@ -458,15 +459,24 @@ app.post("/mcp", async (req: Request, res: Response) => {
       return;
     }
 
-    // Create new session with the auth token (API key or OAuth token)
-    const client = new NestrClient({ apiKey: authToken });
+    // Extract MCP client info from initialize request for tracking
+    const mcpClientName = req.body?.params?.clientInfo?.name as string | undefined;
+    if (mcpClientName) {
+      console.log(`MCP client: ${mcpClientName}`);
+    }
+
+    // Create new session with the auth token and MCP client info
+    const client = new NestrClient({
+      apiKey: authToken,
+      mcpClient: mcpClientName,
+    });
     const server = createServer({ client });
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (newSessionId) => {
-        console.log(`Session initialized: ${newSessionId}`);
-        sessions[newSessionId] = { transport, server, authToken };
+        console.log(`Session initialized: ${newSessionId}${mcpClientName ? ` (client: ${mcpClientName})` : ""}`);
+        sessions[newSessionId] = { transport, server, authToken, mcpClient: mcpClientName };
       },
     });
 
