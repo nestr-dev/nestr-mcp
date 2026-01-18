@@ -44,11 +44,41 @@ Most workspaces are organizational, representing a self-organized team. Check th
 4. **Use @mentions** in comments to notify team members
 5. **Respect the hierarchy**: nests live under parents (workspace → circle → role/project → task)
 
+## Important Labels
+
+Labels define what type a nest is. The API strips the "circleplus-" prefix, so use labels without it.
+
+**Governance Structure:**
+- \`anchor-circle\` - The workspace itself when it's an organization
+- \`circle\` - A sub-circle/team within the organization
+- \`role\` - A role with accountabilities and domains
+- \`accountability\` - A responsibility of a role (child nest of role)
+- \`domain\` - Decision authority of a role (child nest of role)
+
+**Note:** Accountabilities and domains are child-nests of roles/circles. Use \`nestr_get_circle_roles\` or \`nestr_get_nest_children\` to retrieve them. The generic \`nestr_search\` won't return them by default.
+
+**Meetings & Operations:**
+- \`metric\` - A metric tracked by a role/circle
+- \`checklist\` - A recurring checklist item
+- \`policy\` - A policy governing a domain
+- \`governance\` - A governance meeting
+- \`tactical\` - A tactical/operational meeting
+
+**OKRs & Goals:**
+- \`goal\` - An Objective (the O in OKR)
+- \`result\` - A Key Result (the KR in OKR)
+
+**General:**
+- \`project\` - A project with status tracking (Current/Waiting/Done/Future)
+- \`note\` - A simple note
+- \`meeting\` - A calendar meeting
+
 ## Common Workflows
 
 - **Task Management**: Create nests with "todo" label, update status fields, add comments for updates
 - **Project Tracking**: List projects, get children to see tasks, check insights for metrics
 - **Team Structure**: List circles to see teams, get roles to understand accountabilities and domains
+- **Finding Accountabilities/Domains**: Use \`nestr_get_circle_roles\` for a circle's roles with their accountabilities, or \`nestr_get_nest_children\` on a specific role
 - **Search & Discovery**: Use search to find any item by title or content across the workspace
 `.trim();
 
