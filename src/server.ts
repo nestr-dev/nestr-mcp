@@ -72,6 +72,7 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 - \`project\` - A project with status tracking (Current/Waiting/Done/Future)
 - \`note\` - A simple note
 - \`meeting\` - A calendar meeting
+- \`prepared-tension\` - A tension (gap between current and desired state). Used for meeting agenda items, async governance proposals, and general tension processing. Central to Holacracy practice.
 
 ## Common Workflows
 
