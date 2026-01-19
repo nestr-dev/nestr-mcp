@@ -39,9 +39,17 @@ npm run start:http
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `NESTR_API_KEY` | Nestr API key from workspace settings | Yes |
+| `NESTR_OAUTH_TOKEN` | OAuth Bearer token from Nestr OAuth flow (recommended) | Yes* |
+| `NESTR_API_KEY` | Nestr API key from workspace settings | Yes* |
 | `NESTR_API_BASE` | API base URL (default: `https://app.nestr.io/api`) | No |
+| `NESTR_OAUTH_CLIENT_ID` | OAuth client ID (for registered clients) | No |
+| `NESTR_OAUTH_CLIENT_SECRET` | OAuth client secret (for registered clients) | No |
+| `MCP_RESOURCE_URL` | MCP resource identifier (default: `https://mcp.nestr.io/mcp`) | No |
 | `PORT` | HTTP server port (default: `3000`) | No (HTTP only) |
+
+\* Either `NESTR_OAUTH_TOKEN` (recommended) or `NESTR_API_KEY` is required.
+
+**OAuth is recommended** because it respects user-specific permissions. API keys have full workspace access regardless of user permissions.
 
 ## Architecture
 
@@ -52,6 +60,9 @@ src/
 ├── server.ts         # MCP server setup, tool & resource registration
 ├── api/
 │   └── client.ts     # Nestr REST API client wrapper
+├── oauth/
+│   ├── config.ts     # OAuth configuration and metadata (RFC 9728)
+│   └── flow.ts       # OAuth authorization code flow with PKCE
 └── tools/
     └── index.ts      # Tool definitions and handlers
 
@@ -60,11 +71,85 @@ web/
 └── styles.css        # Landing page styles
 ```
 
+## OAuth Flow
+
+The MCP server acts as an OAuth client with Nestr. Users see the Nestr login screen and authorize access.
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  MCP Client │     │  MCP Server │     │    Nestr    │
+│ (Claude,etc)│     │(mcp.nestr.io│     │(app.nestr.io│
+└──────┬──────┘     └──────┬──────┘     └──────┬──────┘
+       │                   │                   │
+       │ 1. Connect        │                   │
+       │──────────────────>│                   │
+       │                   │                   │
+       │ 2. 401 + WWW-Auth │                   │
+       │<──────────────────│                   │
+       │                   │                   │
+       │ 3. Open browser to /oauth/authorize   │
+       │──────────────────>│                   │
+       │                   │                   │
+       │                   │ 4. Redirect to    │
+       │                   │    Nestr OAuth    │
+       │                   │──────────────────>│
+       │                   │                   │
+       │                   │    5. User logs   │
+       │                   │       in & auth   │
+       │                   │                   │
+       │                   │ 6. Callback with  │
+       │                   │    auth code      │
+       │                   │<──────────────────│
+       │                   │                   │
+       │                   │ 7. Exchange code  │
+       │                   │    for token      │
+       │                   │──────────────────>│
+       │                   │                   │
+       │                   │ 8. Access token   │
+       │                   │<──────────────────│
+       │                   │                   │
+       │ 9. Token for MCP  │                   │
+       │<──────────────────│                   │
+       │                   │                   │
+       │ 10. MCP requests  │                   │
+       │    with Bearer    │                   │
+       │──────────────────>│                   │
+       │                   │ 11. API calls     │
+       │                   │──────────────────>│
+       └───────────────────┴───────────────────┘
+```
+
+### OAuth Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /oauth/authorize` | Initiates OAuth flow, redirects to Nestr |
+| `GET /oauth/callback` | Handles redirect from Nestr, exchanges code for token |
+| `GET /.well-known/oauth-protected-resource` | OAuth metadata (RFC 9728) |
+| `GET /.well-known/oauth-authorization-server` | Authorization server metadata (RFC 8414) |
+
+### Setup OAuth Client in Nestr
+
+To enable the OAuth flow, register an OAuth client in Nestr:
+
+1. Create an OAuth client with:
+   - **Client ID**: e.g., `nestr-mcp`
+   - **Redirect URI**: `https://mcp.nestr.io/oauth/callback`
+   - **Scopes**: `user`, `nest`
+
+2. Set environment variables:
+   ```bash
+   NESTR_OAUTH_CLIENT_ID=your-client-id
+   NESTR_OAUTH_CLIENT_SECRET=your-client-secret  # if required
+   ```
+
 ## Key Files
 
 - **src/server.ts** - Creates the MCP server, registers tools and resources
 - **src/tools/index.ts** - Defines all 16 MCP tools with Zod schemas and handlers
 - **src/api/client.ts** - Type-safe wrapper for Nestr REST API
+- **src/oauth/config.ts** - OAuth configuration and metadata endpoints (RFC 9728)
+- **src/oauth/flow.ts** - OAuth authorization code flow with PKCE
 - **web/index.html** - User-facing documentation at mcp.nestr.io
 
 ## MCP Tools
@@ -134,13 +219,16 @@ case "nestr_my_new_tool": {
 ### NPM Package
 - Published as `@nestr/mcp`
 - Users run via `npx @nestr/mcp`
-- Requires `NESTR_API_KEY` environment variable
+- Requires `NESTR_API_KEY` or `NESTR_OAUTH_TOKEN` environment variable
 
 ### Hosted Service (mcp.nestr.io)
 - Docker image published to `ghcr.io/nestr-dev/nestr-mcp`
 - Deployed via nestr-flux
 - Serves landing page at `/` and MCP endpoint at `/mcp`
-- Users pass API key via `X-Nestr-API-Key` header
+- OAuth metadata at `/.well-known/oauth-protected-resource`
+- Users authenticate via:
+  - `X-Nestr-API-Key` header (API key)
+  - `Authorization: Bearer <token>` header (OAuth token)
 
 ## Testing
 

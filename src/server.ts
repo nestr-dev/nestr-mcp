@@ -17,6 +17,74 @@ export interface NestrMcpServerConfig {
   client?: NestrClient;
 }
 
+// Server instructions provide context to AI assistants about what Nestr is and how to use it
+const SERVER_INSTRUCTIONS = `
+Nestr is a work management platform for teams practicing self-organization, Holacracy, Sociocracy, and Teal methodologies.
+
+## Workspace Types
+
+Most workspaces are organizational, representing a self-organized team. Check the workspace's labels to determine the type:
+
+- **Organizational Workspace** (most common): Has the "anchor-circle" label. The workspace IS the anchor circle of a self-organized team using Holacracy/Sociocracy/Teal governance. Contains sub-circles, roles with accountabilities and domains, and collaborative projects.
+- **Personal Workspace**: No "anchor-circle" label. A personal space where an individual tracks their own work and projects.
+
+The specific self-organization methodology is stored in \`workspace.data['self_organisation_type']\` (e.g., "holacracy", "sociocracy", "custom").
+
+## Core Concepts
+
+- **Workspace**: Top-level container - either an organization's anchor circle or a personal workspace
+- **Nest**: The universal building block - can be a task, project, role, circle, meeting, or any work item
+- **Circle**: A self-governing team with defined purpose, roles, and accountabilities (Holacracy/Sociocracy concept)
+- **Role**: A set of responsibilities (accountabilities) and decision rights (domains) that a person energizes
+- **Label**: Tags that define what type of nest something is (e.g., "project", "todo", "meeting", "anchor-circle")
+
+## Best Practices
+
+1. **Start by listing workspaces** to get the workspace ID and check if it has the "anchor-circle" label
+2. **Use search** to find specific items rather than browsing through hierarchies
+3. **Check labels** to understand what type of nest you're working with
+4. **Use @mentions** in comments to notify team members
+5. **Respect the hierarchy**: nests live under parents (workspace → circle → role/project → task)
+
+## Important Labels
+
+Labels define what type a nest is. The API strips the "circleplus-" prefix, so use labels without it.
+
+**Governance Structure:**
+- \`anchor-circle\` - The workspace itself when it's an organization
+- \`circle\` - A sub-circle/team within the organization
+- \`role\` - A role with accountabilities and domains
+- \`accountability\` - An ongoing activity the role is responsible for performing (Holacracy: "an ongoing activity that the Role will enact")
+- \`domain\` - An area the role has exclusive control over; others must get permission to impact it (Holacracy: "something the Role may exclusively control on behalf of the Organization")
+- \`policy\` - A grant or restriction of authority affecting how others interact with a domain or process. Can live on a domain, role, or circle directly.
+
+**Note:** Accountabilities, domains, and policies are child-nests of roles/circles. Use \`nestr_get_circle_roles\` or \`nestr_get_nest_children\` to retrieve them. The generic \`nestr_search\` won't return them by default.
+
+**Meetings & Operations:**
+- \`metric\` - A metric tracked by a role/circle
+- \`checklist\` - A recurring checklist item
+- \`governance\` - A governance meeting
+- \`tactical\` - A tactical/operational meeting
+
+**OKRs & Goals:**
+- \`goal\` - An Objective (the O in OKR)
+- \`result\` - A Key Result (the KR in OKR)
+
+**General:**
+- \`project\` - A project with status tracking (Current/Waiting/Done/Future)
+- \`note\` - A simple note
+- \`meeting\` - A calendar meeting
+- \`prepared-tension\` - A tension (gap between current and desired state). Used for meeting agenda items, async governance proposals, and general tension processing. Central to Holacracy practice.
+
+## Common Workflows
+
+- **Task Management**: Create nests with "todo" label, update status fields, add comments for updates
+- **Project Tracking**: List projects, get children to see tasks, check insights for metrics
+- **Team Structure**: List circles to see teams, get roles to understand accountabilities and domains
+- **Finding Accountabilities/Domains**: Use \`nestr_get_circle_roles\` for a circle's roles with their accountabilities, or \`nestr_get_nest_children\` on a specific role
+- **Search & Discovery**: Use search to find any item by title or content across the workspace
+`.trim();
+
 export function createServer(config: NestrMcpServerConfig = {}): Server {
   const client = config.client || createClientFromEnv();
 
@@ -24,12 +92,14 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
     {
       name: "nestr-mcp",
       version: "0.1.0",
+      description: "Manage tasks, projects, roles, and circles for self-organizing teams. Built for Holacracy, Sociocracy, and Teal organizations practicing role-based governance and distributed authority. AI-native tool for the future of work - automate workflows and run your autonomous team with AI assistants.",
     },
     {
       capabilities: {
         tools: {},
         resources: {},
       },
+      instructions: SERVER_INSTRUCTIONS,
     }
   );
 

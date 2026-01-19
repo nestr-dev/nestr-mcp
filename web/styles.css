@@ -222,6 +222,66 @@ nav a:hover {
   margin-top: 16px;
 }
 
+/* Auth Options */
+.auth-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+  margin-top: 16px;
+}
+
+.auth-option {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  background: var(--secondary);
+}
+
+.auth-option.recommended {
+  border-color: var(--primary);
+  background: linear-gradient(135deg, #f0f0ff 0%, #fff 100%);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+}
+
+.oauth-login-section {
+  text-align: center;
+  padding: 20px;
+  margin: 16px 0;
+  background: rgba(99, 102, 241, 0.05);
+  border-radius: 8px;
+}
+
+.oauth-btn {
+  display: inline-block;
+  font-size: 1rem;
+}
+
+.oauth-hint {
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.auth-option h4 {
+  margin-bottom: 12px;
+  color: var(--primary);
+}
+
+.auth-option ol, .auth-option ul {
+  margin-left: 20px;
+  margin-bottom: 16px;
+}
+
+.auth-option li {
+  margin-bottom: 8px;
+}
+
+.auth-option p {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  margin-bottom: 12px;
+}
+
 /* Setup Options */
 .setup-options {
   display: grid;

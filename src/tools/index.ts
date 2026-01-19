@@ -137,6 +137,38 @@ export const schemas = {
     workspaceId: z.string().describe("Workspace ID"),
     limit: z.number().optional().describe("Maximum results"),
   }),
+
+  getComments: z.object({
+    nestId: z.string().describe("Nest ID to get comments from"),
+    depth: z.number().optional().describe("Comment thread depth (default: all)"),
+  }),
+
+  getCircle: z.object({
+    workspaceId: z.string().describe("Workspace ID"),
+    circleId: z.string().describe("Circle ID"),
+  }),
+
+  getUser: z.object({
+    workspaceId: z.string().describe("Workspace ID"),
+    userId: z.string().describe("User ID"),
+  }),
+
+  getLabel: z.object({
+    workspaceId: z.string().describe("Workspace ID"),
+    labelId: z.string().describe("Label ID"),
+  }),
+
+  getInsightHistory: z.object({
+    workspaceId: z.string().describe("Workspace ID"),
+    metricId: z.string().describe("Metric ID from getInsights"),
+    from: z.string().optional().describe("Start date (ISO format)"),
+    to: z.string().optional().describe("End date (ISO format)"),
+    limit: z.number().optional().describe("Maximum data points"),
+  }),
+
+  getWorkspaceApps: z.object({
+    workspaceId: z.string().describe("Workspace ID"),
+  }),
 };
 
 // Tool definitions for MCP
@@ -294,7 +326,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_insights",
-    description: "Get workspace metrics and KPIs (completion rates, activity, etc.)",
+    description: "Get self-organization and team health metrics. Includes: role-awareness (how well people use their roles), governance participation, circle meeting output, plus task completion rates, overdue items, and activity stats. Pro accounts can access these metrics at circle and user level; other accounts get workspace-level insights only.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -336,6 +368,80 @@ export const toolDefinitions = [
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         limit: { type: "number", description: "Maximum results" },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "nestr_get_comments",
+    description: "Get comments and discussion history on a nest. Useful for understanding context, decisions made, and team communication around a task or project.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest ID to get comments from" },
+        depth: { type: "number", description: "Comment thread depth (default: all)" },
+      },
+      required: ["nestId"],
+    },
+  },
+  {
+    name: "nestr_get_circle",
+    description: "Get details of a specific circle including its purpose, domains, and accountabilities. Circles are self-governing teams in Holacracy/Sociocracy.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        circleId: { type: "string", description: "Circle ID" },
+      },
+      required: ["workspaceId", "circleId"],
+    },
+  },
+  {
+    name: "nestr_get_user",
+    description: "Get details of a specific user including their profile, roles, and contact info. Useful for @mentions and understanding who is responsible for what.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        userId: { type: "string", description: "User ID" },
+      },
+      required: ["workspaceId", "userId"],
+    },
+  },
+  {
+    name: "nestr_get_label",
+    description: "Get details of a specific label. Labels define what type a nest is (e.g., 'project', 'todo', 'role', 'circle', 'meeting').",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        labelId: { type: "string", description: "Label ID" },
+      },
+      required: ["workspaceId", "labelId"],
+    },
+  },
+  {
+    name: "nestr_get_insight_history",
+    description: "Get historical trend data for a specific metric. Use after getInsights to see how metrics like role-awareness, governance participation, or completion rates have changed over time.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        metricId: { type: "string", description: "Metric ID from getInsights" },
+        from: { type: "string", description: "Start date (ISO format)" },
+        to: { type: "string", description: "End date (ISO format)" },
+        limit: { type: "number", description: "Maximum data points" },
+      },
+      required: ["workspaceId", "metricId"],
+    },
+  },
+  {
+    name: "nestr_get_workspace_apps",
+    description: "List enabled apps/features in a workspace. Shows which Nestr modules are active (e.g., goals, metrics, notes, feed). Check this before using features - if an app is disabled, its related tools won't return useful data.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
       },
       required: ["workspaceId"],
     },
@@ -486,6 +592,56 @@ export async function handleToolCall(
           cleanText: true,
         });
         return formatResult(compactResponse(projects));
+      }
+
+      case "nestr_get_comments": {
+        const parsed = schemas.getComments.parse(args);
+        const comments = await client.getNestPosts(parsed.nestId, {
+          depth: parsed.depth,
+        });
+        return formatResult(comments);
+      }
+
+      case "nestr_get_circle": {
+        const parsed = schemas.getCircle.parse(args);
+        const circle = await client.getCircle(
+          parsed.workspaceId,
+          parsed.circleId,
+          true
+        );
+        return formatResult(circle);
+      }
+
+      case "nestr_get_user": {
+        const parsed = schemas.getUser.parse(args);
+        const user = await client.getUser(parsed.workspaceId, parsed.userId);
+        return formatResult(user);
+      }
+
+      case "nestr_get_label": {
+        const parsed = schemas.getLabel.parse(args);
+        const label = await client.getLabel(parsed.workspaceId, parsed.labelId);
+        return formatResult(label);
+      }
+
+      case "nestr_get_insight_history": {
+        const parsed = schemas.getInsightHistory.parse(args);
+        const history = await client.getInsightHistory(
+          parsed.workspaceId,
+          parsed.metricId,
+          {
+            from: parsed.from,
+            to: parsed.to,
+            limit: parsed.limit,
+          }
+        );
+        return formatResult(history);
+      }
+
+      case "nestr_get_workspace_apps": {
+        const parsed = schemas.getWorkspaceApps.parse(args);
+        const apps = await client.getWorkspaceApps(parsed.workspaceId);
+        return formatResult(apps);
       }
 
       default:

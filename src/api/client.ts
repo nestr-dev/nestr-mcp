@@ -6,6 +6,8 @@
 export interface NestrClientConfig {
   apiKey: string;
   baseUrl?: string;
+  /** MCP client name (e.g., "claude-desktop", "cursor") for tracking */
+  mcpClient?: string;
 }
 
 export interface Nest {
@@ -63,6 +65,13 @@ export interface Insight {
   goal?: number;
 }
 
+export interface WorkspaceApp {
+  _id: string;
+  title: string;
+  description?: string;
+  enabled: boolean;
+}
+
 export class NestrApiError extends Error {
   constructor(
     message: string,
@@ -77,10 +86,12 @@ export class NestrApiError extends Error {
 export class NestrClient {
   private apiKey: string;
   private baseUrl: string;
+  private mcpClient?: string;
 
   constructor(config: NestrClientConfig) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl || "https://app.nestr.io/api";
+    this.mcpClient = config.mcpClient;
   }
 
   private async fetch<T>(
@@ -89,12 +100,21 @@ export class NestrClient {
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
 
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.apiKey}`,
+      "Content-Type": "application/json",
+    };
+
+    // Add MCP client header for tracking which AI agent made the request
+    if (this.mcpClient) {
+      headers["X-MCP-Client"] = this.mcpClient;
+    }
+
     const response = await fetch(url, {
       ...options,
       headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json",
-        ...options.headers,
+        ...headers,
+        ...(options.headers as Record<string, string>),
       },
     });
 
@@ -372,20 +392,39 @@ export class NestrClient {
       `/workspaces/${workspaceId}/insights/${metricId}/history${query ? `?${query}` : ""}`
     );
   }
+
+  // ============ APPS ============
+
+  async getWorkspaceApps(workspaceId: string): Promise<WorkspaceApp[]> {
+    return this.fetch<WorkspaceApp[]>(`/workspaces/${workspaceId}/apps`);
+  }
 }
 
-// Factory function to create client from environment
+/**
+ * Factory function to create client from environment variables
+ *
+ * Supports two authentication methods:
+ * 1. NESTR_OAUTH_TOKEN - OAuth Bearer token (recommended - respects user permissions)
+ * 2. NESTR_API_KEY - API key from workspace settings (full workspace access)
+ *
+ * If both are set, NESTR_API_KEY takes precedence for backwards compatibility.
+ */
 export function createClientFromEnv(): NestrClient {
   const apiKey = process.env.NESTR_API_KEY;
-  if (!apiKey) {
+  const oauthToken = process.env.NESTR_OAUTH_TOKEN;
+
+  const authToken = apiKey || oauthToken;
+
+  if (!authToken) {
     throw new Error(
-      "NESTR_API_KEY environment variable is required. " +
-      "Get your API key from your Nestr workspace settings > Integrations > Workspace API access."
+      "Authentication required. Set one of the following environment variables:\n" +
+      "  - NESTR_API_KEY: API key from workspace settings > Integrations > Workspace API access\n" +
+      "  - NESTR_OAUTH_TOKEN: OAuth Bearer token from Nestr OAuth flow"
     );
   }
 
   return new NestrClient({
-    apiKey,
+    apiKey: authToken,
     baseUrl: process.env.NESTR_API_BASE,
   });
 }
