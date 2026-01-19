@@ -179,6 +179,48 @@ label:accountability customer
 - \`type:comment\` - Search comments/posts
 - \`deleted:true\` - Include deleted items
 
+## Linking to the Web App
+
+When sharing results with users, provide clickable links to the Nestr web app.
+
+**Base URL:** \`https://app.nestr.io\`
+
+### Link Formats
+
+| Format | Example | Use Case |
+|--------|---------|----------|
+| \`/n/{nestId}\` | \`/n/abc123\` | Direct link to any nest |
+| \`/n/{nestId}/{childId}\` | \`/n/circleId/roleId\` | Show child in context (opens detail pane on desktop) |
+| \`/n/{workspaceId}?s=1#hash\` | \`/n/wsId?s=1#users\` | Workspace admin settings |
+
+### Context Links (Detail Pane)
+
+Use the two-ID format to show items in context:
+- \`/n/{circleId}/{roleId}\` - Role within its circle
+- \`/n/{roleId}/{projectId}\` - Project owned by a role
+- \`/n/{projectId}/{taskId}\` - Task within its project
+
+### Cross-Workspace Views
+
+These pages show items across all workspaces for the current user:
+- \`/roles\` - All roles this user fills
+- \`/projects\` - All projects assigned to this user
+
+### User Profile
+
+View a user's roles within a specific workspace:
+- \`/profile/{userId}?cId={workspaceId}\` - User's roles in that workspace
+
+This works for viewing colleagues too - replace userId to see what roles they fill in the same workspace.
+
+### Admin Settings Hashes
+
+For workspace admins, link to settings with \`/n/{workspaceId}?s=1\` plus:
+- \`#users\` - Team members
+- \`#labels\` - Label configuration
+- \`#workspace-apps\` - Enabled apps/features
+- \`#plan\` - Subscription plan
+
 ## Common Workflows
 
 - **Task Management**: Create nests with "todo" label, update status fields, add comments for updates
