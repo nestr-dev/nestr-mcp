@@ -146,10 +146,10 @@ To enable the OAuth flow, register an OAuth client in Nestr:
 ## Key Files
 
 - **src/server.ts** - Creates the MCP server, registers tools and resources
-- **src/tools/index.ts** - Defines all 16 MCP tools with Zod schemas and handlers
+- **src/tools/index.ts** - Defines all 22 MCP tools with Zod schemas and handlers
 - **src/api/client.ts** - Type-safe wrapper for Nestr REST API
 - **src/oauth/config.ts** - OAuth configuration and metadata endpoints (RFC 9728)
-- **src/oauth/flow.ts** - OAuth authorization code flow with PKCE
+- **src/oauth/flow.ts** - OAuth authorization code flow
 - **web/index.html** - User-facing documentation at mcp.nestr.io
 
 ## MCP Tools
@@ -167,13 +167,19 @@ The server exposes these tools to AI assistants:
 | `nestr_update_nest` | `PATCH /nests/{id}` |
 | `nestr_delete_nest` | `DELETE /nests/{id}` |
 | `nestr_add_comment` | `POST /nests/{id}/posts` |
+| `nestr_get_comments` | `GET /nests/{id}/posts` |
 | `nestr_list_circles` | `GET /workspaces/{id}/circles` |
+| `nestr_get_circle` | `GET /workspaces/{id}/circles/{cid}` |
 | `nestr_get_circle_roles` | `GET /workspaces/{id}/circles/{cid}/roles` |
 | `nestr_list_roles` | `GET /workspaces/{id}/roles` |
-| `nestr_get_insights` | `GET /workspaces/{id}/insights` |
 | `nestr_list_users` | `GET /workspaces/{id}/users` |
+| `nestr_get_user` | `GET /workspaces/{id}/users/{uid}` |
 | `nestr_list_labels` | `GET /workspaces/{id}/labels` |
+| `nestr_get_label` | `GET /workspaces/{id}/labels/{lid}` |
 | `nestr_get_projects` | `GET /workspaces/{id}/projects` |
+| `nestr_get_insights` | `GET /workspaces/{id}/insights` |
+| `nestr_get_insight_history` | `GET /workspaces/{id}/insights/{mid}/history` |
+| `nestr_get_workspace_apps` | `GET /workspaces/{id}/apps` |
 
 ## Adding a New Tool
 
