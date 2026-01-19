@@ -30,6 +30,8 @@ export interface Nest {
   due?: string;
   /** Whether this item is completed (for tasks/projects/meetings etc.) */
   completed?: boolean;
+  /** User IDs assigned to this nest (must be explicitly set, not inherited from parent role) */
+  users?: string[];
   createdAt?: string;
   updatedAt?: string;
 }
@@ -214,6 +216,7 @@ export class NestrClient {
     description?: string;
     labels?: string[];
     fields?: Record<string, unknown>;
+    users?: string[];
   }): Promise<Nest> {
     return this.fetch<Nest>("/nests", {
       method: "POST",
@@ -229,6 +232,7 @@ export class NestrClient {
       description: string;
       labels: string[];
       fields: Record<string, unknown>;
+      users: string[];
     }>
   ): Promise<Nest> {
     return this.fetch<Nest>(`/nests/${nestId}`, {

@@ -55,7 +55,25 @@ Every nest has these **standard fields**:
   - **Role**: Re-election date (when the role assignment should be reviewed)
   - **Meeting**: Start date/time
 - \`completed\` - Whether this item is completed (for tasks/projects/meetings etc.)
+- \`users\` - Array of user IDs assigned to this nest
 - \`createdAt\`, \`updatedAt\` - Timestamps
+
+### User Assignment
+
+**Important:** When creating tasks or projects, you must explicitly set the \`users\` array to associate work with a person. Placing a nest under a role does NOT automatically assign it to the role filler.
+
+\`\`\`json
+{
+  "parentId": "roleId",
+  "title": "Complete quarterly report",
+  "users": ["userId123"]
+}
+\`\`\`
+
+- \`users: ["userId"]\` - Assign to specific user(s)
+- \`users: []\` or omitted - Unassigned (valid for work under unfilled roles or shared tasks)
+
+**Note:** Accountabilities, domains, and policies never have users assigned - they belong to roles, not people.
 
 ### The \`fields\` Property
 
@@ -66,7 +84,8 @@ The \`fields\` object holds custom data defined by labels. Fields are **namespac
   "fields": {
     "project.status": "Current",
     "role.electable-role": true,
-    "metric.frequency": "Weekly"
+    "metric.frequency": "Weekly",
+    "circle.strategy": "Focus on enterprise clients"
   }
 }
 \`\`\`
@@ -77,7 +96,19 @@ The \`fields\` object holds custom data defined by labels. Fields are **namespac
 - \`Waiting\` - Blocked or on hold
 - \`Done\` - Completed
 
+**Circle strategy** (in \`fields['circle.strategy']\`):
+A strategy that all roles within the circle must follow. Sub-circle strategies must align with and support the super-circle's strategy.
+
 **Important:** Label field schemas can be customized at the workspace or circle level. This means the available fields and their options may vary between different parts of the organization hierarchy. Always check what fields are actually present on a nest rather than assuming a fixed schema.
+
+### Hierarchical Purpose
+
+The \`purpose\` field follows a strict hierarchy:
+- The **anchor circle's purpose** is the purpose of the entire organization
+- Each **sub-circle's purpose** must contribute to its parent circle's purpose
+- Each **role's purpose** must contribute to its circle's purpose
+
+This cascades through the entire hierarchy, which may be many layers deep. When creating or updating purposes, ensure they align with and serve the parent's purpose.
 
 ## Best Practices
 
@@ -86,6 +117,11 @@ The \`fields\` object holds custom data defined by labels. Fields are **namespac
 3. **Check labels** to understand what type of nest you're working with
 4. **Use @mentions** in comments to notify team members
 5. **Respect the hierarchy**: nests live under parents (workspace → circle → role/project → task)
+6. **Check circle strategy and purpose** before creating work or governance:
+   - Fetch the parent circle to review its \`purpose\` and \`fields['circle.strategy']\`
+   - Ensure new projects and tasks align with and serve the circle's strategy
+   - Use strategy and purpose to prioritize work and define clear outcomes
+   - When proposing governance changes, consider how they support the circle's purpose
 
 ## Important Labels
 
@@ -111,8 +147,9 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 - \`goal\` - An Objective (the O in OKR)
 - \`result\` - A Key Result (the KR in OKR)
 
-**General:**
-- \`project\` - A project with status tracking (Current/Waiting/Done/Future)
+**Work Tracking:**
+- \`project\` - An outcome requiring multiple steps to complete. Define in past tense as what "done" looks like (e.g., "Website redesign launched", "Q1 report published"). Has status: Future/Current/Waiting/Done.
+- \`todo\` - A single, concrete action that can be done in one sitting (e.g., "Call supplier about pricing", "Draft intro paragraph"). The next physical step to move something forward.
 - \`note\` - A simple note
 - \`meeting\` - A calendar meeting
 - \`prepared-tension\` - A tension (gap between current and desired state). Used for meeting agenda items, async governance proposals, and general tension processing. Central to Holacracy practice.

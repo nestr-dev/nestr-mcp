@@ -85,6 +85,7 @@ export const schemas = {
     title: z.string().describe("Title of the new nest"),
     purpose: z.string().optional().describe("Purpose or description"),
     labels: z.array(z.string()).optional().describe("Label IDs to apply"),
+    users: z.array(z.string()).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
   }),
 
   updateNest: z.object({
@@ -92,6 +93,7 @@ export const schemas = {
     title: z.string().optional().describe("New title"),
     purpose: z.string().optional().describe("New purpose"),
     fields: z.record(z.unknown()).optional().describe("Field updates (e.g., status)"),
+    users: z.array(z.string()).optional().describe("User IDs to assign"),
   }),
 
   deleteNest: z.object({
@@ -232,7 +234,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_nest",
-    description: "Create a new nest (task, project, etc.) under a parent",
+    description: "Create a new nest (task, project, etc.) under a parent. Set users to assign to people - placing under a role does NOT auto-assign.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -243,6 +245,11 @@ export const toolDefinitions = [
           type: "array",
           items: { type: "string" },
           description: "Label IDs to apply (e.g., 'project', 'todo')",
+        },
+        users: {
+          type: "array",
+          items: { type: "string" },
+          description: "User IDs to assign (required for tasks/projects to associate with a person)",
         },
       },
       required: ["parentId", "title"],
@@ -260,6 +267,11 @@ export const toolDefinitions = [
         fields: {
           type: "object",
           description: "Field updates (e.g., {status: 'done'})",
+        },
+        users: {
+          type: "array",
+          items: { type: "string" },
+          description: "User IDs to assign",
         },
       },
       required: ["nestId"],
@@ -507,6 +519,7 @@ export async function handleToolCall(
           title: parsed.title,
           purpose: parsed.purpose,
           labels: parsed.labels,
+          users: parsed.users,
         });
         return formatResult({ message: "Nest created successfully", nest });
       }
@@ -517,6 +530,7 @@ export async function handleToolCall(
           title: parsed.title,
           purpose: parsed.purpose,
           fields: parsed.fields,
+          users: parsed.users,
         });
         return formatResult({ message: "Nest updated successfully", nest });
       }
