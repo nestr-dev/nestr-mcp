@@ -3,14 +3,25 @@
  *
  * Handles the OAuth flow where the MCP server acts as the OAuth client
  * and users authenticate directly with Nestr.
+ *
+ * PKCE Support:
+ * - MCP clients send PKCE parameters (code_challenge) to this server
+ * - We verify the code_verifier against the stored code_challenge
+ * - We proxy to Nestr WITHOUT PKCE (Nestr doesn't support it)
+ * - This provides PKCE security from the MCP client's perspective
  */
 
 import { randomBytes, createHash } from "node:crypto";
 import { getOAuthConfig } from "./config.js";
+import {
+  storePendingAuth as storePendingAuthToDisk,
+  consumePendingAuth as consumePendingAuthFromDisk,
+  type PendingAuthWithPKCE,
+} from "./storage.js";
 
 /**
  * Pending OAuth authorization request
- * Stored temporarily while user completes auth on Nestr
+ * @deprecated Use PendingAuthWithPKCE from storage.ts
  */
 export interface PendingAuth {
   state: string;
@@ -41,15 +52,8 @@ export interface OAuthSession {
   scope?: string;
 }
 
-// In-memory storage for pending auth requests (keyed by state)
-// In production, use Redis or similar for multi-instance support
-const pendingAuths = new Map<string, PendingAuth>();
-
 // In-memory storage for OAuth sessions (keyed by session ID)
 const oauthSessions = new Map<string, OAuthSession>();
-
-// Cleanup interval for expired pending auths (5 minutes)
-const PENDING_AUTH_TTL = 5 * 60 * 1000;
 
 // Buffer time before token expiration to trigger refresh (60 seconds)
 const TOKEN_EXPIRY_BUFFER_MS = 60 * 1000;
@@ -83,66 +87,131 @@ export function generateState(): string {
 }
 
 /**
+ * Parameters for creating an authorization request
+ */
+export interface AuthorizationRequestParams {
+  clientId: string;
+  redirectUri: string;
+  scope?: string;
+  state?: string;
+  codeChallenge?: string;
+  codeChallengeMethod?: string;
+}
+
+/**
  * Create a new pending auth request and return the authorization URL
  *
- * Note: PKCE is disabled because Nestr's OAuth server doesn't support it.
+ * Supports PKCE: We store the code_challenge and verify it when the client
+ * exchanges the code. Nestr doesn't support PKCE, so we handle it in our proxy.
  */
 export function createAuthorizationRequest(
   redirectUri: string,
   finalRedirect?: string
+): { authUrl: string; state: string };
+export function createAuthorizationRequest(
+  params: AuthorizationRequestParams
+): { authUrl: string; state: string };
+export function createAuthorizationRequest(
+  redirectUriOrParams: string | AuthorizationRequestParams,
+  finalRedirect?: string
 ): { authUrl: string; state: string } {
   const config = getOAuthConfig();
 
-  if (!config.clientId) {
-    throw new Error(
-      "NESTR_OAUTH_CLIENT_ID environment variable is required for OAuth flow"
-    );
+  // Handle legacy signature (redirectUri, finalRedirect)
+  if (typeof redirectUriOrParams === "string") {
+    if (!config.clientId) {
+      throw new Error(
+        "NESTR_OAUTH_CLIENT_ID environment variable is required for OAuth flow"
+      );
+    }
+
+    const state = generateState();
+
+    // Store pending auth with disk persistence
+    storePendingAuthToDisk({
+      state,
+      redirectUri: redirectUriOrParams,
+      clientId: config.clientId,
+      createdAt: Date.now(),
+    });
+
+    // Build authorization URL (without PKCE - Nestr doesn't support it)
+    const urlParams = new URLSearchParams({
+      response_type: "code",
+      client_id: config.clientId,
+      redirect_uri: redirectUriOrParams,
+      state,
+      scope: config.scopes.join(" "),
+    });
+
+    const authUrl = `${config.authorizationEndpoint}?${urlParams}`;
+    return { authUrl, state };
   }
 
-  const state = generateState();
+  // New signature with full params (for dynamic client registration)
+  const params = redirectUriOrParams;
+  const state = params.state || generateState();
 
-  // Store pending auth (no PKCE - Nestr doesn't support it)
-  pendingAuths.set(state, {
+  // Store pending auth with PKCE info
+  // redirectUri here is the MCP CLIENT's redirect_uri (where we redirect with the code)
+  storePendingAuthToDisk({
     state,
-    redirectUri,
+    redirectUri: params.redirectUri, // MCP client's callback URL
+    clientId: params.clientId,
+    codeChallenge: params.codeChallenge,
+    codeChallengeMethod: params.codeChallengeMethod,
     createdAt: Date.now(),
-    finalRedirect,
+    scope: params.scope,
   });
 
-  // Build authorization URL (without PKCE params)
-  const params = new URLSearchParams({
+  // Build authorization URL for Nestr (without PKCE - we handle it ourselves)
+  // Use our configured client_id to talk to Nestr
+  // IMPORTANT: We tell Nestr to redirect back to OUR callback, not the MCP client's
+  const nestrClientId = config.clientId || params.clientId;
+
+  // We need our own callback URL to be passed here, not the MCP client's
+  // The caller should pass ourCallbackUrl in a separate field if needed
+  // For now, we construct it - this will be overridden by http.ts
+  const urlParams = new URLSearchParams({
     response_type: "code",
-    client_id: config.clientId,
-    redirect_uri: redirectUri,
+    client_id: nestrClientId,
+    redirect_uri: params.redirectUri, // Will be overridden by caller with our callback URL
     state,
-    scope: config.scopes.join(" "),
+    scope: params.scope || config.scopes.join(" "),
   });
 
-  const authUrl = `${config.authorizationEndpoint}?${params}`;
-
+  const authUrl = `${config.authorizationEndpoint}?${urlParams}`;
   return { authUrl, state };
 }
 
 /**
  * Get and remove a pending auth request
  */
-export function getPendingAuth(state: string): PendingAuth | undefined {
-  const pending = pendingAuths.get(state);
+export function getPendingAuth(state: string): PendingAuthWithPKCE | undefined {
+  return consumePendingAuthFromDisk(state);
+}
 
-  if (!pending) {
-    return undefined;
+/**
+ * Verify PKCE code_verifier against stored code_challenge
+ *
+ * @param codeVerifier - The code_verifier from the token request
+ * @param codeChallenge - The stored code_challenge from the auth request
+ * @param method - The code_challenge_method (only S256 is supported)
+ * @returns true if verification passes
+ */
+export function verifyPKCE(
+  codeVerifier: string,
+  codeChallenge: string,
+  method: string = "S256"
+): boolean {
+  if (method !== "S256") {
+    // Only S256 is supported per OAuth 2.1
+    return false;
   }
 
-  // Check if expired
-  if (Date.now() - pending.createdAt > PENDING_AUTH_TTL) {
-    pendingAuths.delete(state);
-    return undefined;
-  }
-
-  // Remove from pending (one-time use)
-  pendingAuths.delete(state);
-
-  return pending;
+  // Generate challenge from verifier and compare
+  const computedChallenge = generateCodeChallenge(codeVerifier);
+  return computedChallenge === codeChallenge;
 }
 
 /**
@@ -281,17 +350,4 @@ export function removeOAuthSession(sessionId: string): void {
   oauthSessions.delete(sessionId);
 }
 
-/**
- * Cleanup expired pending auths (call periodically)
- */
-export function cleanupPendingAuths(): void {
-  const now = Date.now();
-  for (const [state, pending] of pendingAuths) {
-    if (now - pending.createdAt > PENDING_AUTH_TTL) {
-      pendingAuths.delete(state);
-    }
-  }
-}
-
-// Run cleanup every minute
-setInterval(cleanupPendingAuths, 60000);
+// Cleanup is now handled by storage.ts

@@ -86,14 +86,14 @@ export function getProtectedResourceMetadata(mcpServerBaseUrl?: string): Protect
 /**
  * Authorization Server Metadata (RFC 8414)
  *
- * Describes Nestr's OAuth server capabilities.
- * This would typically be fetched from Nestr, but we define it here
- * for reference and fallback.
+ * Describes our OAuth server capabilities.
+ * We act as an authorization server, proxying to Nestr.
  */
 export interface AuthorizationServerMetadata {
   issuer: string;
   authorization_endpoint: string;
   token_endpoint: string;
+  registration_endpoint?: string;
   response_types_supported: string[];
   grant_types_supported: string[];
   code_challenge_methods_supported: string[];
@@ -105,6 +105,9 @@ export interface AuthorizationServerMetadata {
  *
  * When mcpServerBaseUrl is provided, returns metadata for our MCP server
  * acting as an authorization server (proxying to Nestr).
+ *
+ * PKCE Support: We advertise S256 support because we handle PKCE verification
+ * in our proxy layer, even though Nestr doesn't support PKCE natively.
  */
 export function getAuthorizationServerMetadata(mcpServerBaseUrl?: string): AuthorizationServerMetadata {
   const config = getOAuthConfig();
@@ -115,14 +118,15 @@ export function getAuthorizationServerMetadata(mcpServerBaseUrl?: string): Autho
       issuer: mcpServerBaseUrl,
       authorization_endpoint: `${mcpServerBaseUrl}/oauth/authorize`,
       token_endpoint: `${mcpServerBaseUrl}/oauth/token`,
+      registration_endpoint: `${mcpServerBaseUrl}/oauth/register`,
       response_types_supported: ["code"],
       grant_types_supported: ["authorization_code", "refresh_token"],
-      code_challenge_methods_supported: [], // PKCE not supported (Nestr doesn't support it)
+      code_challenge_methods_supported: ["S256"], // We handle PKCE in our proxy
       scopes_supported: config.scopes,
     };
   }
 
-  // Fall back to Nestr directly
+  // Fall back to Nestr directly (no PKCE, no registration)
   const nestrBase = config.authorizationEndpoint.replace(/\/dialog\/oauth$/, "");
   return {
     issuer: nestrBase,

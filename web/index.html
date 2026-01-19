@@ -78,22 +78,43 @@
             <h3>Choose Your Authentication Method</h3>
 
             <div class="auth-options">
-              <div class="auth-option recommended">
-                <h4>Option A: OAuth (Recommended)</h4>
-                <p>OAuth respects your user-specific permissions in Nestr. You'll only be able to access and modify nests you have permission to.</p>
+              <button class="auth-option active" data-auth="oauth">
+                <div class="option-header">
+                  <h4>OAuth</h4>
+                  <span class="option-badge">Recommended</span>
+                </div>
+                <p>Respects your user-specific permissions. You'll only access nests you have permission to.</p>
+                <ul class="option-pros">
+                  <li>Per-user permissions</li>
+                  <li>Secure token-based auth</li>
+                  <li>MCP clients auto-discover endpoints</li>
+                </ul>
+              </button>
 
+              <button class="auth-option" data-auth="apikey">
+                <div class="option-header">
+                  <h4>API Key</h4>
+                </div>
+                <p>Full workspace access, useful for automation or when OAuth isn't supported.</p>
+                <ul class="option-pros">
+                  <li>Simple to set up</li>
+                  <li>Works everywhere</li>
+                  <li>Good for automation</li>
+                </ul>
+              </button>
+            </div>
+
+            <div class="auth-details">
+              <div class="auth-detail active" id="auth-detail-oauth">
                 <div class="oauth-login-section">
                   <a href="/oauth/authorize" class="btn primary oauth-btn">Login with Nestr</a>
                   <p class="oauth-hint">Click to authenticate and get your OAuth token</p>
                 </div>
-
                 <p>MCP clients that support OAuth will automatically discover the authorization endpoints and guide you through the login flow.</p>
-                <p>For the <strong>Cloud</strong> setup, use <code>Authorization: Bearer &lt;token&gt;</code> header instead of <code>X-Nestr-API-Key</code>.</p>
               </div>
 
-              <div class="auth-option">
-                <h4>Option B: API Key</h4>
-                <p>API keys provide workspace-level access and are useful for automation or when OAuth isn't supported.</p>
+              <div class="auth-detail" id="auth-detail-apikey">
+                <p>To get an API key:</p>
                 <ol>
                   <li>Go to your <a href="https://app.nestr.io" target="_blank">Nestr workspace</a></li>
                   <li>Click the <strong>Settings</strong> icon (gear) in the top right</li>
@@ -164,7 +185,18 @@
               </ul>
               <p>Add the following configuration:</p>
 
-              <pre class="config-block hosted active"><code>{
+              <pre class="config-block hosted oauth active"><code>{
+  "mcpServers": {
+    "nestr": {
+      "url": "https://mcp.nestr.io/mcp",
+      "headers": {
+        "Authorization": "Bearer your-oauth-token-here"
+      }
+    }
+  }
+}</code></pre>
+
+              <pre class="config-block hosted apikey"><code>{
   "mcpServers": {
     "nestr": {
       "url": "https://mcp.nestr.io/mcp",
@@ -175,7 +207,19 @@
   }
 }</code></pre>
 
-              <pre class="config-block local"><code>{
+              <pre class="config-block local oauth"><code>{
+  "mcpServers": {
+    "nestr": {
+      "command": "npx",
+      "args": ["-y", "@nestr/mcp"],
+      "env": {
+        "NESTR_OAUTH_TOKEN": "your-oauth-token-here"
+      }
+    }
+  }
+}</code></pre>
+
+              <pre class="config-block local apikey"><code>{
   "mcpServers": {
     "nestr": {
       "command": "npx",
@@ -192,15 +236,32 @@
             <div class="tab-content" id="claude-code">
               <p>Run this command in your terminal:</p>
 
-              <pre class="config-block hosted active"><code>claude mcp add nestr --transport http https://mcp.nestr.io/mcp \
+              <pre class="config-block hosted oauth active"><code>claude mcp add nestr --transport http https://mcp.nestr.io/mcp \
+  --header "Authorization: Bearer your-oauth-token-here"</code></pre>
+
+              <pre class="config-block hosted apikey"><code>claude mcp add nestr --transport http https://mcp.nestr.io/mcp \
   --header "X-Nestr-API-Key: your-api-key-here"</code></pre>
 
-              <pre class="config-block local"><code>claude mcp add nestr -- npx -y @nestr/mcp \
+              <pre class="config-block local oauth"><code>claude mcp add nestr -- npx -y @nestr/mcp \
+  --env NESTR_OAUTH_TOKEN=your-oauth-token-here</code></pre>
+
+              <pre class="config-block local apikey"><code>claude mcp add nestr -- npx -y @nestr/mcp \
   --env NESTR_API_KEY=your-api-key-here</code></pre>
 
               <p>Or edit the settings file directly (<code>~/.claude/settings.json</code> on macOS/Linux):</p>
 
-              <pre class="config-block hosted active"><code>{
+              <pre class="config-block hosted oauth active"><code>{
+  "mcpServers": {
+    "nestr": {
+      "url": "https://mcp.nestr.io/mcp",
+      "headers": {
+        "Authorization": "Bearer your-oauth-token-here"
+      }
+    }
+  }
+}</code></pre>
+
+              <pre class="config-block hosted apikey"><code>{
   "mcpServers": {
     "nestr": {
       "url": "https://mcp.nestr.io/mcp",
@@ -211,7 +272,19 @@
   }
 }</code></pre>
 
-              <pre class="config-block local"><code>{
+              <pre class="config-block local oauth"><code>{
+  "mcpServers": {
+    "nestr": {
+      "command": "npx",
+      "args": ["-y", "@nestr/mcp"],
+      "env": {
+        "NESTR_OAUTH_TOKEN": "your-oauth-token-here"
+      }
+    }
+  }
+}</code></pre>
+
+              <pre class="config-block local apikey"><code>{
   "mcpServers": {
     "nestr": {
       "command": "npx",
@@ -233,7 +306,18 @@
               </ul>
               <p>Add the following configuration:</p>
 
-              <pre class="config-block hosted active"><code>{
+              <pre class="config-block hosted oauth active"><code>{
+  "mcpServers": {
+    "nestr": {
+      "url": "https://mcp.nestr.io/mcp",
+      "headers": {
+        "Authorization": "Bearer your-oauth-token-here"
+      }
+    }
+  }
+}</code></pre>
+
+              <pre class="config-block hosted apikey"><code>{
   "mcpServers": {
     "nestr": {
       "url": "https://mcp.nestr.io/mcp",
@@ -244,7 +328,19 @@
   }
 }</code></pre>
 
-              <pre class="config-block local"><code>{
+              <pre class="config-block local oauth"><code>{
+  "mcpServers": {
+    "nestr": {
+      "command": "npx",
+      "args": ["-y", "@nestr/mcp"],
+      "env": {
+        "NESTR_OAUTH_TOKEN": "your-oauth-token-here"
+      }
+    }
+  }
+}</code></pre>
+
+              <pre class="config-block local apikey"><code>{
   "mcpServers": {
     "nestr": {
       "command": "npx",
@@ -261,7 +357,17 @@
             <div class="tab-content" id="raycast">
               <p>In Raycast, go to <strong>Settings &rarr; Extensions &rarr; AI &rarr; MCP Servers</strong>, then press <kbd>&#8984;N</kbd> to add a new server.</p>
 
-              <div class="config-block hosted active">
+              <div class="config-block hosted oauth active">
+                <p>Fill in the following fields:</p>
+                <table class="field-table">
+                  <tr><td><strong>Name</strong></td><td><code>Nestr</code></td></tr>
+                  <tr><td><strong>Transport</strong></td><td>HTTP</td></tr>
+                  <tr><td><strong>URL</strong></td><td><code>https://mcp.nestr.io/mcp</code></td></tr>
+                  <tr><td><strong>HTTP Headers</strong></td><td>Click "Add Item" and add:<br><code>Authorization</code> = <code>Bearer your-oauth-token</code></td></tr>
+                </table>
+              </div>
+
+              <div class="config-block hosted apikey">
                 <p>Fill in the following fields:</p>
                 <table class="field-table">
                   <tr><td><strong>Name</strong></td><td><code>Nestr</code></td></tr>
@@ -271,7 +377,18 @@
                 </table>
               </div>
 
-              <div class="config-block local">
+              <div class="config-block local oauth">
+                <p>Fill in the following fields:</p>
+                <table class="field-table">
+                  <tr><td><strong>Name</strong></td><td><code>Nestr</code></td></tr>
+                  <tr><td><strong>Transport</strong></td><td>Standard Input/Output</td></tr>
+                  <tr><td><strong>Command</strong></td><td><code>npx</code></td></tr>
+                  <tr><td><strong>Arguments</strong></td><td><code>-y @nestr/mcp</code></td></tr>
+                  <tr><td><strong>Environment</strong></td><td>Click "Add Item" and add:<br><code>NESTR_OAUTH_TOKEN</code> = <code>your-oauth-token</code></td></tr>
+                </table>
+              </div>
+
+              <div class="config-block local apikey">
                 <p>Fill in the following fields:</p>
                 <table class="field-table">
                   <tr><td><strong>Name</strong></td><td><code>Nestr</code></td></tr>
@@ -443,6 +560,20 @@
   </footer>
 
   <script>
+    // Track current selections
+    let currentAuth = 'oauth';
+    let currentSetup = 'hosted';
+
+    // Function to update config blocks based on current selections
+    function updateConfigBlocks() {
+      document.querySelectorAll('.config-block').forEach(block => {
+        block.classList.remove('active');
+        if (block.classList.contains(currentSetup) && block.classList.contains(currentAuth)) {
+          block.classList.add('active');
+        }
+      });
+    }
+
     // Tab switching (Claude Desktop / Claude Code / Cursor)
     document.querySelectorAll('.tab').forEach(tab => {
       tab.addEventListener('click', () => {
@@ -458,22 +589,35 @@
       });
     });
 
-    // Setup method selection (hosted vs local) - updates all config blocks
+    // Auth method selection (oauth vs apikey)
+    document.querySelectorAll('.auth-option').forEach(option => {
+      option.addEventListener('click', () => {
+        currentAuth = option.dataset.auth;
+
+        // Update active option
+        document.querySelectorAll('.auth-option').forEach(o => o.classList.remove('active'));
+        option.classList.add('active');
+
+        // Update auth details section
+        document.querySelectorAll('.auth-detail').forEach(d => d.classList.remove('active'));
+        document.getElementById('auth-detail-' + currentAuth).classList.add('active');
+
+        // Update config blocks
+        updateConfigBlocks();
+      });
+    });
+
+    // Setup method selection (hosted vs local)
     document.querySelectorAll('.setup-option').forEach(option => {
       option.addEventListener('click', () => {
-        const method = option.dataset.method;
+        currentSetup = option.dataset.method;
 
         // Update active option
         document.querySelectorAll('.setup-option').forEach(o => o.classList.remove('active'));
         option.classList.add('active');
 
-        // Update ALL config blocks across all tabs
-        document.querySelectorAll('.config-block').forEach(block => {
-          block.classList.remove('active');
-          if (block.classList.contains(method)) {
-            block.classList.add('active');
-          }
-        });
+        // Update config blocks
+        updateConfigBlocks();
       });
     });
 

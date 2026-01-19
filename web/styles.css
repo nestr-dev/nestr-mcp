@@ -231,16 +231,70 @@ nav a:hover {
 }
 
 .auth-option {
-  border: 1px solid var(--border);
+  border: 2px solid var(--border);
   border-radius: 12px;
   padding: 20px;
   background: var(--secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+  font-family: inherit;
+  font-size: inherit;
+  width: 100%;
 }
 
-.auth-option.recommended {
+.auth-option:hover {
+  border-color: var(--primary);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+}
+
+.auth-option.active {
   border-color: var(--primary);
   background: linear-gradient(135deg, #f0f0ff 0%, #fff 100%);
   box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+}
+
+.auth-option h4 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.auth-option > p {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-bottom: 12px;
+}
+
+/* Auth Details Section */
+.auth-details {
+  margin-top: 20px;
+  padding: 20px;
+  background: var(--secondary);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.auth-detail {
+  display: none;
+}
+
+.auth-detail.active {
+  display: block;
+}
+
+.auth-detail ol, .auth-detail ul {
+  margin-left: 20px;
+  margin-bottom: 16px;
+}
+
+.auth-detail li {
+  margin-bottom: 8px;
+}
+
+.auth-detail p {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  margin-bottom: 12px;
 }
 
 .oauth-login-section {
@@ -260,26 +314,6 @@ nav a:hover {
   margin-top: 8px;
   font-size: 0.85rem;
   color: var(--text-muted);
-}
-
-.auth-option h4 {
-  margin-bottom: 12px;
-  color: var(--primary);
-}
-
-.auth-option ol, .auth-option ul {
-  margin-left: 20px;
-  margin-bottom: 16px;
-}
-
-.auth-option li {
-  margin-bottom: 8px;
-}
-
-.auth-option p {
-  color: var(--text-muted);
-  font-size: 0.95rem;
-  margin-bottom: 12px;
 }
 
 /* Setup Options */
