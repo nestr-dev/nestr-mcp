@@ -38,6 +38,47 @@ The specific self-organization methodology is stored in \`workspace.data['self_o
 - **Role**: A set of responsibilities (accountabilities) and decision rights (domains) that a person energizes
 - **Label**: Tags that define what type of nest something is (e.g., "project", "todo", "meeting", "anchor-circle")
 
+## Nest Model Architecture
+
+Every nest has these **standard fields**:
+- \`_id\` - Unique identifier
+- \`title\` - Display name
+- \`purpose\` - Why this nest exists (especially important for roles/circles)
+- \`description\` - Detailed description (may contain rich text)
+- \`parentId\` - ID of parent nest
+- \`ancestors\` - Array of ancestor IDs (for hierarchy traversal)
+- \`labels\` - Array of label IDs that define what type this nest is
+- \`fields\` - Label-specific custom fields (see below)
+- \`data\` - Miscellaneous data storage for non-field data (e.g., third-party IDs, integration metadata, custom tracking data)
+- \`due\` - Context-dependent date field:
+  - **Project/Task**: Due date
+  - **Role**: Re-election date (when the role assignment should be reviewed)
+  - **Meeting**: Start date/time
+- \`completed\` - Whether this item is completed (for tasks/projects/meetings etc.)
+- \`createdAt\`, \`updatedAt\` - Timestamps
+
+### The \`fields\` Property
+
+The \`fields\` object holds custom data defined by labels. Fields are **namespaced by the label that defines them**:
+
+\`\`\`json
+{
+  "fields": {
+    "project.status": "Current",
+    "role.electable-role": true,
+    "metric.frequency": "Weekly"
+  }
+}
+\`\`\`
+
+**Key project statuses** (in \`fields['project.status']\`):
+- \`Future\` - Planned but not started
+- \`Current\` - Actively being worked on
+- \`Waiting\` - Blocked or on hold
+- \`Done\` - Completed
+
+**Important:** Label field schemas can be customized at the workspace or circle level. This means the available fields and their options may vary between different parts of the organization hierarchy. Always check what fields are actually present on a nest rather than assuming a fixed schema.
+
 ## Best Practices
 
 1. **Start by listing workspaces** to get the workspace ID and check if it has the "anchor-circle" label

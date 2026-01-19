@@ -19,6 +19,17 @@ export interface Nest {
   ancestors?: string[];
   labels?: string[];
   fields?: Record<string, unknown>;
+  /** Miscellaneous data storage (e.g., third-party IDs, custom metadata) */
+  data?: Record<string, unknown>;
+  /**
+   * Context-dependent date field:
+   * - Project/Task: due date
+   * - Role: re-election date
+   * - Meeting: start date
+   */
+  due?: string;
+  /** Whether this item is completed (for tasks/projects/meetings etc.) */
+  completed?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }

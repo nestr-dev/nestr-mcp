@@ -362,7 +362,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_projects",
-    description: "List all projects in a workspace with their status",
+    description: "List all projects in a workspace. Check fields['project.status'] for status: Future (planned), Current (active), Waiting (blocked), Done (completed). The 'due' field contains the project due date.",
     inputSchema: {
       type: "object" as const,
       properties: {
