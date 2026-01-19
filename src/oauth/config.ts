@@ -36,9 +36,9 @@ export function getOAuthConfig(): OAuthConfig {
   const resourceIdentifier = process.env.MCP_RESOURCE_URL || "https://mcp.nestr.io/mcp";
 
   return {
-    // /dialog/oauth is the UI page, /oauth/authorize is the backend endpoint
+    // /dialog/oauth is the UI page, /api/oauth/token is the backend token endpoint
     authorizationEndpoint: `${nestrBase}/dialog/oauth`,
-    tokenEndpoint: `${nestrBase}/oauth/token`,
+    tokenEndpoint: `${baseUrl}/oauth/token`, // Under /api to avoid Cloudflare challenge
     resourceIdentifier,
     clientId: process.env.NESTR_OAUTH_CLIENT_ID,
     clientSecret: process.env.NESTR_OAUTH_CLIENT_SECRET,
