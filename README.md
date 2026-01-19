@@ -90,20 +90,84 @@ Ask your AI assistant things like:
 | `nestr_update_nest` | Update nest properties |
 | `nestr_delete_nest` | Delete a nest |
 | `nestr_add_comment` | Add a comment to a nest |
+| `nestr_get_comments` | Get comments/discussion on a nest |
 | `nestr_list_circles` | List organizational circles |
+| `nestr_get_circle` | Get circle details |
 | `nestr_get_circle_roles` | Get roles in a circle |
 | `nestr_list_roles` | List all roles |
-| `nestr_get_insights` | Get workspace metrics |
 | `nestr_list_users` | List workspace members |
+| `nestr_get_user` | Get user details |
 | `nestr_list_labels` | List available labels |
+| `nestr_get_label` | Get label details |
 | `nestr_get_projects` | List projects with status |
+| `nestr_get_insights` | Get self-organization and team health metrics |
+| `nestr_get_insight_history` | Get historical trend data for a metric |
+| `nestr_get_workspace_apps` | List enabled apps/features in workspace |
+
+## Authentication
+
+There are two ways to authenticate with the Nestr MCP server:
+
+### Option 1: API Key (Simple)
+
+API keys provide full workspace access and are the easiest way to get started. See [Quick Start](#quick-start) above.
+
+**Note:** API keys have full workspace access regardless of user permissions.
+
+### Option 2: OAuth (Recommended for Hosted Service)
+
+OAuth authentication respects user-specific permissions - the AI assistant can only access what the authenticated user can access.
+
+#### Using the Hosted Service (mcp.nestr.io)
+
+The hosted service at [mcp.nestr.io](https://mcp.nestr.io) supports OAuth out of the box:
+
+1. Visit [mcp.nestr.io/oauth/authorize](https://mcp.nestr.io/oauth/authorize)
+2. Log in with your Nestr account and authorize access
+3. Copy the access token from the success page
+4. Use the token in your MCP client configuration:
+
+```json
+{
+  "mcpServers": {
+    "nestr": {
+      "command": "npx",
+      "args": ["-y", "@nestr/mcp"],
+      "env": {
+        "NESTR_OAUTH_TOKEN": "your-oauth-token-here"
+      }
+    }
+  }
+}
+```
+
+#### Self-Hosted OAuth Setup
+
+If you're running your own instance of the MCP server and want to enable OAuth:
+
+1. **Contact Nestr** at [dev@nestr.io](mailto:dev@nestr.io) to register an OAuth client
+2. Provide your callback URL (e.g., `https://your-domain.com/oauth/callback`)
+3. Nestr will provide you with a `client_id` and `client_secret`
+4. Set the following environment variables:
+
+```bash
+NESTR_OAUTH_CLIENT_ID=your-client-id
+NESTR_OAUTH_CLIENT_SECRET=your-client-secret
+```
+
+Once configured, users can authenticate via `/oauth/authorize` on your server.
 
 ## Environment Variables
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `NESTR_API_KEY` | Your Nestr API key | Yes |
+| `NESTR_API_KEY` | Nestr API key (full workspace access) | Yes* |
+| `NESTR_OAUTH_TOKEN` | OAuth token (respects user permissions) | Yes* |
 | `NESTR_API_BASE` | API base URL (default: `https://app.nestr.io/api`) | No |
+| `NESTR_OAUTH_CLIENT_ID` | OAuth client ID (for self-hosted OAuth) | No |
+| `NESTR_OAUTH_CLIENT_SECRET` | OAuth client secret (for self-hosted OAuth) | No |
+
+\* Either `NESTR_API_KEY` or `NESTR_OAUTH_TOKEN` is required.
 
 ## Development
 
@@ -137,10 +201,11 @@ A hosted version is available at [mcp.nestr.io](https://mcp.nestr.io) for users 
 
 ## Security
 
-- Never commit your API key to version control
-- Your API key provides full access to your workspace
-- Store it securely (e.g., in a password manager)
-- Rotate keys if you suspect they've been compromised
+- Never commit your API key or OAuth token to version control
+- API keys provide full workspace access - consider using OAuth for more granular permissions
+- OAuth tokens respect user permissions and are the recommended approach for shared environments
+- Store credentials securely (e.g., in a password manager or secrets manager)
+- Rotate keys/tokens if you suspect they've been compromised
 
 ## Resources
 
