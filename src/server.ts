@@ -117,13 +117,75 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 - \`meeting\` - A calendar meeting
 - \`prepared-tension\` - A tension (gap between current and desired state). Used for meeting agenda items, async governance proposals, and general tension processing. Central to Holacracy practice.
 
+## Search Query Syntax
+
+The \`nestr_search\` tool supports powerful query operators. Combine multiple operators with spaces (AND logic) or use commas within an operator (OR logic).
+
+### Common Search Operators
+
+| Operator | Example | Description |
+|----------|---------|-------------|
+| \`label:\` | \`label:role\` | Filter by label type |
+| \`label:!\` | \`label:!project\` | Exclude label |
+| \`assignee:\` | \`assignee:me\` | Filter by assignee (use \`me\` for current user) |
+| \`completed:\` | \`completed:false\` | Filter by completion status |
+| \`has:\` | \`has:due\` | Items with a property (due, children, etc.) |
+| \`depth:\` | \`depth:1\` | Limit search depth (1 = direct children only) |
+| \`createdby:\` | \`createdby:me\` | Filter by creator |
+
+### Field Value Search
+
+Search by label-specific field values using \`label->field:value\`:
+- \`project->status:Current\` - Projects with status "Current"
+- \`project->status:Current,Future\` - Status is Current OR Future
+- \`project->status:!Done\` - Status is NOT Done
+
+### Search Examples
+
+\`\`\`
+label:role
+  -> Find all roles
+
+label:project assignee:me completed:false
+  -> My incomplete projects
+
+label:project project->status:Current
+  -> Projects with status "Current"
+
+label:circle depth:1
+  -> Direct sub-circles only
+
+has:due completed:false
+  -> Incomplete items with due dates
+
+label:meeting has:!completed
+  -> Meetings not yet completed
+
+label:policy spending
+  -> Policies mentioning spending
+
+label:policy budget cost expense
+  -> Policies about budgets, costs, or expenses
+
+label:accountability customer
+  -> Accountabilities related to customers
+\`\`\`
+
+### Additional Operators
+
+- \`parent-label:circle\` - Items under a circle
+- \`in:nestId\` - Search within specific nest
+- \`updated-date:past_7_days\` - Recently updated (also: past_30_days, this_month, etc.)
+- \`type:comment\` - Search comments/posts
+- \`deleted:true\` - Include deleted items
+
 ## Common Workflows
 
 - **Task Management**: Create nests with "todo" label, update status fields, add comments for updates
 - **Project Tracking**: List projects, get children to see tasks, check insights for metrics
 - **Team Structure**: List circles to see teams, get roles to understand accountabilities and domains
 - **Finding Accountabilities/Domains**: Use \`nestr_get_circle_roles\` for a circle's roles with their accountabilities, or \`nestr_get_nest_children\` on a specific role
-- **Search & Discovery**: Use search to find any item by title or content across the workspace
+- **Search & Discovery**: Use search with operators like \`label:role\` or \`assignee:me completed:false\`
 `.trim();
 
 export function createServer(config: NestrMcpServerConfig = {}): Server {

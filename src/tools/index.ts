@@ -197,12 +197,12 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_search",
-    description: "Search for nests (tasks, projects, roles, circles) within a workspace",
+    description: "Search for nests within a workspace. Supports operators: label:role (filter by type), assignee:me, completed:false, has:due, depth:1, project->status:Current (field values). Combine with spaces for AND, commas for OR. Examples: 'label:project assignee:me', 'label:role', 'marketing label:todo'",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID to search in" },
-        query: { type: "string", description: "Search query" },
+        query: { type: "string", description: "Search query with optional operators (e.g., 'label:role', 'assignee:me completed:false')" },
         limit: { type: "number", description: "Maximum results (default 20)" },
       },
       required: ["workspaceId", "query"],
