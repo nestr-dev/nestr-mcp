@@ -94,6 +94,7 @@ export const schemas = {
     purpose: z.string().optional().describe("New purpose"),
     fields: z.record(z.unknown()).optional().describe("Field updates (e.g., status)"),
     users: z.array(z.string()).optional().describe("User IDs to assign"),
+    data: z.record(z.unknown()).optional().describe("Data updates (e.g., { botContext: '# Context...' })"),
   }),
 
   deleteNest: z.object({
@@ -257,7 +258,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_nest",
-    description: "Update properties of an existing nest",
+    description: "Update properties of an existing nest. Use data.botContext to store role-specific AI context (markdown format) that persists across sessions.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -272,6 +273,10 @@ export const toolDefinitions = [
           type: "array",
           items: { type: "string" },
           description: "User IDs to assign",
+        },
+        data: {
+          type: "object",
+          description: "Data updates (e.g., { botContext: '# Role Context\\n...' } for AI memory)",
         },
       },
       required: ["nestId"],
@@ -531,6 +536,7 @@ export async function handleToolCall(
           purpose: parsed.purpose,
           fields: parsed.fields,
           users: parsed.users,
+          data: parsed.data as Record<string, unknown> | undefined,
         });
         return formatResult({ message: "Nest updated successfully", nest });
       }

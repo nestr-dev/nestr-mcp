@@ -226,18 +226,19 @@ export class NestrClient {
 
   async updateNest(
     nestId: string,
-    data: Partial<{
+    updates: Partial<{
       title: string;
       purpose: string;
       description: string;
       labels: string[];
       fields: Record<string, unknown>;
       users: string[];
+      data: Record<string, unknown>;
     }>
   ): Promise<Nest> {
     return this.fetch<Nest>(`/nests/${nestId}`, {
       method: "PATCH",
-      body: JSON.stringify(data),
+      body: JSON.stringify(updates),
     });
   }
 

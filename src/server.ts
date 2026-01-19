@@ -122,6 +122,12 @@ This cascades through the entire hierarchy, which may be many layers deep. When 
    - Ensure new projects and tasks align with and serve the circle's strategy
    - Use strategy and purpose to prioritize work and define clear outcomes
    - When proposing governance changes, consider how they support the circle's purpose
+7. **Use \`data.botContext\` to maintain AI memory** across sessions:
+   - Any nest can store AI context in \`data.botContext\` (markdown format) to persist learned information
+   - Update via \`nestr_update_nest\` with \`{ data: { botContext: "# Context\\n\\n..." } }\`
+   - Check for existing \`data.botContext\` when working on a nest to pick up prior context
+   - **Especially valuable for roles and circles**: Store information relevant to the *role*, not the person filling it (e.g., key contacts, recurring processes, domain knowledge). This context transfers automatically when the role is assigned to a different user.
+   - Enables future agentic work: AI agents can autonomously energize roles, maintaining continuity as they learn preferences, make decisions, and accumulate role-specific knowledge over time
 
 ## Important Labels
 
