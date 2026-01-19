@@ -14,7 +14,6 @@ import { getOAuthConfig } from "./config.js";
  */
 export interface PendingAuth {
   state: string;
-  codeVerifier: string;
   redirectUri: string;
   createdAt: number;
   // Where to redirect after successful auth (for browser-based flow)
@@ -51,6 +50,9 @@ const oauthSessions = new Map<string, OAuthSession>();
 
 // Cleanup interval for expired pending auths (5 minutes)
 const PENDING_AUTH_TTL = 5 * 60 * 1000;
+
+// Buffer time before token expiration to trigger refresh (60 seconds)
+const TOKEN_EXPIRY_BUFFER_MS = 60 * 1000;
 
 /**
  * Generate a cryptographically secure random string
@@ -102,7 +104,6 @@ export function createAuthorizationRequest(
   // Store pending auth (no PKCE - Nestr doesn't support it)
   pendingAuths.set(state, {
     state,
-    codeVerifier: "", // Not used - PKCE disabled
     redirectUri,
     createdAt: Date.now(),
     finalRedirect,
@@ -146,12 +147,9 @@ export function getPendingAuth(state: string): PendingAuth | undefined {
 
 /**
  * Exchange authorization code for tokens
- *
- * Note: PKCE (code_verifier) is not used because Nestr doesn't support it.
  */
 export async function exchangeCodeForTokens(
   code: string,
-  _codeVerifier: string, // Unused - PKCE disabled
   redirectUri: string
 ): Promise<TokenResponse> {
   const config = getOAuthConfig();
@@ -253,8 +251,8 @@ export async function getOAuthSession(
     return undefined;
   }
 
-  // Check if token is expired (with 60s buffer)
-  if (Date.now() >= session.expiresAt - 60000) {
+  // Check if token is expired (with buffer to allow for refresh)
+  if (Date.now() >= session.expiresAt - TOKEN_EXPIRY_BUFFER_MS) {
     // Try to refresh
     if (session.refreshToken) {
       try {

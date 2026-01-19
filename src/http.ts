@@ -36,7 +36,6 @@ import {
   getPendingAuth,
   exchangeCodeForTokens,
   storeOAuthSession,
-  getOAuthSession,
 } from "./oauth/flow.js";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -45,6 +44,20 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 3000;
+
+/**
+ * Escape HTML special characters to prevent XSS
+ */
+function escapeHtml(text: string): string {
+  const htmlEscapes: Record<string, string> = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  };
+  return text.replace(/[&<>"']/g, (char) => htmlEscapes[char]);
+}
 
 const app = express();
 app.use(express.json());
@@ -154,13 +167,14 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
   // Handle OAuth errors
   if (error) {
     console.error(`OAuth error: ${error} - ${error_description}`);
+    const safeError = escapeHtml(String(error_description || error));
     res.status(400).send(`
       <!DOCTYPE html>
       <html>
         <head><title>Authorization Failed</title></head>
         <body style="font-family: system-ui; padding: 40px; text-align: center;">
           <h1>Authorization Failed</h1>
-          <p>${error_description || error}</p>
+          <p>${safeError}</p>
           <p><a href="/">Return to home</a></p>
         </body>
       </html>
@@ -206,7 +220,6 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
     console.log("OAuth: Exchanging authorization code for tokens");
     const tokens = await exchangeCodeForTokens(
       code as string,
-      pending.codeVerifier,
       pending.redirectUri
     );
 
@@ -217,14 +230,31 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
     console.log(`OAuth: Successfully authenticated, session: ${oauthSessionId}`);
 
     // If there's a final redirect, redirect there with the token
+    // Validate redirect URL to prevent open redirect attacks
     if (pending.finalRedirect) {
-      const redirectUrl = new URL(pending.finalRedirect);
-      redirectUrl.searchParams.set("oauth_session", oauthSessionId);
-      res.redirect(redirectUrl.toString());
-      return;
+      try {
+        const serverOrigin = getServerBaseUrl(req);
+        const redirectUrl = new URL(pending.finalRedirect, serverOrigin);
+        // Only allow redirects to same origin or relative paths
+        if (redirectUrl.origin === new URL(serverOrigin).origin) {
+          redirectUrl.searchParams.set("oauth_session", oauthSessionId);
+          res.redirect(redirectUrl.toString());
+          return;
+        }
+        console.warn(`OAuth: Blocked redirect to external origin: ${redirectUrl.origin}`);
+      } catch {
+        console.warn(`OAuth: Invalid redirect URL: ${pending.finalRedirect}`);
+      }
+      // Fall through to show success page if redirect is invalid
     }
 
-    // Otherwise show success page with the token
+    // Otherwise show success page with the token (truncated for security)
+    const tokenPreview = tokens.access_token.length > 16
+      ? `${tokens.access_token.slice(0, 8)}...${tokens.access_token.slice(-4)}`
+      : tokens.access_token;
+    // Escape the full token for safe inclusion in JavaScript
+    const safeToken = JSON.stringify(tokens.access_token);
+
     res.send(`
       <!DOCTYPE html>
       <html>
@@ -234,9 +264,12 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
             body { font-family: system-ui; padding: 40px; max-width: 600px; margin: 0 auto; }
             .success { color: #22c55e; }
             .token-box { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 8px; word-break: break-all; margin: 16px 0; }
-            .copy-btn { background: #6366f1; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
+            .copy-btn { background: #6366f1; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 8px; }
             .copy-btn:hover { background: #4f46e5; }
+            .show-btn { background: #475569; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
+            .show-btn:hover { background: #334155; }
             code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
+            .copied { background: #22c55e !important; }
           </style>
         </head>
         <body>
@@ -244,17 +277,34 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
           <p>You've successfully authenticated with Nestr. Your OAuth token is ready to use.</p>
 
           <h3>Your Access Token:</h3>
-          <div class="token-box" id="token">${tokens.access_token}</div>
-          <button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('token').textContent)">
-            Copy Token
-          </button>
+          <div class="token-box" id="token">${tokenPreview}</div>
+          <button class="copy-btn" id="copyBtn" onclick="copyToken()">Copy Token</button>
+          <button class="show-btn" id="showBtn" onclick="toggleToken()">Show Full Token</button>
+
+          <script>
+            const fullToken = ${safeToken};
+            const preview = "${tokenPreview}";
+            let showing = false;
+            function copyToken() {
+              navigator.clipboard.writeText(fullToken);
+              const btn = document.getElementById('copyBtn');
+              btn.textContent = 'Copied!';
+              btn.classList.add('copied');
+              setTimeout(() => { btn.textContent = 'Copy Token'; btn.classList.remove('copied'); }, 2000);
+            }
+            function toggleToken() {
+              showing = !showing;
+              document.getElementById('token').textContent = showing ? fullToken : preview;
+              document.getElementById('showBtn').textContent = showing ? 'Hide Token' : 'Show Full Token';
+            }
+          </script>
 
           <h3>How to Use:</h3>
           <p>Use this token in the <code>Authorization</code> header:</p>
-          <pre class="token-box">Authorization: Bearer ${tokens.access_token.slice(0, 20)}...</pre>
+          <pre class="token-box">Authorization: Bearer ${tokenPreview}</pre>
 
           <p>Or set it as an environment variable:</p>
-          <pre class="token-box">export NESTR_OAUTH_TOKEN="${tokens.access_token.slice(0, 20)}..."</pre>
+          <pre class="token-box">export NESTR_OAUTH_TOKEN="&lt;your-token&gt;"</pre>
 
           ${tokens.expires_in ? `<p><small>This token expires in ${Math.round(tokens.expires_in / 60)} minutes.</small></p>` : ""}
 
@@ -264,13 +314,16 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
     `);
   } catch (error) {
     console.error("OAuth callback error:", error);
+    const safeErrorMsg = escapeHtml(
+      error instanceof Error ? error.message : "Failed to exchange authorization code for tokens"
+    );
     res.status(500).send(`
       <!DOCTYPE html>
       <html>
         <head><title>Token Exchange Failed</title></head>
         <body style="font-family: system-ui; padding: 40px; text-align: center;">
           <h1>Token Exchange Failed</h1>
-          <p>${error instanceof Error ? error.message : "Failed to exchange authorization code for tokens"}</p>
+          <p>${safeErrorMsg}</p>
           <p><a href="/oauth/authorize">Try Again</a></p>
         </body>
       </html>
@@ -409,10 +462,8 @@ function getAuthToken(req: Request): string | null {
  * Directs MCP clients to the OAuth protected resource metadata
  */
 function buildWwwAuthenticateHeader(req: Request): string {
-  const metadata = getProtectedResourceMetadata();
-  const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-  const host = req.headers["x-forwarded-host"] || req.get("host");
-  const metadataUrl = `${protocol}://${host}/.well-known/oauth-protected-resource`;
+  const baseUrl = getServerBaseUrl(req);
+  const metadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
 
   return `Bearer resource_metadata="${metadataUrl}"`;
 }

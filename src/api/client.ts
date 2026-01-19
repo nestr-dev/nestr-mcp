@@ -65,6 +65,13 @@ export interface Insight {
   goal?: number;
 }
 
+export interface WorkspaceApp {
+  _id: string;
+  title: string;
+  description?: string;
+  enabled: boolean;
+}
+
 export class NestrApiError extends Error {
   constructor(
     message: string,
@@ -384,6 +391,12 @@ export class NestrClient {
     return this.fetch<unknown[]>(
       `/workspaces/${workspaceId}/insights/${metricId}/history${query ? `?${query}` : ""}`
     );
+  }
+
+  // ============ APPS ============
+
+  async getWorkspaceApps(workspaceId: string): Promise<WorkspaceApp[]> {
+    return this.fetch<WorkspaceApp[]>(`/workspaces/${workspaceId}/apps`);
   }
 }
 

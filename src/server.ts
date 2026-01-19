@@ -28,6 +28,8 @@ Most workspaces are organizational, representing a self-organized team. Check th
 - **Organizational Workspace** (most common): Has the "anchor-circle" label. The workspace IS the anchor circle of a self-organized team using Holacracy/Sociocracy/Teal governance. Contains sub-circles, roles with accountabilities and domains, and collaborative projects.
 - **Personal Workspace**: No "anchor-circle" label. A personal space where an individual tracks their own work and projects.
 
+The specific self-organization methodology is stored in \`workspace.data['self_organisation_type']\` (e.g., "holacracy", "sociocracy", "custom").
+
 ## Core Concepts
 
 - **Workspace**: Top-level container - either an organization's anchor circle or a personal workspace
@@ -52,15 +54,15 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 - \`anchor-circle\` - The workspace itself when it's an organization
 - \`circle\` - A sub-circle/team within the organization
 - \`role\` - A role with accountabilities and domains
-- \`accountability\` - A responsibility of a role (child nest of role)
-- \`domain\` - Decision authority of a role (child nest of role)
+- \`accountability\` - An ongoing activity the role is responsible for performing (Holacracy: "an ongoing activity that the Role will enact")
+- \`domain\` - An area the role has exclusive control over; others must get permission to impact it (Holacracy: "something the Role may exclusively control on behalf of the Organization")
+- \`policy\` - A grant or restriction of authority affecting how others interact with a domain or process. Can live on a domain, role, or circle directly.
 
-**Note:** Accountabilities and domains are child-nests of roles/circles. Use \`nestr_get_circle_roles\` or \`nestr_get_nest_children\` to retrieve them. The generic \`nestr_search\` won't return them by default.
+**Note:** Accountabilities, domains, and policies are child-nests of roles/circles. Use \`nestr_get_circle_roles\` or \`nestr_get_nest_children\` to retrieve them. The generic \`nestr_search\` won't return them by default.
 
 **Meetings & Operations:**
 - \`metric\` - A metric tracked by a role/circle
 - \`checklist\` - A recurring checklist item
-- \`policy\` - A policy governing a domain
 - \`governance\` - A governance meeting
 - \`tactical\` - A tactical/operational meeting
 

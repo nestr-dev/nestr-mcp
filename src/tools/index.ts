@@ -165,6 +165,10 @@ export const schemas = {
     to: z.string().optional().describe("End date (ISO format)"),
     limit: z.number().optional().describe("Maximum data points"),
   }),
+
+  getWorkspaceApps: z.object({
+    workspaceId: z.string().describe("Workspace ID"),
+  }),
 };
 
 // Tool definitions for MCP
@@ -431,6 +435,17 @@ export const toolDefinitions = [
       required: ["workspaceId", "metricId"],
     },
   },
+  {
+    name: "nestr_get_workspace_apps",
+    description: "List enabled apps/features in a workspace. Shows which Nestr modules are active (e.g., goals, metrics, notes, feed). Check this before using features - if an app is disabled, its related tools won't return useful data.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+      },
+      required: ["workspaceId"],
+    },
+  },
 ];
 
 // Tool handler type
@@ -621,6 +636,12 @@ export async function handleToolCall(
           }
         );
         return formatResult(history);
+      }
+
+      case "nestr_get_workspace_apps": {
+        const parsed = schemas.getWorkspaceApps.parse(args);
+        const apps = await client.getWorkspaceApps(parsed.workspaceId);
+        return formatResult(apps);
       }
 
       default:
