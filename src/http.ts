@@ -632,8 +632,6 @@ app.post("/oauth/token", express.urlencoded({ extended: true }), async (req: Req
         body.client_secret = config.clientSecret;
       }
 
-      console.log(`OAuth Token: Proxying authorization_code request to Nestr (redirect_uri: ${body.redirect_uri})`);
-
       const response = await fetch(config.tokenEndpoint, {
         method: "POST",
         headers: {
