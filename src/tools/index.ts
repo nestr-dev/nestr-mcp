@@ -82,20 +82,20 @@ export const schemas = {
 
   createNest: z.object({
     parentId: z.string().describe("Parent nest ID (workspace, circle, or project)"),
-    title: z.string().describe("Title of the new nest"),
-    purpose: z.string().optional().describe("Purpose or description"),
+    title: z.string().describe("Title of the new nest (plain text, HTML stripped)"),
+    purpose: z.string().optional().describe("Purpose or description (supports HTML)"),
     labels: z.array(z.string()).optional().describe("Label IDs to apply"),
     users: z.array(z.string()).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
   }),
 
   updateNest: z.object({
     nestId: z.string().describe("Nest ID to update"),
-    title: z.string().optional().describe("New title"),
-    purpose: z.string().optional().describe("New purpose"),
+    title: z.string().optional().describe("New title (plain text, HTML stripped)"),
+    purpose: z.string().optional().describe("New purpose (supports HTML)"),
     parentId: z.string().optional().describe("New parent ID (move nest to different location, e.g., move inbox item to a project)"),
     fields: z.record(z.unknown()).optional().describe("Field updates (e.g., status)"),
     users: z.array(z.string()).optional().describe("User IDs to assign"),
-    data: z.record(z.unknown()).optional().describe("Data updates (e.g., { botContext: '# Context...' })"),
+    data: z.record(z.unknown()).optional().describe("Data updates (e.g., { botContext: 'Key info...' }, plain text)"),
   }),
 
   deleteNest: z.object({
@@ -104,7 +104,7 @@ export const schemas = {
 
   addComment: z.object({
     nestId: z.string().describe("Nest ID to comment on"),
-    body: z.string().describe("Comment text (supports @mentions)"),
+    body: z.string().describe("Comment text (supports HTML and @mentions)"),
   }),
 
   listCircles: z.object({
@@ -180,8 +180,8 @@ export const schemas = {
   }),
 
   createInboxItem: z.object({
-    title: z.string().describe("Title of the inbox item (what you captured)"),
-    description: z.string().optional().describe("Additional details or context"),
+    title: z.string().describe("Title of the inbox item (plain text, HTML stripped)"),
+    description: z.string().optional().describe("Additional details or context (supports HTML)"),
   }),
 
   getInboxItem: z.object({
@@ -190,8 +190,8 @@ export const schemas = {
 
   updateInboxItem: z.object({
     nestId: z.string().describe("Inbox item ID"),
-    title: z.string().optional().describe("Updated title"),
-    description: z.string().optional().describe("Updated description"),
+    title: z.string().optional().describe("Updated title (plain text, HTML stripped)"),
+    description: z.string().optional().describe("Updated description (supports HTML)"),
     completed: z.boolean().optional().describe("Mark as completed (processed)"),
     data: z.record(z.unknown()).optional().describe("Custom data storage"),
   }),
@@ -263,8 +263,8 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         parentId: { type: "string", description: "Parent nest ID (workspace, circle, or project)" },
-        title: { type: "string", description: "Title of the new nest" },
-        purpose: { type: "string", description: "Purpose or description" },
+        title: { type: "string", description: "Title of the new nest (plain text, HTML tags stripped)" },
+        purpose: { type: "string", description: "Purpose or description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
         labels: {
           type: "array",
           items: { type: "string" },
@@ -281,13 +281,13 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_nest",
-    description: "Update properties of an existing nest. Use parentId to move a nest (e.g., inbox item to a project). Use data.botContext to store AI context (markdown format) that persists across sessions.",
+    description: "Update properties of an existing nest. Use parentId to move a nest (e.g., inbox item to a project). Use data.botContext to store AI context (plain text) that persists across sessions.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID to update" },
-        title: { type: "string", description: "New title" },
-        purpose: { type: "string", description: "New purpose" },
+        title: { type: "string", description: "New title (plain text, HTML tags stripped)" },
+        purpose: { type: "string", description: "New purpose (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
         parentId: { type: "string", description: "New parent ID (move nest to different location)" },
         fields: {
           type: "object",
@@ -300,7 +300,7 @@ export const toolDefinitions = [
         },
         data: {
           type: "object",
-          description: "Data updates (e.g., { botContext: '# Context\\n...' } for AI memory)",
+          description: "Data updates (e.g., { botContext: 'Key info here...' } for AI memory, plain text)",
         },
       },
       required: ["nestId"],
@@ -324,7 +324,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID to comment on" },
-        body: { type: "string", description: "Comment text (supports @mentions)" },
+        body: { type: "string", description: "Comment text (supports HTML and @mentions)" },
       },
       required: ["nestId", "body"],
     },
@@ -504,8 +504,8 @@ export const toolDefinitions = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        title: { type: "string", description: "Title of the inbox item (what you captured)" },
-        description: { type: "string", description: "Additional details or context" },
+        title: { type: "string", description: "Title of the inbox item (plain text, HTML stripped)" },
+        description: { type: "string", description: "Additional details or context (supports HTML)" },
       },
       required: ["title"],
     },
@@ -528,8 +528,8 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Inbox item ID" },
-        title: { type: "string", description: "Updated title" },
-        description: { type: "string", description: "Updated description" },
+        title: { type: "string", description: "Updated title (plain text, HTML stripped)" },
+        description: { type: "string", description: "Updated description (supports HTML)" },
         completed: { type: "boolean", description: "Mark as completed (processed)" },
         data: { type: "object", description: "Custom data storage" },
       },

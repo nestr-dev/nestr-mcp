@@ -38,13 +38,27 @@ The specific self-organization methodology is stored in \`workspace.data['self_o
 - **Role**: A set of responsibilities (accountabilities) and decision rights (domains) that a person energizes
 - **Label**: Tags that define what type of nest something is (e.g., "project", "todo", "meeting", "anchor-circle")
 
+## Content Format
+
+Nestr uses different formats for different fields:
+
+- **\`title\`**: Plain text only. HTML tags are stripped. Keep titles concise.
+- **\`purpose\`, \`description\`**: HTML supported. Use basic tags: \`<b>\`, \`<i>\`, \`<code>\`, \`<ul>\`, \`<ol>\`, \`<li>\`, \`<a href="...">\`, \`<br>\`. Markdown is NOT supported (will display as literal text).
+- **Comment \`body\`**: HTML supported (same as above). Use \`@username\` for mentions.
+- **\`data.botContext\`**: Plain text. Stored as-is for AI context persistence, not rendered in UI.
+
+**Example HTML in purpose:**
+\`\`\`html
+Ensure <b>all customer requests</b> are handled within <i>24 hours</i>. See <a href="https://example.com/sla">SLA policy</a>.
+\`\`\`
+
 ## Nest Model Architecture
 
 Every nest has these **standard fields**:
 - \`_id\` - Unique identifier
-- \`title\` - Display name
-- \`purpose\` - Why this nest exists (especially important for roles/circles)
-- \`description\` - Detailed description (may contain rich text)
+- \`title\` - Display name (plain text, HTML stripped)
+- \`purpose\` - Why this nest exists, supports HTML (especially important for roles/circles)
+- \`description\` - Detailed description (supports HTML)
 - \`parentId\` - ID of parent nest
 - \`ancestors\` - Array of ancestor IDs (for hierarchy traversal)
 - \`labels\` - Array of label IDs that define what type this nest is
@@ -123,8 +137,8 @@ This cascades through the entire hierarchy, which may be many layers deep. When 
    - Use strategy and purpose to prioritize work and define clear outcomes
    - When proposing governance changes, consider how they support the circle's purpose
 7. **Use \`data.botContext\` to maintain AI memory** across sessions:
-   - Any nest can store AI context in \`data.botContext\` (markdown format) to persist learned information
-   - Update via \`nestr_update_nest\` with \`{ data: { botContext: "# Context\\n\\n..." } }\`
+   - Any nest can store AI context in \`data.botContext\` (plain text) to persist learned information
+   - Update via \`nestr_update_nest\` with \`{ data: { botContext: "Context: key info here..." } }\`
    - Check for existing \`data.botContext\` when working on a nest to pick up prior context
    - **Especially valuable for roles and circles**: Store information relevant to the *role*, not the person filling it (e.g., key contacts, recurring processes, domain knowledge). This context transfers automatically when the role is assigned to a different user.
    - Enables future agentic work: AI agents can autonomously energize roles, maintaining continuity as they learn preferences, make decisions, and accumulate role-specific knowledge over time
