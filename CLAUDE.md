@@ -146,7 +146,7 @@ To enable the OAuth flow, register an OAuth client in Nestr:
 ## Key Files
 
 - **src/server.ts** - Creates the MCP server, registers tools and resources
-- **src/tools/index.ts** - Defines all 22 MCP tools with Zod schemas and handlers
+- **src/tools/index.ts** - Defines all 26 MCP tools with Zod schemas and handlers
 - **src/api/client.ts** - Type-safe wrapper for Nestr REST API
 - **src/oauth/config.ts** - OAuth configuration and metadata endpoints (RFC 9728)
 - **src/oauth/flow.ts** - OAuth authorization code flow
@@ -180,6 +180,10 @@ The server exposes these tools to AI assistants:
 | `nestr_get_insights` | `GET /workspaces/{id}/insights` |
 | `nestr_get_insight_history` | `GET /workspaces/{id}/insights/{mid}/history` |
 | `nestr_get_workspace_apps` | `GET /workspaces/{id}/apps` |
+| `nestr_list_inbox` | `GET /users/me/inbox` (OAuth only) |
+| `nestr_create_inbox_item` | `POST /users/me/inbox` (OAuth only) |
+| `nestr_get_inbox_item` | `GET /users/me/inbox/{id}` (OAuth only) |
+| `nestr_update_inbox_item` | `PATCH /users/me/inbox/{id}` (OAuth only) |
 
 ## Adding a New Tool
 
@@ -257,6 +261,7 @@ npm run dev:http
 - **Circle** - Team/department with roles
 - **Role** - Position with accountabilities and domains
 - **Label** - Tag that gives meaning to nests (e.g., "project", "todo")
+- **Inbox** - Collection point for quick capture (OAuth only)
 
 ## Resources
 

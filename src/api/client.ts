@@ -230,6 +230,7 @@ export class NestrClient {
       title: string;
       purpose: string;
       description: string;
+      parentId: string;
       labels: string[];
       fields: Record<string, unknown>;
       users: string[];
@@ -413,6 +414,65 @@ export class NestrClient {
 
   async getWorkspaceApps(workspaceId: string): Promise<WorkspaceApp[]> {
     return this.fetch<WorkspaceApp[]>(`/workspaces/${workspaceId}/apps`);
+  }
+
+  // ============ INBOX (requires OAuth token) ============
+
+  /**
+   * List items in the current user's inbox.
+   * Requires OAuth token (user-scoped) - does not work with workspace API keys.
+   */
+  async listInbox(options?: {
+    completedAfter?: string;
+  }): Promise<Nest[]> {
+    const params = new URLSearchParams();
+    if (options?.completedAfter) params.set("completedAfter", options.completedAfter);
+
+    const query = params.toString();
+    return this.fetch<Nest[]>(`/users/me/inbox${query ? `?${query}` : ""}`);
+  }
+
+  /**
+   * Create a new item in the current user's inbox (quick capture).
+   * Requires OAuth token (user-scoped) - does not work with workspace API keys.
+   */
+  async createInboxItem(data: {
+    title: string;
+    description?: string;
+  }): Promise<Nest> {
+    return this.fetch<Nest>("/users/me/inbox", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  /**
+   * Get a single inbox item by ID.
+   * Requires OAuth token (user-scoped) - does not work with workspace API keys.
+   */
+  async getInboxItem(nestId: string, cleanText = false): Promise<Nest> {
+    const params = cleanText ? "?cleanText=true" : "";
+    return this.fetch<Nest>(`/users/me/inbox/${nestId}${params}`);
+  }
+
+  /**
+   * Update an inbox item.
+   * Requires OAuth token (user-scoped) - does not work with workspace API keys.
+   * To move out of inbox, use nestr_update_nest to change parentId.
+   */
+  async updateInboxItem(
+    nestId: string,
+    updates: Partial<{
+      title: string;
+      description: string;
+      completed: boolean;
+      data: Record<string, unknown>;
+    }>
+  ): Promise<Nest> {
+    return this.fetch<Nest>(`/users/me/inbox/${nestId}`, {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    });
   }
 }
 

@@ -155,7 +155,7 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 
 **Work Tracking:**
 - \`project\` - An outcome requiring multiple steps to complete. Define in past tense as what "done" looks like (e.g., "Website redesign launched", "Q1 report published"). Has status: Future/Current/Waiting/Done.
-- \`todo\` - A single, concrete action that can be done in one sitting (e.g., "Call supplier about pricing", "Draft intro paragraph"). The next physical step to move something forward.
+- *(no label)* - A nest without labels is a todo/action: a single, concrete action that can be done in one sitting (e.g., "Call supplier about pricing", "Draft intro paragraph"). The next physical step to move something forward.
 - \`note\` - A simple note
 - \`meeting\` - A calendar meeting
 - \`prepared-tension\` - A tension (gap between current and desired state). Used for meeting agenda items, async governance proposals, and general tension processing. Central to Holacracy practice.
@@ -264,13 +264,45 @@ For workspace admins, link to settings with \`/n/{workspaceId}?s=1\` plus:
 - \`#workspace-apps\` - Enabled apps/features
 - \`#plan\` - Subscription plan
 
+## Inbox (Quick Capture)
+
+The inbox is a collection point for capturing "stuff" that still needs processing. Use it for:
+- Quick capture of thoughts, ideas, or tasks without deciding where they belong
+- Collecting items that need clarification before becoming projects or actions
+- Temporary holding area before organizing into the proper location
+
+**Note:** Inbox tools require OAuth authentication (user-scoped token). They won't work with workspace API keys.
+
+### Inbox Workflow
+
+1. **Capture**: Use \`nestr_create_inbox_item\` to quickly add items without organizing
+2. **Review**: Use \`nestr_list_inbox\` to see items needing processing
+3. **Process**: For each item, decide:
+   - **Delete**: If not needed, mark \`completed: true\`
+   - **Do it**: If quick (<2 min), do it now and mark complete
+   - **Organize**: Move to appropriate location with \`nestr_update_nest\` by setting \`parentId\`
+
+### Moving Items Out of Inbox
+
+To clarify/organize an inbox item, use \`nestr_update_nest\` to change its \`parentId\`:
+
+\`\`\`json
+{
+  "nestId": "inboxItemId",
+  "parentId": "projectOrRoleId"
+}
+\`\`\`
+
+This moves the item from inbox to the specified project, role, or other location. A nest without any labels is the basic building block - it's completable and acts as a todo/action item.
+
 ## Common Workflows
 
-- **Task Management**: Create nests with "todo" label, update status fields, add comments for updates
+- **Task Management**: Create nests (no label needed for basic todos), update completed status, add comments for updates
 - **Project Tracking**: List projects, get children to see tasks, check insights for metrics
 - **Team Structure**: List circles to see teams, get roles to understand accountabilities and domains
 - **Finding Accountabilities/Domains**: Use \`nestr_get_circle_roles\` for a circle's roles with their accountabilities, or \`nestr_get_nest_children\` on a specific role
 - **Search & Discovery**: Use search with operators like \`label:role\` or \`assignee:me completed:false\`
+- **Quick Capture**: Use inbox tools to capture thoughts without organizing, then process later
 `.trim();
 
 export function createServer(config: NestrMcpServerConfig = {}): Server {

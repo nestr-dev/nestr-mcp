@@ -92,6 +92,7 @@ export const schemas = {
     nestId: z.string().describe("Nest ID to update"),
     title: z.string().optional().describe("New title"),
     purpose: z.string().optional().describe("New purpose"),
+    parentId: z.string().optional().describe("New parent ID (move nest to different location, e.g., move inbox item to a project)"),
     fields: z.record(z.unknown()).optional().describe("Field updates (e.g., status)"),
     users: z.array(z.string()).optional().describe("User IDs to assign"),
     data: z.record(z.unknown()).optional().describe("Data updates (e.g., { botContext: '# Context...' })"),
@@ -171,6 +172,28 @@ export const schemas = {
 
   getWorkspaceApps: z.object({
     workspaceId: z.string().describe("Workspace ID"),
+  }),
+
+  // Inbox tools (require OAuth token)
+  listInbox: z.object({
+    completedAfter: z.string().optional().describe("Include completed items from this date (ISO format). If omitted, only non-completed items are returned."),
+  }),
+
+  createInboxItem: z.object({
+    title: z.string().describe("Title of the inbox item (what you captured)"),
+    description: z.string().optional().describe("Additional details or context"),
+  }),
+
+  getInboxItem: z.object({
+    nestId: z.string().describe("Inbox item ID"),
+  }),
+
+  updateInboxItem: z.object({
+    nestId: z.string().describe("Inbox item ID"),
+    title: z.string().optional().describe("Updated title"),
+    description: z.string().optional().describe("Updated description"),
+    completed: z.boolean().optional().describe("Mark as completed (processed)"),
+    data: z.record(z.unknown()).optional().describe("Custom data storage"),
   }),
 };
 
@@ -258,13 +281,14 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_nest",
-    description: "Update properties of an existing nest. Use data.botContext to store role-specific AI context (markdown format) that persists across sessions.",
+    description: "Update properties of an existing nest. Use parentId to move a nest (e.g., inbox item to a project). Use data.botContext to store AI context (markdown format) that persists across sessions.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID to update" },
         title: { type: "string", description: "New title" },
         purpose: { type: "string", description: "New purpose" },
+        parentId: { type: "string", description: "New parent ID (move nest to different location)" },
         fields: {
           type: "object",
           description: "Field updates (e.g., {status: 'done'})",
@@ -276,7 +300,7 @@ export const toolDefinitions = [
         },
         data: {
           type: "object",
-          description: "Data updates (e.g., { botContext: '# Role Context\\n...' } for AI memory)",
+          description: "Data updates (e.g., { botContext: '# Context\\n...' } for AI memory)",
         },
       },
       required: ["nestId"],
@@ -463,6 +487,55 @@ export const toolDefinitions = [
       required: ["workspaceId"],
     },
   },
+  // Inbox tools (require OAuth token - won't work with workspace API keys)
+  {
+    name: "nestr_list_inbox",
+    description: "List items in the user's inbox. The inbox is a collection point for 'stuff' that needs processing - ideas, tasks, notes captured quickly without organizing. Requires OAuth token (won't work with workspace API keys).",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        completedAfter: { type: "string", description: "Include completed items from this date (ISO format). If omitted, only non-completed items are returned." },
+      },
+    },
+  },
+  {
+    name: "nestr_create_inbox_item",
+    description: "Quick capture: add an item to the user's inbox for later processing. Use for capturing thoughts, ideas, or tasks without worrying about where they belong. Requires OAuth token.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        title: { type: "string", description: "Title of the inbox item (what you captured)" },
+        description: { type: "string", description: "Additional details or context" },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "nestr_get_inbox_item",
+    description: "Get details of a specific inbox item. Requires OAuth token.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Inbox item ID" },
+      },
+      required: ["nestId"],
+    },
+  },
+  {
+    name: "nestr_update_inbox_item",
+    description: "Update an inbox item. Set completed:true when processed. To move out of inbox (clarify/organize), use nestr_update_nest to change parentId to a project, role, or other location. Requires OAuth token.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Inbox item ID" },
+        title: { type: "string", description: "Updated title" },
+        description: { type: "string", description: "Updated description" },
+        completed: { type: "boolean", description: "Mark as completed (processed)" },
+        data: { type: "object", description: "Custom data storage" },
+      },
+      required: ["nestId"],
+    },
+  },
 ];
 
 // Tool handler type
@@ -534,6 +607,7 @@ export async function handleToolCall(
         const nest = await client.updateNest(parsed.nestId, {
           title: parsed.title,
           purpose: parsed.purpose,
+          parentId: parsed.parentId,
           fields: parsed.fields,
           users: parsed.users,
           data: parsed.data as Record<string, unknown> | undefined,
@@ -662,6 +736,41 @@ export async function handleToolCall(
         const parsed = schemas.getWorkspaceApps.parse(args);
         const apps = await client.getWorkspaceApps(parsed.workspaceId);
         return formatResult(apps);
+      }
+
+      // Inbox tools (require OAuth token)
+      case "nestr_list_inbox": {
+        const parsed = schemas.listInbox.parse(args);
+        const items = await client.listInbox({
+          completedAfter: parsed.completedAfter,
+        });
+        return formatResult(compactResponse(items));
+      }
+
+      case "nestr_create_inbox_item": {
+        const parsed = schemas.createInboxItem.parse(args);
+        const item = await client.createInboxItem({
+          title: parsed.title,
+          description: parsed.description,
+        });
+        return formatResult({ message: "Inbox item created successfully", item });
+      }
+
+      case "nestr_get_inbox_item": {
+        const parsed = schemas.getInboxItem.parse(args);
+        const item = await client.getInboxItem(parsed.nestId, true);
+        return formatResult(item);
+      }
+
+      case "nestr_update_inbox_item": {
+        const parsed = schemas.updateInboxItem.parse(args);
+        const item = await client.updateInboxItem(parsed.nestId, {
+          title: parsed.title,
+          description: parsed.description,
+          completed: parsed.completed,
+          data: parsed.data as Record<string, unknown> | undefined,
+        });
+        return formatResult({ message: "Inbox item updated successfully", item });
       }
 
       default:

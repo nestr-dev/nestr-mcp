@@ -103,6 +103,10 @@ Ask your AI assistant things like:
 | `nestr_get_insights` | Get self-organization and team health metrics |
 | `nestr_get_insight_history` | Get historical trend data for a metric |
 | `nestr_get_workspace_apps` | List enabled apps/features in workspace |
+| `nestr_list_inbox` | List items in user's inbox (OAuth only) |
+| `nestr_create_inbox_item` | Quick capture to inbox (OAuth only) |
+| `nestr_get_inbox_item` | Get inbox item details (OAuth only) |
+| `nestr_update_inbox_item` | Update inbox item (OAuth only) |
 
 ## Authentication
 
