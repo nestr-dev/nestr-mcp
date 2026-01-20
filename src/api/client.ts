@@ -235,6 +235,7 @@ export class NestrClient {
       fields: Record<string, unknown>;
       users: string[];
       data: Record<string, unknown>;
+      completed: boolean;
     }>
   ): Promise<Nest> {
     return this.fetch<Nest>(`/nests/${nestId}`, {

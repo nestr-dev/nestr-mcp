@@ -96,6 +96,7 @@ export const schemas = {
     fields: z.record(z.unknown()).optional().describe("Field updates (e.g., status)"),
     users: z.array(z.string()).optional().describe("User IDs to assign"),
     data: z.record(z.unknown()).optional().describe("Data updates (e.g., { botContext: 'Key info...' }, plain text)"),
+    completed: z.boolean().optional().describe("Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead."),
   }),
 
   deleteNest: z.object({
@@ -301,6 +302,10 @@ export const toolDefinitions = [
         data: {
           type: "object",
           description: "Data updates (e.g., { botContext: 'Key info here...' } for AI memory, plain text)",
+        },
+        completed: {
+          type: "boolean",
+          description: "Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead.",
         },
       },
       required: ["nestId"],
@@ -611,6 +616,7 @@ export async function handleToolCall(
           fields: parsed.fields,
           users: parsed.users,
           data: parsed.data as Record<string, unknown> | undefined,
+          completed: parsed.completed,
         });
         return formatResult({ message: "Nest updated successfully", nest });
       }
