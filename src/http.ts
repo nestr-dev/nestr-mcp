@@ -444,70 +444,10 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
 
     console.log(`OAuth: Successfully authenticated, session: ${oauthSessionId}`);
 
-    // Otherwise show success page with the token (truncated for security)
-    const tokenPreview = tokens.access_token.length > 16
-      ? `${tokens.access_token.slice(0, 8)}...${tokens.access_token.slice(-4)}`
-      : tokens.access_token;
-    // Escape the full token for safe inclusion in JavaScript
-    const safeToken = JSON.stringify(tokens.access_token);
-
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Authorization Successful</title>
-          <style>
-            body { font-family: system-ui; padding: 40px; max-width: 600px; margin: 0 auto; }
-            .success { color: #22c55e; }
-            .token-box { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 8px; word-break: break-all; margin: 16px 0; }
-            .copy-btn { background: #6366f1; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 8px; }
-            .copy-btn:hover { background: #4f46e5; }
-            .show-btn { background: #475569; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
-            .show-btn:hover { background: #334155; }
-            code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
-            .copied { background: #22c55e !important; }
-          </style>
-        </head>
-        <body>
-          <h1 class="success">Authorization Successful!</h1>
-          <p>You've successfully authenticated with Nestr. Your OAuth token is ready to use.</p>
-
-          <h3>Your Access Token:</h3>
-          <div class="token-box" id="token">${tokenPreview}</div>
-          <button class="copy-btn" id="copyBtn" onclick="copyToken()">Copy Token</button>
-          <button class="show-btn" id="showBtn" onclick="toggleToken()">Show Full Token</button>
-
-          <script>
-            const fullToken = ${safeToken};
-            const preview = "${tokenPreview}";
-            let showing = false;
-            function copyToken() {
-              navigator.clipboard.writeText(fullToken);
-              const btn = document.getElementById('copyBtn');
-              btn.textContent = 'Copied!';
-              btn.classList.add('copied');
-              setTimeout(() => { btn.textContent = 'Copy Token'; btn.classList.remove('copied'); }, 2000);
-            }
-            function toggleToken() {
-              showing = !showing;
-              document.getElementById('token').textContent = showing ? fullToken : preview;
-              document.getElementById('showBtn').textContent = showing ? 'Hide Token' : 'Show Full Token';
-            }
-          </script>
-
-          <h3>How to Use:</h3>
-          <p>Use this token in the <code>Authorization</code> header:</p>
-          <pre class="token-box">Authorization: Bearer ${tokenPreview}</pre>
-
-          <p>Or set it as an environment variable:</p>
-          <pre class="token-box">export NESTR_OAUTH_TOKEN="&lt;your-token&gt;"</pre>
-
-          ${tokens.expires_in ? `<p><small>This token expires in ${Math.round(tokens.expires_in / 60)} minutes.</small></p>` : ""}
-
-          <p><a href="/">Return to documentation</a></p>
-        </body>
-      </html>
-    `);
+    // Redirect to landing page with token in hash fragment (not sent to server logs)
+    // The landing page JavaScript will detect this and display the token in context
+    const encodedToken = encodeURIComponent(tokens.access_token);
+    res.redirect(`/#token=${encodedToken}`);
   } catch (error) {
     console.error("OAuth callback error:", error);
     const safeErrorMsg = escapeHtml(

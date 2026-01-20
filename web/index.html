@@ -12,10 +12,7 @@
   <header>
     <div class="container">
       <div class="logo">
-        <svg width="32" height="32" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="50" cy="50" r="45" stroke="currentColor" stroke-width="6"/>
-          <circle cx="50" cy="50" r="25" fill="currentColor"/>
-        </svg>
+        <img src="logo.png" alt="Nestr" width="32" height="32">
         <span>Nestr MCP</span>
       </div>
       <nav>
@@ -105,13 +102,7 @@
             </div>
 
             <div class="auth-details">
-              <div class="auth-detail active" id="auth-detail-oauth">
-                <div class="oauth-login-section">
-                  <a href="/oauth/authorize" class="btn primary oauth-btn">Login with Nestr</a>
-                  <p class="oauth-hint">Click to authenticate and get your OAuth token</p>
-                </div>
-                <p>MCP clients that support OAuth will automatically discover the authorization endpoints and guide you through the login flow.</p>
-              </div>
+              <div class="auth-detail active" id="auth-detail-oauth"></div>
 
               <div class="auth-detail" id="auth-detail-apikey">
                 <p>To get an API key:</p>
@@ -174,6 +165,7 @@
               <button class="tab active" data-tab="claude-desktop">Claude Desktop</button>
               <button class="tab" data-tab="claude-code">Claude Code</button>
               <button class="tab" data-tab="cursor">Cursor</button>
+              <button class="tab" data-tab="manual">Other / Manual</button>
             </div>
 
             <div class="tab-content active" id="claude-desktop">
@@ -282,20 +274,37 @@
                 <li><strong>macOS/Linux:</strong> <code>~/.cursor/mcp.json</code></li>
                 <li><strong>Windows:</strong> <code>%USERPROFILE%\.cursor\mcp.json</code></li>
               </ul>
-              <p>Add the following configuration:</p>
 
-              <pre class="config-block hosted oauth active"><code>{
+              <div class="config-block hosted oauth active">
+                <div class="token-section" id="cursor-hosted-oauth-token">
+                  <a href="/oauth/authorize" class="btn primary token-btn" onclick="saveStateBeforeOAuth('cursor')">Get Your Token</a>
+                  <span class="token-hint">Login with Nestr to get your OAuth token</span>
+                </div>
+                <div class="token-success" id="cursor-hosted-oauth-success" style="display: none;">
+                  <div class="token-success-header">Authentication Successful</div>
+                  <p>Copy this token into the configuration below:</p>
+                  <div class="token-display">
+                    <input type="text" class="token-value" readonly>
+                    <button class="btn primary" onclick="copyToken(this)">Copy</button>
+                  </div>
+                  <p class="copy-feedback" style="display: none;">Copied to clipboard!</p>
+                </div>
+                <p>Add the following configuration:</p>
+                <pre><code>{
   "mcpServers": {
     "nestr": {
       "url": "https://mcp.nestr.io/mcp",
       "headers": {
-        "Authorization": "Bearer your-oauth-token-here"
+        "Authorization": "Bearer <span class="token-placeholder">your-oauth-token-here</span>"
       }
     }
   }
 }</code></pre>
+              </div>
 
-              <pre class="config-block hosted apikey"><code>{
+              <div class="config-block hosted apikey">
+                <p>Add the following configuration:</p>
+                <pre><code>{
   "mcpServers": {
     "nestr": {
       "url": "https://mcp.nestr.io/mcp",
@@ -305,20 +314,39 @@
     }
   }
 }</code></pre>
+              </div>
 
-              <pre class="config-block local oauth"><code>{
+              <div class="config-block local oauth">
+                <div class="token-section" id="cursor-local-oauth-token">
+                  <a href="/oauth/authorize" class="btn primary token-btn" onclick="saveStateBeforeOAuth('cursor')">Get Your Token</a>
+                  <span class="token-hint">Login with Nestr to get your OAuth token</span>
+                </div>
+                <div class="token-success" id="cursor-local-oauth-success" style="display: none;">
+                  <div class="token-success-header">Authentication Successful</div>
+                  <p>Copy this token into the configuration below:</p>
+                  <div class="token-display">
+                    <input type="text" class="token-value" readonly>
+                    <button class="btn primary" onclick="copyToken(this)">Copy</button>
+                  </div>
+                  <p class="copy-feedback" style="display: none;">Copied to clipboard!</p>
+                </div>
+                <p>Add the following configuration:</p>
+                <pre><code>{
   "mcpServers": {
     "nestr": {
       "command": "npx",
       "args": ["-y", "@nestr/mcp"],
       "env": {
-        "NESTR_OAUTH_TOKEN": "your-oauth-token-here"
+        "NESTR_OAUTH_TOKEN": "<span class="token-placeholder">your-oauth-token-here</span>"
       }
     }
   }
 }</code></pre>
+              </div>
 
-              <pre class="config-block local apikey"><code>{
+              <div class="config-block local apikey">
+                <p>Add the following configuration:</p>
+                <pre><code>{
   "mcpServers": {
     "nestr": {
       "command": "npx",
@@ -329,7 +357,116 @@
     }
   }
 }</code></pre>
+              </div>
               <p>Restart Cursor after saving.</p>
+            </div>
+
+            <div class="tab-content" id="manual">
+              <p>For other MCP clients, use these configuration details:</p>
+
+              <div class="config-block hosted oauth active">
+                <div class="token-section" id="manual-hosted-oauth-token">
+                  <a href="/oauth/authorize" class="btn primary token-btn" onclick="saveStateBeforeOAuth('manual')">Get Your Token</a>
+                  <span class="token-hint">Login with Nestr to get your OAuth token</span>
+                </div>
+                <div class="token-success" id="manual-hosted-oauth-success" style="display: none;">
+                  <div class="token-success-header">Authentication Successful</div>
+                  <p>Copy this token into the configuration below:</p>
+                  <div class="token-display">
+                    <input type="text" class="token-value" readonly>
+                    <button class="btn primary" onclick="copyToken(this)">Copy</button>
+                  </div>
+                  <p class="copy-feedback" style="display: none;">Copied to clipboard!</p>
+                </div>
+                <table class="field-table">
+                  <tr><td><strong>MCP Server URL</strong></td><td><code>https://mcp.nestr.io/mcp</code></td></tr>
+                  <tr><td><strong>Transport</strong></td><td>HTTP (Streamable)</td></tr>
+                  <tr><td><strong>Authorization Header</strong></td><td><code>Bearer <span class="token-placeholder">your-oauth-token-here</span></code></td></tr>
+                </table>
+                <p>Or as JSON configuration:</p>
+                <pre><code>{
+  "mcpServers": {
+    "nestr": {
+      "url": "https://mcp.nestr.io/mcp",
+      "headers": {
+        "Authorization": "Bearer <span class="token-placeholder">your-oauth-token-here</span>"
+      }
+    }
+  }
+}</code></pre>
+              </div>
+
+              <div class="config-block hosted apikey">
+                <table class="field-table">
+                  <tr><td><strong>MCP Server URL</strong></td><td><code>https://mcp.nestr.io/mcp</code></td></tr>
+                  <tr><td><strong>Transport</strong></td><td>HTTP (Streamable)</td></tr>
+                  <tr><td><strong>Header</strong></td><td><code>X-Nestr-API-Key: your-api-key-here</code></td></tr>
+                </table>
+                <p>Or as JSON configuration:</p>
+                <pre><code>{
+  "mcpServers": {
+    "nestr": {
+      "url": "https://mcp.nestr.io/mcp",
+      "headers": {
+        "X-Nestr-API-Key": "your-api-key-here"
+      }
+    }
+  }
+}</code></pre>
+              </div>
+
+              <div class="config-block local oauth">
+                <div class="token-section" id="manual-local-oauth-token">
+                  <a href="/oauth/authorize" class="btn primary token-btn" onclick="saveStateBeforeOAuth('manual')">Get Your Token</a>
+                  <span class="token-hint">Login with Nestr to get your OAuth token</span>
+                </div>
+                <div class="token-success" id="manual-local-oauth-success" style="display: none;">
+                  <div class="token-success-header">Authentication Successful</div>
+                  <p>Copy this token into the configuration below:</p>
+                  <div class="token-display">
+                    <input type="text" class="token-value" readonly>
+                    <button class="btn primary" onclick="copyToken(this)">Copy</button>
+                  </div>
+                  <p class="copy-feedback" style="display: none;">Copied to clipboard!</p>
+                </div>
+                <table class="field-table">
+                  <tr><td><strong>Command</strong></td><td><code>npx -y @nestr/mcp</code></td></tr>
+                  <tr><td><strong>Transport</strong></td><td>stdio</td></tr>
+                  <tr><td><strong>Environment</strong></td><td><code>NESTR_OAUTH_TOKEN=<span class="token-placeholder">your-oauth-token-here</span></code></td></tr>
+                </table>
+                <p>Or as JSON configuration:</p>
+                <pre><code>{
+  "mcpServers": {
+    "nestr": {
+      "command": "npx",
+      "args": ["-y", "@nestr/mcp"],
+      "env": {
+        "NESTR_OAUTH_TOKEN": "<span class="token-placeholder">your-oauth-token-here</span>"
+      }
+    }
+  }
+}</code></pre>
+              </div>
+
+              <div class="config-block local apikey">
+                <table class="field-table">
+                  <tr><td><strong>Command</strong></td><td><code>npx -y @nestr/mcp</code></td></tr>
+                  <tr><td><strong>Transport</strong></td><td>stdio</td></tr>
+                  <tr><td><strong>Environment</strong></td><td><code>NESTR_API_KEY=your-api-key-here</code></td></tr>
+                </table>
+                <p>Or as JSON configuration:</p>
+                <pre><code>{
+  "mcpServers": {
+    "nestr": {
+      "command": "npx",
+      "args": ["-y", "@nestr/mcp"],
+      "env": {
+        "NESTR_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}</code></pre>
+              </div>
             </div>
 
           </div>
@@ -486,7 +623,7 @@
 
   <footer>
     <div class="container">
-      <p>&copy; 2025 Nestr. Built with the <a href="https://modelcontextprotocol.io" target="_blank">Model Context Protocol</a>.</p>
+      <p>&copy; 2026 Nestr. Built with the <a href="https://modelcontextprotocol.io" target="_blank">Model Context Protocol</a>.</p>
     </div>
   </footer>
 
@@ -551,6 +688,129 @@
         updateConfigBlocks();
       });
     });
+
+    // Save state before OAuth redirect
+    function saveStateBeforeOAuth(tab) {
+      localStorage.setItem('nestr-mcp-oauth-state', JSON.stringify({
+        auth: currentAuth,
+        setup: currentSetup,
+        tab: tab
+      }));
+    }
+
+    // Restore state from localStorage
+    function restoreState() {
+      const saved = localStorage.getItem('nestr-mcp-oauth-state');
+      if (!saved) return null;
+
+      try {
+        const state = JSON.parse(saved);
+
+        // Restore auth selection
+        if (state.auth) {
+          currentAuth = state.auth;
+          document.querySelectorAll('.auth-option').forEach(o => {
+            o.classList.toggle('active', o.dataset.auth === state.auth);
+          });
+          document.querySelectorAll('.auth-detail').forEach(d => d.classList.remove('active'));
+          const authDetail = document.getElementById('auth-detail-' + state.auth);
+          if (authDetail) authDetail.classList.add('active');
+        }
+
+        // Restore setup selection
+        if (state.setup) {
+          currentSetup = state.setup;
+          document.querySelectorAll('.setup-option').forEach(o => {
+            o.classList.toggle('active', o.dataset.method === state.setup);
+          });
+        }
+
+        // Restore tab selection
+        if (state.tab) {
+          document.querySelectorAll('.tab').forEach(t => {
+            t.classList.toggle('active', t.dataset.tab === state.tab);
+          });
+          document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+          const tabContent = document.getElementById(state.tab);
+          if (tabContent) tabContent.classList.add('active');
+        }
+
+        // Update config blocks
+        updateConfigBlocks();
+
+        return state;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // Show token inline in the current tab
+    function showTokenInline(token, tab, setup) {
+      // Build the ID for the token section to hide and success section to show
+      const tokenSectionId = `${tab}-${setup}-oauth-token`;
+      const successSectionId = `${tab}-${setup}-oauth-success`;
+
+      const tokenSection = document.getElementById(tokenSectionId);
+      const successSection = document.getElementById(successSectionId);
+
+      if (tokenSection) tokenSection.style.display = 'none';
+      if (successSection) {
+        successSection.style.display = 'block';
+        const input = successSection.querySelector('.token-value');
+        if (input) input.value = token;
+      }
+
+      // Also update all token placeholders in the active config block
+      document.querySelectorAll('.config-block.active .token-placeholder').forEach(el => {
+        el.textContent = token;
+        el.classList.add('token-filled');
+      });
+
+      // Scroll to setup section
+      document.getElementById('setup')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // Copy token from inline display
+    function copyToken(button) {
+      const container = button.closest('.token-success');
+      const input = container.querySelector('.token-value');
+      input.select();
+      input.setSelectionRange(0, 99999);
+      navigator.clipboard.writeText(input.value).then(() => {
+        const feedback = container.querySelector('.copy-feedback');
+        feedback.style.display = 'block';
+        setTimeout(() => {
+          feedback.style.display = 'none';
+        }, 2000);
+      });
+    }
+
+    // Check for token in URL hash on page load
+    (function checkForToken() {
+      const hash = window.location.hash;
+      if (hash.startsWith('#token=')) {
+        const token = decodeURIComponent(hash.substring(7));
+        if (token) {
+          // Restore previous state
+          const state = restoreState();
+
+          // Clear saved state
+          localStorage.removeItem('nestr-mcp-oauth-state');
+
+          // Clear hash from URL
+          history.replaceState(null, '', window.location.pathname);
+
+          // Show token inline (default to manual/hosted if no state)
+          const tab = state?.tab || 'manual';
+          const setup = state?.setup || 'hosted';
+
+          // Small delay to ensure DOM is updated
+          setTimeout(() => {
+            showTokenInline(token, tab, setup);
+          }, 100);
+        }
+      }
+    })();
 
   </script>
 </body>

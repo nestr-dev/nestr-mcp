@@ -251,6 +251,26 @@ nav a:hover {
   font-style: italic;
 }
 
+.token-section {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 16px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.token-btn {
+  white-space: nowrap;
+}
+
+.token-hint {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
 /* Auth Options */
 .auth-options {
   display: grid;
@@ -301,6 +321,10 @@ nav a:hover {
   background: var(--secondary);
   border-radius: 12px;
   border: 1px solid var(--border);
+}
+
+.auth-details:has(.auth-detail.active:empty) {
+  display: none;
 }
 
 .auth-detail {
@@ -679,6 +703,64 @@ footer a {
   color: var(--primary);
 }
 
+/* Token Success (inline display after OAuth) */
+.token-success {
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+  border: 2px solid var(--success);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+
+.token-success-header {
+  color: #166534;
+  font-weight: 600;
+  font-size: 1rem;
+  margin-bottom: 8px;
+}
+
+.token-success p {
+  color: #166534;
+  font-size: 0.9rem;
+  margin-bottom: 12px;
+}
+
+.token-display {
+  display: flex;
+  gap: 8px;
+}
+
+.token-display input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid #86efac;
+  border-radius: 6px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 0.8rem;
+  background: white;
+}
+
+.token-display .btn {
+  flex-shrink: 0;
+}
+
+.copy-feedback {
+  color: var(--success);
+  font-size: 0.85rem;
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
+/* Token placeholder in code blocks */
+.token-placeholder {
+  color: var(--text-muted);
+}
+
+.token-placeholder.token-filled {
+  color: var(--success);
+  font-weight: 500;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .hero h1 {
@@ -696,5 +778,13 @@ footer a {
 
   nav {
     gap: 16px;
+  }
+
+  .token-display {
+    flex-direction: column;
+  }
+
+  .token-display input {
+    font-size: 0.75rem;
   }
 }
