@@ -14,59 +14,52 @@ This MCP server allows AI assistants to interact with your Nestr workspace:
 
 ## Quick Start
 
-### 1. Get Your API Key
+**Visit [mcp.nestr.io](https://mcp.nestr.io)** for the easiest setup with step-by-step instructions for Claude Desktop, Claude Code, and Cursor.
 
+### Claude Desktop
+
+1. Go to **Settings → Connectors → Add custom connector**
+2. Set **Name** to `Nestr` and **Remote MCP URL** to `https://mcp.nestr.io/mcp`
+3. Click "Add" then "Authenticate" to log in with Nestr
+
+### Claude Code
+
+```bash
+claude mcp add nestr --transport http https://mcp.nestr.io/mcp
+```
+
+Then run `/mcp` in Claude Code and click "Authenticate" to log in.
+
+### Using the npm Package (Local)
+
+If you prefer to run the MCP server locally:
+
+```bash
+npx @nestr/mcp
+```
+
+Configure your AI client with:
+
+```json
+{
+  "mcpServers": {
+    "nestr": {
+      "command": "npx",
+      "args": ["-y", "@nestr/mcp"],
+      "env": {
+        "NESTR_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}
+```
+
+To get an API key:
 1. Go to your [Nestr workspace](https://app.nestr.io)
-2. Click **Settings** (gear icon) in the top right
-3. Go to the **Integrations** tab
-4. Find **"Workspace API access"** and click **Configure**
-5. Click **"New API key"** and copy it
+2. Click **Settings** → **Integrations** → **Workspace API access** → **Configure**
+3. Click **"New API key"** and copy it
 
-### 2. Configure Your AI Client
-
-#### Claude Desktop
-
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
-
-```json
-{
-  "mcpServers": {
-    "nestr": {
-      "command": "npx",
-      "args": ["-y", "@nestr/mcp"],
-      "env": {
-        "NESTR_API_KEY": "your-api-key-here"
-      }
-    }
-  }
-}
-```
-
-Restart Claude Desktop after saving.
-
-#### Claude Code
-
-Add to your Claude Code MCP settings:
-
-```json
-{
-  "mcpServers": {
-    "nestr": {
-      "command": "npx",
-      "args": ["-y", "@nestr/mcp"],
-      "env": {
-        "NESTR_API_KEY": "your-api-key-here"
-      }
-    }
-  }
-}
-```
-
-#### Cursor
-
-Add to your Cursor MCP configuration with the same format as above.
-
-### 3. Start Using It
+## Start Using It
 
 Ask your AI assistant things like:
 
@@ -75,7 +68,6 @@ Ask your AI assistant things like:
 - "Create a new project called 'Q1 Planning'"
 - "What are my current projects and their status?"
 - "Who is responsible for customer support?"
-- "Show me the structure of the Product circle"
 
 ## Available Tools
 
@@ -100,9 +92,9 @@ Ask your AI assistant things like:
 | `nestr_list_labels` | List available labels |
 | `nestr_get_label` | Get label details |
 | `nestr_get_projects` | List projects with status |
-| `nestr_get_insights` | Get self-organization and team health metrics |
+| `nestr_get_insights` | Get workspace metrics |
 | `nestr_get_insight_history` | Get historical trend data for a metric |
-| `nestr_get_workspace_apps` | List enabled apps/features in workspace |
+| `nestr_get_workspace_apps` | List enabled apps/features |
 | `nestr_list_inbox` | List items in user's inbox (OAuth only) |
 | `nestr_create_inbox_item` | Quick capture to inbox (OAuth only) |
 | `nestr_get_inbox_item` | Get inbox item details (OAuth only) |
@@ -110,56 +102,17 @@ Ask your AI assistant things like:
 
 ## Authentication
 
-There are two ways to authenticate with the Nestr MCP server:
+### OAuth (Recommended)
 
-### Option 1: API Key (Simple)
+The hosted service at [mcp.nestr.io](https://mcp.nestr.io) handles OAuth automatically. Just add the server and authenticate through your browser.
 
-API keys provide full workspace access and are the easiest way to get started. See [Quick Start](#quick-start) above.
+OAuth respects user-specific permissions - the AI assistant can only access what the authenticated user can access.
+
+### API Key
+
+API keys provide full workspace access and work with the local npm package. See [Quick Start](#using-the-npm-package-local) above.
 
 **Note:** API keys have full workspace access regardless of user permissions.
-
-### Option 2: OAuth (Recommended for Hosted Service)
-
-OAuth authentication respects user-specific permissions - the AI assistant can only access what the authenticated user can access.
-
-#### Using the Hosted Service (mcp.nestr.io)
-
-The hosted service at [mcp.nestr.io](https://mcp.nestr.io) supports OAuth out of the box:
-
-1. Visit [mcp.nestr.io/oauth/authorize](https://mcp.nestr.io/oauth/authorize)
-2. Log in with your Nestr account and authorize access
-3. Copy the access token from the success page
-4. Use the token in your MCP client configuration:
-
-```json
-{
-  "mcpServers": {
-    "nestr": {
-      "command": "npx",
-      "args": ["-y", "@nestr/mcp"],
-      "env": {
-        "NESTR_OAUTH_TOKEN": "your-oauth-token-here"
-      }
-    }
-  }
-}
-```
-
-#### Self-Hosted OAuth Setup
-
-If you're running your own instance of the MCP server and want to enable OAuth:
-
-1. **Contact Nestr** at [dev@nestr.io](mailto:dev@nestr.io) to register an OAuth client
-2. Provide your callback URL (e.g., `https://your-domain.com/oauth/callback`)
-3. Nestr will provide you with a `client_id` and `client_secret`
-4. Set the following environment variables:
-
-```bash
-NESTR_OAUTH_CLIENT_ID=your-client-id
-NESTR_OAUTH_CLIENT_SECRET=your-client-secret
-```
-
-Once configured, users can authenticate via `/oauth/authorize` on your server.
 
 ## Environment Variables
 
@@ -168,10 +121,8 @@ Once configured, users can authenticate via `/oauth/authorize` on your server.
 | `NESTR_API_KEY` | Nestr API key (full workspace access) | Yes* |
 | `NESTR_OAUTH_TOKEN` | OAuth token (respects user permissions) | Yes* |
 | `NESTR_API_BASE` | API base URL (default: `https://app.nestr.io/api`) | No |
-| `NESTR_OAUTH_CLIENT_ID` | OAuth client ID (for self-hosted OAuth) | No |
-| `NESTR_OAUTH_CLIENT_SECRET` | OAuth client secret (for self-hosted OAuth) | No |
 
-\* Either `NESTR_API_KEY` or `NESTR_OAUTH_TOKEN` is required.
+\* Either `NESTR_API_KEY` or `NESTR_OAUTH_TOKEN` is required for local usage.
 
 ## Development
 
@@ -199,24 +150,19 @@ npm run build
 npm run inspect
 ```
 
-## Hosted Service
-
-A hosted version is available at [mcp.nestr.io](https://mcp.nestr.io) for users who prefer not to run the server locally.
-
 ## Security
 
 - Never commit your API key or OAuth token to version control
-- API keys provide full workspace access - consider using OAuth for more granular permissions
-- OAuth tokens respect user permissions and are the recommended approach for shared environments
-- Store credentials securely (e.g., in a password manager or secrets manager)
-- Rotate keys/tokens if you suspect they've been compromised
+- OAuth tokens respect user permissions and are recommended
+- API keys provide full workspace access - use OAuth for granular permissions
+- Rotate credentials if you suspect they've been compromised
 
 ## Resources
 
+- [Setup Guide](https://mcp.nestr.io) - Step-by-step setup instructions
 - [Nestr Help Center](https://help.nestr.io)
 - [Nestr API Documentation](https://app.nestr.io/api/docs)
 - [Model Context Protocol](https://modelcontextprotocol.io)
-- [MCP Specification](https://modelcontextprotocol.io/specification/2025-11-25)
 
 ## License
 
