@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Nestr MCP Server - Connect AI to Your Workspace</title>
-  <meta name="description" content="Connect Claude, Cursor, Raycast, and other AI assistants to your Nestr workspace using the Model Context Protocol (MCP).">
+  <meta name="description" content="Connect Claude, Cursor, and other AI assistants to your Nestr workspace using the Model Context Protocol (MCP).">
   <link rel="stylesheet" href="styles.css">
   <link rel="icon" href="https://app.nestr.io/favicon.ico">
 </head>
@@ -31,7 +31,7 @@
       <div class="container">
         <h1>Connect AI to Your Nestr Workspace</h1>
         <p class="subtitle">
-          Use the Model Context Protocol (MCP) to let Claude, Cursor, Raycast, and other AI assistants
+          Use the Model Context Protocol (MCP) to let Claude, Cursor, and other AI assistants
           interact with your tasks, projects, circles, and roles.
         </p>
         <div class="cta-buttons">
@@ -174,40 +174,39 @@
               <button class="tab active" data-tab="claude-desktop">Claude Desktop</button>
               <button class="tab" data-tab="claude-code">Claude Code</button>
               <button class="tab" data-tab="cursor">Cursor</button>
-              <button class="tab" data-tab="raycast">Raycast</button>
             </div>
 
             <div class="tab-content active" id="claude-desktop">
-              <p>Edit your Claude Desktop configuration file:</p>
-              <ul>
-                <li><strong>macOS:</strong> <code>~/Library/Application Support/Claude/claude_desktop_config.json</code></li>
-                <li><strong>Windows:</strong> <code>%APPDATA%\Claude\claude_desktop_config.json</code></li>
-              </ul>
-              <p>Add the following configuration:</p>
+              <div class="config-block hosted oauth active">
+                <div class="quickstart-box">
+                  <h4>Quickstart (Recommended)</h4>
+                  <p><strong>Step 1:</strong> In Claude Desktop, go to <strong>Settings &rarr; Connectors &rarr; Add custom connector</strong></p>
+                  <p><strong>Step 2:</strong> Fill in the following:</p>
+                  <table class="field-table">
+                    <tr><td><strong>Name</strong></td><td><code>Nestr</code></td></tr>
+                    <tr><td><strong>Remote MCP URL</strong></td><td><code>https://mcp.nestr.io/mcp</code></td></tr>
+                  </table>
+                  <p><strong>Step 3:</strong> Click "Add" and then "Authenticate" to log in with your Nestr account.</p>
+                  <p class="quickstart-note">That's it! Claude Desktop will handle the OAuth flow automatically.</p>
+                </div>
+              </div>
 
-              <pre class="config-block hosted oauth active"><code>{
-  "mcpServers": {
-    "nestr": {
-      "url": "https://mcp.nestr.io/mcp",
-      "headers": {
-        "Authorization": "Bearer your-oauth-token-here"
-      }
-    }
-  }
-}</code></pre>
+              <div class="config-block hosted apikey">
+                <p>Go to <strong>Settings &rarr; Connectors &rarr; Add custom connector</strong> and fill in:</p>
+                <table class="field-table">
+                  <tr><td><strong>Name</strong></td><td><code>Nestr</code></td></tr>
+                  <tr><td><strong>Remote MCP URL</strong></td><td><code>https://mcp.nestr.io/mcp</code></td></tr>
+                  <tr><td><strong>Headers</strong></td><td><code>X-Nestr-API-Key: your-api-key-here</code></td></tr>
+                </table>
+              </div>
 
-              <pre class="config-block hosted apikey"><code>{
-  "mcpServers": {
-    "nestr": {
-      "url": "https://mcp.nestr.io/mcp",
-      "headers": {
-        "X-Nestr-API-Key": "your-api-key-here"
-      }
-    }
-  }
-}</code></pre>
-
-              <pre class="config-block local oauth"><code>{
+              <div class="config-block local oauth">
+                <p>For local setup, edit your config file:</p>
+                <ul>
+                  <li><strong>macOS:</strong> <code>~/Library/Application Support/Claude/claude_desktop_config.json</code></li>
+                  <li><strong>Windows:</strong> <code>%APPDATA%\Claude\claude_desktop_config.json</code></li>
+                </ul>
+                <pre><code>{
   "mcpServers": {
     "nestr": {
       "command": "npx",
@@ -218,8 +217,16 @@
     }
   }
 }</code></pre>
+                <p>Restart Claude Desktop after saving.</p>
+              </div>
 
-              <pre class="config-block local apikey"><code>{
+              <div class="config-block local apikey">
+                <p>For local setup, edit your config file:</p>
+                <ul>
+                  <li><strong>macOS:</strong> <code>~/Library/Application Support/Claude/claude_desktop_config.json</code></li>
+                  <li><strong>Windows:</strong> <code>%APPDATA%\Claude\claude_desktop_config.json</code></li>
+                </ul>
+                <pre><code>{
   "mcpServers": {
     "nestr": {
       "command": "npx",
@@ -230,16 +237,18 @@
     }
   }
 }</code></pre>
-              <p>Restart Claude Desktop after saving.</p>
+                <p>Restart Claude Desktop after saving.</p>
+              </div>
             </div>
 
             <div class="tab-content" id="claude-code">
               <div class="config-block hosted oauth active">
                 <div class="quickstart-box">
                   <h4>Quickstart (Recommended)</h4>
-                  <p>Claude Code supports automatic OAuth authentication. Just run:</p>
+                  <p><strong>Step 1:</strong> Add the Nestr MCP server:</p>
                   <pre><code>claude mcp add nestr --transport http https://mcp.nestr.io/mcp</code></pre>
-                  <p class="quickstart-note">Claude Code will automatically open your browser to authenticate with Nestr. No token setup required!</p>
+                  <p><strong>Step 2:</strong> In Claude Code, run <code>/mcp</code> and click "Authenticate" next to Nestr. This will open your browser to log in with Nestr.</p>
+                  <p class="quickstart-note">That's it! Once authenticated, Claude Code can access your Nestr workspace.</p>
                 </div>
                 <p>Or, if you already have a token, add it manually:</p>
                 <pre><code>claude mcp add nestr --transport http https://mcp.nestr.io/mcp \
@@ -264,7 +273,7 @@
   --env NESTR_API_KEY=your-api-key-here</code></pre>
               </div>
 
-              <p>After adding, run <code>/mcp</code> in Claude Code to verify the connection.</p>
+              <p>Run <code>/mcp</code> anytime to check connection status or re-authenticate.</p>
             </div>
 
             <div class="tab-content" id="cursor">
@@ -323,53 +332,6 @@
               <p>Restart Cursor after saving.</p>
             </div>
 
-            <div class="tab-content" id="raycast">
-              <p>In Raycast, go to <strong>Settings &rarr; Extensions &rarr; AI &rarr; MCP Servers</strong>, then press <kbd>&#8984;N</kbd> to add a new server.</p>
-
-              <div class="config-block hosted oauth active">
-                <p>Fill in the following fields:</p>
-                <table class="field-table">
-                  <tr><td><strong>Name</strong></td><td><code>Nestr</code></td></tr>
-                  <tr><td><strong>Transport</strong></td><td>HTTP</td></tr>
-                  <tr><td><strong>URL</strong></td><td><code>https://mcp.nestr.io/mcp</code></td></tr>
-                  <tr><td><strong>HTTP Headers</strong></td><td>Click "Add Item" and add:<br><code>Authorization</code> = <code>Bearer your-oauth-token</code></td></tr>
-                </table>
-              </div>
-
-              <div class="config-block hosted apikey">
-                <p>Fill in the following fields:</p>
-                <table class="field-table">
-                  <tr><td><strong>Name</strong></td><td><code>Nestr</code></td></tr>
-                  <tr><td><strong>Transport</strong></td><td>HTTP</td></tr>
-                  <tr><td><strong>URL</strong></td><td><code>https://mcp.nestr.io/mcp</code></td></tr>
-                  <tr><td><strong>HTTP Headers</strong></td><td>Click "Add Item" and add:<br><code>X-Nestr-API-Key</code> = <code>your-api-key</code></td></tr>
-                </table>
-              </div>
-
-              <div class="config-block local oauth">
-                <p>Fill in the following fields:</p>
-                <table class="field-table">
-                  <tr><td><strong>Name</strong></td><td><code>Nestr</code></td></tr>
-                  <tr><td><strong>Transport</strong></td><td>Standard Input/Output</td></tr>
-                  <tr><td><strong>Command</strong></td><td><code>npx</code></td></tr>
-                  <tr><td><strong>Arguments</strong></td><td><code>-y @nestr/mcp</code></td></tr>
-                  <tr><td><strong>Environment</strong></td><td>Click "Add Item" and add:<br><code>NESTR_OAUTH_TOKEN</code> = <code>your-oauth-token</code></td></tr>
-                </table>
-              </div>
-
-              <div class="config-block local apikey">
-                <p>Fill in the following fields:</p>
-                <table class="field-table">
-                  <tr><td><strong>Name</strong></td><td><code>Nestr</code></td></tr>
-                  <tr><td><strong>Transport</strong></td><td>Standard Input/Output</td></tr>
-                  <tr><td><strong>Command</strong></td><td><code>npx</code></td></tr>
-                  <tr><td><strong>Arguments</strong></td><td><code>-y @nestr/mcp</code></td></tr>
-                  <tr><td><strong>Environment</strong></td><td>Click "Add Item" and add:<br><code>NESTR_API_KEY</code> = <code>your-api-key</code></td></tr>
-                </table>
-              </div>
-
-              <p>Save the server and it will be available in Raycast AI.</p>
-            </div>
           </div>
         </div>
 
