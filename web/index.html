@@ -234,68 +234,37 @@
             </div>
 
             <div class="tab-content" id="claude-code">
-              <p>Run this command in your terminal:</p>
-
-              <pre class="config-block hosted oauth active"><code>claude mcp add nestr --transport http https://mcp.nestr.io/mcp \
+              <div class="config-block hosted oauth active">
+                <div class="quickstart-box">
+                  <h4>Quickstart (Recommended)</h4>
+                  <p>Claude Code supports automatic OAuth authentication. Just run:</p>
+                  <pre><code>claude mcp add nestr --transport http https://mcp.nestr.io/mcp</code></pre>
+                  <p class="quickstart-note">Claude Code will automatically open your browser to authenticate with Nestr. No token setup required!</p>
+                </div>
+                <p>Or, if you already have a token, add it manually:</p>
+                <pre><code>claude mcp add nestr --transport http https://mcp.nestr.io/mcp \
   --header "Authorization: Bearer your-oauth-token-here"</code></pre>
+              </div>
 
-              <pre class="config-block hosted apikey"><code>claude mcp add nestr --transport http https://mcp.nestr.io/mcp \
+              <div class="config-block hosted apikey">
+                <p>Run this command in your terminal:</p>
+                <pre><code>claude mcp add nestr --transport http https://mcp.nestr.io/mcp \
   --header "X-Nestr-API-Key: your-api-key-here"</code></pre>
+              </div>
 
-              <pre class="config-block local oauth"><code>claude mcp add nestr -- npx -y @nestr/mcp \
+              <div class="config-block local oauth">
+                <p>Run this command in your terminal:</p>
+                <pre><code>claude mcp add nestr -- npx -y @nestr/mcp \
   --env NESTR_OAUTH_TOKEN=your-oauth-token-here</code></pre>
+              </div>
 
-              <pre class="config-block local apikey"><code>claude mcp add nestr -- npx -y @nestr/mcp \
+              <div class="config-block local apikey">
+                <p>Run this command in your terminal:</p>
+                <pre><code>claude mcp add nestr -- npx -y @nestr/mcp \
   --env NESTR_API_KEY=your-api-key-here</code></pre>
+              </div>
 
-              <p>Or edit the settings file directly (<code>~/.claude/settings.json</code> on macOS/Linux):</p>
-
-              <pre class="config-block hosted oauth active"><code>{
-  "mcpServers": {
-    "nestr": {
-      "url": "https://mcp.nestr.io/mcp",
-      "headers": {
-        "Authorization": "Bearer your-oauth-token-here"
-      }
-    }
-  }
-}</code></pre>
-
-              <pre class="config-block hosted apikey"><code>{
-  "mcpServers": {
-    "nestr": {
-      "url": "https://mcp.nestr.io/mcp",
-      "headers": {
-        "X-Nestr-API-Key": "your-api-key-here"
-      }
-    }
-  }
-}</code></pre>
-
-              <pre class="config-block local oauth"><code>{
-  "mcpServers": {
-    "nestr": {
-      "command": "npx",
-      "args": ["-y", "@nestr/mcp"],
-      "env": {
-        "NESTR_OAUTH_TOKEN": "your-oauth-token-here"
-      }
-    }
-  }
-}</code></pre>
-
-              <pre class="config-block local apikey"><code>{
-  "mcpServers": {
-    "nestr": {
-      "command": "npx",
-      "args": ["-y", "@nestr/mcp"],
-      "env": {
-        "NESTR_API_KEY": "your-api-key-here"
-      }
-    }
-  }
-}</code></pre>
-              <p>Restart Claude Code after adding, or run <code>/mcp</code> to reload.</p>
+              <p>After adding, run <code>/mcp</code> in Claude Code to verify the connection.</p>
             </div>
 
             <div class="tab-content" id="cursor">

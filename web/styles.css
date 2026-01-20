@@ -222,6 +222,35 @@ nav a:hover {
   margin-top: 16px;
 }
 
+.quickstart-box {
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+  border: 2px solid var(--success);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.quickstart-box h4 {
+  color: #166534;
+  margin-bottom: 8px;
+  font-size: 1rem;
+}
+
+.quickstart-box p {
+  margin-bottom: 12px;
+}
+
+.quickstart-box pre {
+  margin: 12px 0;
+}
+
+.quickstart-box .quickstart-note {
+  font-size: 0.9rem;
+  color: #166534;
+  margin-bottom: 0;
+  font-style: italic;
+}
+
 /* Auth Options */
 .auth-options {
   display: grid;
