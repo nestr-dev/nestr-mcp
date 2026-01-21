@@ -87,7 +87,8 @@ export const schemas = {
   createNest: z.object({
     parentId: z.string().describe("Parent nest ID (workspace, circle, or project)"),
     title: z.string().describe("Title of the new nest (plain text, HTML stripped)"),
-    purpose: z.string().optional().describe("Purpose or description (supports HTML)"),
+    purpose: z.string().optional().describe("Purpose - why this nest exists (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)"),
+    description: z.string().optional().describe("Detailed description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)"),
     labels: z.array(z.string()).optional().describe("Label IDs to apply"),
     users: z.array(z.string()).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
   }),
@@ -95,7 +96,8 @@ export const schemas = {
   updateNest: z.object({
     nestId: z.string().describe("Nest ID to update"),
     title: z.string().optional().describe("New title (plain text, HTML stripped)"),
-    purpose: z.string().optional().describe("New purpose (supports HTML)"),
+    purpose: z.string().optional().describe("New purpose (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)"),
+    description: z.string().optional().describe("New description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)"),
     parentId: z.string().optional().describe("New parent ID (move nest to different location, e.g., move inbox item to a project)"),
     fields: z.record(z.unknown()).optional().describe("Field updates (e.g., status)"),
     users: z.array(z.string()).optional().describe("User IDs to assign"),
@@ -282,7 +284,8 @@ export const toolDefinitions = [
       properties: {
         parentId: { type: "string", description: "Parent nest ID (workspace, circle, or project)" },
         title: { type: "string", description: "Title of the new nest (plain text, HTML tags stripped)" },
-        purpose: { type: "string", description: "Purpose or description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
+        purpose: { type: "string", description: "Purpose - why this nest exists (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
+        description: { type: "string", description: "Detailed description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
         labels: {
           type: "array",
           items: { type: "string" },
@@ -306,6 +309,7 @@ export const toolDefinitions = [
         nestId: { type: "string", description: "Nest ID to update" },
         title: { type: "string", description: "New title (plain text, HTML tags stripped)" },
         purpose: { type: "string", description: "New purpose (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
+        description: { type: "string", description: "New description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
         parentId: { type: "string", description: "New parent ID (move nest to different location)" },
         fields: {
           type: "object",
@@ -632,6 +636,7 @@ export async function handleToolCall(
           parentId: parsed.parentId,
           title: parsed.title,
           purpose: parsed.purpose,
+          description: parsed.description,
           labels: parsed.labels,
           users: parsed.users,
         });
@@ -643,6 +648,7 @@ export async function handleToolCall(
         const nest = await client.updateNest(parsed.nestId, {
           title: parsed.title,
           purpose: parsed.purpose,
+          description: parsed.description,
           parentId: parsed.parentId,
           fields: parsed.fields,
           users: parsed.users,
