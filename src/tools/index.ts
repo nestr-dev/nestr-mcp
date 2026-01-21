@@ -240,7 +240,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_search",
-    description: "Search for nests within a workspace. Supports operators: label:role (filter by type), assignee:me, completed:false, has:due, depth:1, project->status:Current (field values). Combine with spaces for AND, commas for OR. Examples: 'label:project assignee:me', 'label:role', 'marketing label:todo'. Response includes meta.total showing total matching results.",
+    description: "Search for nests within a workspace. Supports operators: label:type, assignee:me, completed:false, has:due, depth:N, in:nestId, updated-date:past_7_days, field->value:X. IMPORTANT: Use completed:false when searching for work to exclude old completed items. Response includes meta.total showing total matching count.",
     inputSchema: {
       type: "object" as const,
       properties: {

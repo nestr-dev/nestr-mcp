@@ -28,7 +28,37 @@ Most workspaces are organizational, representing a self-organized team. Check th
 - **Organizational Workspace** (most common): Has the "anchor-circle" label. The workspace IS the anchor circle of a self-organized team using Holacracy/Sociocracy/Teal governance. Contains sub-circles, roles with accountabilities and domains, and collaborative projects.
 - **Personal Workspace**: No "anchor-circle" label. A personal space where an individual tracks their own work and projects.
 
-The specific self-organization methodology is stored in \`workspace.data['self_organisation_type']\` (e.g., "holacracy", "sociocracy", "custom").
+The specific self-organization methodology is stored in \`workspace.data['self_organisation_type']\`. **Adapt your language and understanding based on this value:**
+
+### Holacracy (\`holacracy\`)
+Use your general knowledge of the Holacracy framework. Key terminology:
+- **Governance** - The process of evolving roles, circles, and policies
+- **Tensions** - Gaps between current reality and potential; the driver for change
+- **Individual Action** (\`individual-action\` label) - Individual initiative taken without role authority
+- **Circle Lead** - Role that allocates resources and priorities for the circle
+- **Rep Link** - Role that represents a sub-circle in its super-circle
+- **Constitution** - The rules of the game that define how governance works
+- **Accountabilities** and **Domains** - Core role definitions
+
+### Sociocracy / S3 (\`sociocracy\`)
+Use Sociocracy 3.0 or classic sociocratic terminology:
+- **Dynamic Governance** - The equivalent of Holacracy's governance
+- **Backlog** - Collection of work items and proposals
+- **Leader** - Circle leadership role (similar to Circle Lead)
+- **Representative** / **Delegate** - Represents circle in parent (similar to Rep Link)
+- **Drivers** - Similar to tensions; what motivates change
+- **Proposals** and **Objections** - Decision-making process terms
+
+### Custom (\`custom\`)
+Use lighter, more general terminology - avoid heavy framework jargon:
+- **Structure** - Instead of "governance" (but you may introduce the concept)
+- **Circle Lead** - Leadership role
+- **No role yet** - For \`individual-action\` labeled work (instead of "individual initiative")
+- **Agenda items**, **issues**, **opportunities** - Instead of "tensions"
+- **Responsibilities** - Can be used alongside "accountabilities"
+- **Areas of control** - Can be used alongside "domains"
+
+When in doubt with \`custom\`, explain concepts in plain language rather than assuming framework knowledge.
 
 ## Core Concepts
 
@@ -60,7 +90,8 @@ Every nest has these **standard fields**:
 - \`purpose\` - Why this nest exists, supports HTML (especially important for roles/circles)
 - \`description\` - Detailed description (supports HTML)
 - \`parentId\` - ID of parent nest
-- \`ancestors\` - Array of ancestor IDs (for hierarchy traversal)
+- \`ancestors\` - Array of nest IDs from self to workspace: \`[selfId, parentId, ..., workspaceId]\` (read-only)
+- \`path\` - Human-readable breadcrumb: \`"Workspace / Circle / Role / Task"\` (read-only, HTML stripped)
 - \`labels\` - Array of label IDs that define what type this nest is
 - \`fields\` - Label-specific custom fields (see below)
 - \`data\` - Miscellaneous data storage for non-field data (e.g., third-party IDs, integration metadata, custom tracking data)
@@ -71,6 +102,12 @@ Every nest has these **standard fields**:
 - \`completed\` - Whether this item is completed (for tasks/projects/meetings etc.)
 - \`users\` - Array of user IDs assigned to this nest
 - \`createdAt\`, \`updatedAt\` - Timestamps
+
+**Read-only fields** (cannot be set via POST/PATCH - API will error):
+- \`ancestors\` - Computed from hierarchy
+- \`path\` - Computed from ancestor titles
+
+**Tip:** Use \`path\` to understand context without extra API calls. If you see \`"Acme Corp / Engineering / Developer / Fix bug"\`, you know the task is under the "Developer" role in the "Engineering" circle without fetching those nests.
 
 ### User Assignment
 
@@ -123,6 +160,45 @@ The \`purpose\` field follows a strict hierarchy:
 - Each **role's purpose** must contribute to its circle's purpose
 
 This cascades through the entire hierarchy, which may be many layers deep. When creating or updating purposes, ensure they align with and serve the parent's purpose.
+
+## Work Assignment & Context in Self-Organization
+
+In role-based self-organization, understanding where work lives is crucial:
+
+### Work Should Live Under Roles
+The goal is to do all work from a role. Each task or project should be owned by a role that has the accountability for it.
+
+### Circles as Roles
+From a super-circle's perspective, a sub-circle is just another role. Work directly under a circle (not under a role within it) is work the circle-as-a-whole does for its super-circle. How that work is internally organized is irrelevant to the super-circle.
+
+### The \`individual-action\` Label
+Sometimes work needs to be done before a role exists for it. This work is captured directly in a circle with the \`individual-action\` label:
+- **Context**: The work is for this circle's purpose (not the super-circle)
+- **Meaning**: Work needed for the circle but not yet assigned to a role
+- **Next step**: When this work becomes structural, create a role for it
+
+### Querying Work "In a Circle"
+When someone asks for "all work in circle X", be aware of context:
+
+**Include:**
+- Work under roles within the circle: \`in:circleId label:!individual-action depth:2 completed:false\`
+- Individual actions for the circle: \`in:circleId label:individual-action depth:1 completed:false\`
+
+**Handle separately:**
+- Work directly in circle WITHOUT \`individual-action\` label = work the circle does for its super-circle
+- You may include this but explicitly note: "This work lives at the super-circle level"
+
+**Example queries:**
+\`\`\`
+in:circleId label:individual-action depth:1 completed:false
+  -> Individual actions directly in the circle (circle's own work without a role)
+
+in:circleId label:!individual-action depth:2 completed:false
+  -> Work under direct roles in the circle (depth:2 = roles + their work)
+
+in:circleId completed:false
+  -> ALL work in circle including sub-circles (may include super-circle context work)
+\`\`\`
 
 ## Best Practices
 
@@ -234,17 +310,60 @@ label:accountability customer
 - \`type:comment\` - Search comments/posts
 - \`deleted:true\` - Include deleted items
 
+### Sorting Results
+
+Use \`sort:\` to specify the sort field and \`sort-order:\` to set direction.
+
+**Sort fields:**
+- \`sort:searchOrder\` - Manual/custom ordering (default for work items like tasks, projects)
+- \`sort:title\` - Alphabetical by title (default for roles, circles)
+- \`sort:createdAt\` - By creation date
+- \`sort:updatedAt\` - By last update date
+- \`sort:due\` - By due date
+- \`sort:completedAt\` - By completion date
+
+**Sort order:**
+- \`sort-order:asc\` - Ascending (default)
+- \`sort-order:desc\` - Descending
+
+**Defaults:**
+- Roles and circles: \`sort:title\` (alphabetical)
+- Work items (tasks, projects): \`sort:searchOrder\` (manual ordering set by users)
+
+**Examples:**
+\`\`\`
+label:project sort:due sort-order:asc
+  -> Projects ordered by due date (soonest first)
+
+label:role sort:title
+  -> Roles alphabetically (this is the default)
+
+assignee:me completed:false sort:updatedAt sort-order:desc
+  -> My active work, most recently touched first
+
+label:project completed:this_month sort:completedAt sort-order:desc
+  -> Recently completed projects
+\`\`\`
+
 ### Scoping Search to a Specific Nest
 
 Use \`in:nestId\` to limit search results to only items within a specific nest (its descendants at any depth).
 
+**Combine with \`depth:\` to control how deep to search:**
+- \`depth:1\` - Direct children only
+- \`depth:2\` - Children and grandchildren
+- \`depth:N\` - Up to N levels deep
+
 **Examples:**
 \`\`\`
-in:abc123 label:project
-  -> All projects under nest abc123
+in:circleId label:role depth:1
+  -> Roles directly in a circle (excludes roles in sub-circles)
+
+in:circleId label:project depth:2
+  -> Projects in circle + under direct roles + under direct sub-circles
 
 in:circleId label:role
-  -> All roles within a specific circle
+  -> ALL roles in circle including those in nested sub-circles
 
 in:projectId completed:false
   -> Incomplete tasks within a specific project
@@ -253,10 +372,35 @@ in:roleId label:project project->status:Current
   -> Current projects owned by a specific role
 \`\`\`
 
-This is useful for:
-- Finding all work under a specific circle or role
-- Listing tasks within a project
-- Scoping searches to a particular part of the hierarchy
+**Common patterns:**
+- Roles in a circle only (not sub-circles): \`in:circleId label:role depth:1\`
+- All work in a circle: \`in:circleId completed:false\` (includes all nested items)
+- Direct tasks under a project: \`in:projectId depth:1 completed:false\`
+
+### Filtering by Completion Status
+
+**Important:** When fetching work items (tasks, projects), always use \`completed:false\` unless you specifically need completed items. This avoids cluttering results with old completed work.
+
+The \`completed:\` operator accepts:
+- \`completed:false\` - Only uncompleted items (recommended default for work queries)
+- \`completed:true\` - Only completed items
+- Presets: \`completed:past_7_days\`, \`completed:this_month\`, \`completed:last_quarter\`, etc.
+- Custom date range: \`completed:2024-01-01_2024-03-31\` (format: \`YYYY-MM-DD_YYYY-MM-DD\`)
+
+**Examples:**
+\`\`\`
+assignee:me completed:false
+  -> My active/uncompleted work (recommended)
+
+label:project completed:false project->status:Current
+  -> Active projects that are in progress
+
+completed:past_7_days
+  -> Items completed in the last week (for reviews/reports)
+
+label:project completed:this_quarter
+  -> Projects completed this quarter
+\`\`\`
 
 ### Finding Recently Updated Items
 
