@@ -1,6 +1,6 @@
 {
   "name": "@nestr/mcp",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "mcpName": "io.nestr/mcp",
   "description": "MCP server for Nestr - the platform for self-organizing teams practicing Holacracy, Sociocracy, and role-based work. Manage circles, roles, tactical meetings, governance meetings, tensions, and more.",
   "author": "Nestr <dev@nestr.io>",
