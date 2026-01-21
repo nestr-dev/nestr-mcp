@@ -3,10 +3,65 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Nestr MCP Server - Connect AI to Your Workspace</title>
-  <meta name="description" content="Connect Claude, Cursor, and other AI assistants to your Nestr workspace using the Model Context Protocol (MCP).">
+  <title>Nestr MCP - AI for Holacracy, Sociocracy & Self-Organizing Teams</title>
+  <meta name="description" content="Connect AI to Nestr for Holacracy and Sociocracy teams. Manage circles, roles, governance meetings, tensions, and accountabilities with Claude, ChatGPT, Gemini, and more via MCP.">
+  <meta name="keywords" content="Holacracy, Sociocracy, MCP, Model Context Protocol, AI, self-organization, self-management, circles, roles, governance, tactical meetings, tensions, teal organization, distributed authority">
   <link rel="stylesheet" href="styles.css">
   <link rel="icon" href="https://app.nestr.io/favicon.ico">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Nestr MCP Server",
+    "applicationCategory": "BusinessApplication",
+    "operatingSystem": "Any",
+    "description": "Connect AI assistants to Nestr for Holacracy, Sociocracy, and self-organizing teams. Manage circles, roles, governance meetings, tensions, and accountabilities through natural language.",
+    "url": "https://mcp.nestr.io",
+    "author": {
+      "@type": "Organization",
+      "name": "Nestr",
+      "url": "https://nestr.io"
+    },
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "keywords": "Holacracy, Sociocracy, MCP, Model Context Protocol, AI, self-organization, self-management, circles, roles, governance meetings, tactical meetings, tensions"
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is Nestr MCP?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Nestr MCP is a Model Context Protocol server that connects AI assistants like Claude, ChatGPT, and Gemini to your Nestr workspace. It allows you to manage your Holacracy or Sociocracy organization through natural language conversations."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What is Holacracy?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Holacracy is a self-management practice for organizations that distributes authority through a system of circles and roles, with governance and tactical meetings to evolve the structure and get work done."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What AI assistants work with Nestr MCP?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Nestr MCP works with Claude (web and desktop), ChatGPT, Google Gemini, GitHub Copilot, Cursor, Claude Code, and any other AI tool that supports the Model Context Protocol (MCP)."
+        }
+      }
+    ]
+  }
+  </script>
 </head>
 <body>
   <header>
@@ -26,10 +81,11 @@
   <main>
     <section class="hero">
       <div class="container">
-        <h1>Connect AI to Your Nestr Workspace</h1>
+        <h1>AI for Holacracy, Sociocracy & Self-Organizing Teams</h1>
         <p class="subtitle">
-          Use the Model Context Protocol (MCP) to let Claude, Cursor, and other AI assistants
-          interact with your tasks, projects, circles, and roles.
+          Connect Claude, ChatGPT, Gemini, and other AI assistants to <a href="https://nestr.io" target="_blank">Nestr</a> &mdash;
+          the platform for self-organizing teams. Manage circles, roles, governance proposals,
+          tactical meetings, and tensions through natural conversation.
         </p>
         <div class="cta-buttons">
           <a href="#setup" class="btn primary">Get Started</a>
@@ -38,28 +94,49 @@
       </div>
     </section>
 
+    <section class="about">
+      <div class="container">
+        <div class="about-box">
+          <h2>What is Nestr?</h2>
+          <p class="about-text">
+            <a href="https://nestr.io" target="_blank">Nestr</a> is the platform for teams practicing
+            <strong>Holacracy</strong>, <strong>Sociocracy</strong>, and other forms of <strong>self-organization</strong>.
+            It helps you manage your organizational structure with circles and roles, run governance and tactical meetings,
+            track tensions, and distribute authority across your team.
+          </p>
+          <p class="about-text">
+            The <strong>Nestr MCP Server</strong> brings AI into your self-management practice &mdash;
+            and your self-organization practice into your favorite AI chatbot.
+            Query your organizational structure, capture tensions, prepare for governance and tactical meetings,
+            and manage projects, all through natural conversation.
+          </p>
+        </div>
+      </div>
+    </section>
+
     <section class="features">
       <div class="container">
+        <h2>What Can You Do?</h2>
         <div class="feature-grid">
           <div class="feature">
-            <div class="feature-icon">&#128269;</div>
-            <h3>Search & Navigate</h3>
-            <p>Find tasks, projects, and roles using natural language queries across your workspace.</p>
+            <div class="feature-icon">&#9881;</div>
+            <h3>Structure</h3>
+            <p>Navigate your governance structure: circles, roles, accountabilities, domains, and policies. Understand who is accountable for what.</p>
           </div>
           <div class="feature">
-            <div class="feature-icon">&#10003;</div>
-            <h3>Manage Tasks</h3>
-            <p>Create, update, and organize nests without leaving your AI assistant.</p>
+            <div class="feature-icon">&#127919;</div>
+            <h3>Work</h3>
+            <p>Manage projects, actions, and tensions within your roles. Track what needs to get done, capture gaps between current and ideal reality, and move work forward.</p>
           </div>
           <div class="feature">
-            <div class="feature-icon">&#128101;</div>
-            <h3>Understand Structure</h3>
-            <p>Explore circles, roles, and accountabilities to know who's responsible for what.</p>
+            <div class="feature-icon">&#128172;</div>
+            <h3>Communicate</h3>
+            <p>Add updates, comments, and context to any item. Prepare for tactical and governance meetings, and keep your circle informed on progress and blockers.</p>
           </div>
           <div class="feature">
-            <div class="feature-icon">&#128200;</div>
-            <h3>Track Metrics</h3>
-            <p>Get insights on workspace activity, completion rates, and team performance.</p>
+            <div class="feature-icon">&#128202;</div>
+            <h3>Insights</h3>
+            <p>Monitor the health of your self-organizing practice. Track metrics, review activity patterns, and identify where your organization may need attention.</p>
           </div>
         </div>
       </div>
@@ -69,7 +146,7 @@
       <div class="container">
         <h2>Setup Guide</h2>
 
-        <div class="step">
+        <div class="step" id="step-1">
           <div class="step-number">1</div>
           <div class="step-content">
             <h3>Choose Your Authentication Method</h3>
@@ -122,7 +199,7 @@
           </div>
         </div>
 
-        <div class="step">
+        <div class="step" id="step-2">
           <div class="step-number">2</div>
           <div class="step-content">
             <h3>Choose Your Setup Method</h3>
@@ -156,18 +233,19 @@
           </div>
         </div>
 
-        <div class="step">
+        <div class="step" id="step-3">
           <div class="step-number">3</div>
           <div class="step-content">
             <h3>Configure Your AI Client</h3>
 
             <div class="tabs">
               <button class="tab active" data-tab="claude-desktop">Claude</button>
-              <button class="tab" data-tab="gemini">Gemini</button>
               <button class="tab" data-tab="chatgpt">ChatGPT</button>
-              <button class="tab" data-tab="copilot">Copilot</button>
+              <button class="tab" data-tab="copilot-studio">Copilot Studio</button>
               <button class="tab" data-tab="claude-code">Claude Code</button>
+              <button class="tab" data-tab="gemini">Gemini CLI</button>
               <button class="tab" data-tab="cursor">Cursor</button>
+              <button class="tab" data-tab="copilot">VS Code</button>
               <button class="tab" data-tab="manual">Other / Manual</button>
             </div>
 
@@ -410,6 +488,41 @@
               </div>
             </div>
 
+            <div class="tab-content" id="copilot-studio">
+              <p class="tip" style="margin-bottom: 16px;">Works with <strong>Microsoft Copilot Studio</strong> agents and <strong>Microsoft 365 Copilot</strong> declarative agents.</p>
+
+              <div class="config-block hosted oauth active">
+                <div class="quickstart-box">
+                  <h4>Quickstart</h4>
+                  <p><strong>Step 1:</strong> In Copilot Studio, open your agent and go to <strong>Tools &rarr; Add Tool &rarr; New Tool &rarr; MCP</strong></p>
+                  <p><strong>Step 2:</strong> Enter the server URL:</p>
+                  <table class="field-table">
+                    <tr><td><strong>URL</strong></td><td><code>https://mcp.nestr.io/mcp</code></td></tr>
+                  </table>
+                  <p><strong>Step 3:</strong> Save and publish your agent</p>
+                  <p class="quickstart-note">Copilot Studio will prompt you to authenticate with Nestr when the tools are first used.</p>
+                </div>
+              </div>
+
+              <div class="config-block hosted apikey">
+                <p><strong>Step 1:</strong> In Copilot Studio, open your agent and go to <strong>Tools &rarr; Add Tool &rarr; New Tool &rarr; MCP</strong></p>
+                <p><strong>Step 2:</strong> Enter the server URL and authentication:</p>
+                <table class="field-table">
+                  <tr><td><strong>URL</strong></td><td><code>https://mcp.nestr.io/mcp</code></td></tr>
+                  <tr><td><strong>Header</strong></td><td><code>X-Nestr-API-Key: your-api-key-here</code></td></tr>
+                </table>
+                <p><strong>Step 3:</strong> Save and publish your agent</p>
+              </div>
+
+              <div class="config-block local oauth">
+                <p class="warning">Copilot Studio only supports remote MCP servers. Please use the <strong>Cloud</strong> setup method.</p>
+              </div>
+
+              <div class="config-block local apikey">
+                <p class="warning">Copilot Studio only supports remote MCP servers. Please use the <strong>Cloud</strong> setup method.</p>
+              </div>
+            </div>
+
             <div class="tab-content" id="gemini">
               <p>Configure the Nestr MCP server in your Gemini CLI settings file:</p>
               <ul>
@@ -504,7 +617,7 @@
             </div>
 
             <div class="tab-content" id="copilot">
-              <p>Configure GitHub Copilot in VS Code to use the Nestr MCP server.</p>
+              <p>Configure VS Code to use the Nestr MCP server with GitHub Copilot Chat.</p>
 
               <div class="config-block hosted oauth active">
                 <div class="quickstart-box">
@@ -720,17 +833,17 @@
           </div>
         </div>
 
-        <div class="step">
+        <div class="step" id="step-4">
           <div class="step-number">4</div>
           <div class="step-content">
             <h3>Start Using It</h3>
             <p>Once configured, the Nestr tools are automatically available to your AI assistant. No special syntax or @ mentions needed &mdash; just ask naturally:</p>
             <ul class="example-queries">
-              <li>"What workspaces do I have access to?"</li>
-              <li>"Search for tasks related to marketing"</li>
-              <li>"Create a new project called 'Q1 Planning' in the Strategy circle"</li>
-              <li>"What are my current projects and their status?"</li>
-              <li>"Who is responsible for customer support?"</li>
+              <li>"I have a tension about our hiring process &mdash; can you capture it?"</li>
+              <li>"What circles do we have and who are the Lead Links?"</li>
+              <li>"Show me all projects in the Product circle"</li>
+              <li>"Who has the accountability for customer onboarding?"</li>
+              <li>"Help me prepare for tomorrow's governance meeting"</li>
             </ul>
           </div>
         </div>
@@ -743,12 +856,25 @@
 
         <div class="example">
           <div class="user-message">
-            <strong>You:</strong> What's the status of our Marketing projects?
+            <strong>You:</strong> I have a tension about our customer onboarding process being too slow. Can you capture it?
           </div>
           <div class="ai-message">
-            <strong>Claude:</strong> I'll check your Marketing circle projects.
+            <strong>Claude:</strong> I've captured your tension in your inbox:
             <br><br>
-            Found 4 projects in Marketing:
+            <strong>"Customer onboarding process is too slow"</strong>
+            <br><br>
+            This looks like it might relate to the <strong>Customer Success</strong> circle. Would you like me to add more context, or shall I check which role has the accountability for onboarding?
+          </div>
+        </div>
+
+        <div class="example">
+          <div class="user-message">
+            <strong>You:</strong> What projects does the Marketing circle have for this quarter?
+          </div>
+          <div class="ai-message">
+            <strong>Claude:</strong> I'll check the Marketing circle's projects.
+            <br><br>
+            Found 4 projects in <strong>Marketing</strong>:
             <ul>
               <li><strong>Website Redesign</strong> - Status: Current, Due: Jan 30</li>
               <li><strong>Q1 Campaign</strong> - Status: Current, Due: Feb 15</li>
@@ -760,35 +886,81 @@
 
         <div class="example">
           <div class="user-message">
-            <strong>You:</strong> Create a task to "Review analytics dashboard" under the Product Owner role
+            <strong>You:</strong> Who has the accountability for API integrations?
           </div>
           <div class="ai-message">
-            <strong>Claude:</strong> I've created the task "Review analytics dashboard" under the Product Owner role.
+            <strong>Claude:</strong> Based on your governance structure, the <strong>Developer</strong> role in the <strong>Tech</strong> circle holds this accountability.
             <br><br>
-            <strong>Details:</strong>
+            <strong>Role:</strong> Developer
+            <br>
+            <strong>Circle:</strong> Tech
+            <br>
+            <strong>Filled by:</strong> Jane Smith
+            <br>
+            <strong>Relevant accountabilities:</strong>
             <ul>
-              <li>ID: abc123</li>
-              <li>Parent: Product Owner</li>
-              <li>Status: Current (default)</li>
+              <li>Building and maintaining API integrations</li>
+              <li>Documenting technical implementations</li>
             </ul>
-            Would you like me to add a due date or any additional details?
           </div>
         </div>
 
         <div class="example">
           <div class="user-message">
-            <strong>You:</strong> Who should I talk to about the API integration?
+            <strong>You:</strong> Help me prepare for tomorrow's tactical meeting in the Product circle
           </div>
           <div class="ai-message">
-            <strong>Claude:</strong> Based on your workspace structure, the <strong>Developer</strong> role in the <strong>Tech</strong> circle is responsible for API integrations.
+            <strong>Claude:</strong> Here's a summary for your <strong>Product</strong> circle tactical meeting:
             <br><br>
-            <strong>Currently assigned to:</strong> Jane Smith
+            <strong>Checklist items to review:</strong> 3 metrics due for update
             <br>
-            <strong>Accountabilities include:</strong>
+            <strong>Projects needing attention:</strong>
             <ul>
-              <li>Building and maintaining API integrations</li>
-              <li>Documenting technical implementations</li>
+              <li><strong>Mobile App v2</strong> - No updates in 14 days</li>
+              <li><strong>User Research</strong> - Status changed to "Waiting"</li>
             </ul>
+            <strong>Open tensions:</strong> 2 tensions in the backlog
+            <br><br>
+            Would you like me to show the details of any of these?
+          </div>
+        </div>
+
+        <div class="example">
+          <div class="user-message">
+            <strong>You:</strong> I want to propose adding a new accountability to the Marketing Lead role for next governance. Can you prepare that tension for me?
+          </div>
+          <div class="ai-message">
+            <strong>Claude:</strong> I've created a governance tension for your next meeting:
+            <br><br>
+            <strong>Tension:</strong> "Add accountability for brand consistency reviews to Marketing Lead"
+            <br>
+            <strong>Circle:</strong> Marketing
+            <br>
+            <strong>Type:</strong> Governance proposal
+            <br><br>
+            <strong>Draft proposal:</strong>
+            <ul>
+              <li>Add to <strong>Marketing Lead</strong> role:</li>
+              <li>Accountability: "Reviewing external communications for brand consistency"</li>
+            </ul>
+            Would you like me to add any context or refine the proposal wording?
+          </div>
+        </div>
+
+        <div class="example">
+          <div class="user-message">
+            <strong>You:</strong> What should I focus on this week given our circle strategy?
+          </div>
+          <div class="ai-message">
+            <strong>Claude:</strong> Based on the <strong>Product</strong> circle strategy of <em>"Improve user retention through better onboarding"</em>, here are your priority projects:
+            <br><br>
+            <strong>Your roles and aligned projects:</strong>
+            <ul>
+              <li><strong>Product Designer:</strong> "Onboarding flow redesign" - Current, Due: Jan 25</li>
+              <li><strong>Product Designer:</strong> "First-week email sequence" - Current, Due: Jan 28</li>
+              <li><strong>UX Researcher:</strong> "New user drop-off analysis" - Waiting on data</li>
+            </ul>
+            The onboarding redesign is most urgent and directly supports the strategy. Want me to show the details or related tensions?
           </div>
         </div>
       </div>
@@ -920,6 +1092,11 @@
 
         // Update config blocks
         updateConfigBlocks();
+
+        // Scroll to step 2
+        setTimeout(() => {
+          document.getElementById('step-2')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 150);
       });
     });
 
@@ -934,6 +1111,11 @@
 
         // Update config blocks
         updateConfigBlocks();
+
+        // Scroll to step 3
+        setTimeout(() => {
+          document.getElementById('step-3')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 150);
       });
     });
 
