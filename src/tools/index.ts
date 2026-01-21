@@ -59,8 +59,8 @@ function compactResponse<T>(
 export const schemas = {
   listWorkspaces: z.object({
     search: z.string().optional().describe("Search query to filter workspaces"),
-    limit: z.number().optional().describe("Maximum number of results"),
-    page: z.number().optional().describe("Page number for pagination (check meta.total_pages in response)"),
+    limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
+    page: z.number().optional().describe("Page number (1-indexed) for pagination"),
   }),
 
   getWorkspace: z.object({
@@ -70,8 +70,8 @@ export const schemas = {
   search: z.object({
     workspaceId: z.string().describe("Workspace ID to search in"),
     query: z.string().describe("Search query"),
-    limit: z.number().optional().default(20).describe("Maximum results (default 20)"),
-    page: z.number().optional().describe("Page number for pagination (check meta.total_pages in response)"),
+    limit: z.number().optional().describe("Max results per page. Omit on first call to see meta.total count."),
+    page: z.number().optional().describe("Page number (1-indexed) for pagination"),
   }),
 
   getNest: z.object({
@@ -80,7 +80,7 @@ export const schemas = {
 
   getNestChildren: z.object({
     nestId: z.string().describe("Parent nest ID"),
-    limit: z.number().optional().describe("Maximum results"),
+    limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
   }),
 
@@ -114,20 +114,20 @@ export const schemas = {
 
   listCircles: z.object({
     workspaceId: z.string().describe("Workspace ID"),
-    limit: z.number().optional().describe("Maximum results"),
+    limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
   }),
 
   getCircleRoles: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     circleId: z.string().describe("Circle ID"),
-    limit: z.number().optional().describe("Maximum results"),
+    limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
   }),
 
   listRoles: z.object({
     workspaceId: z.string().describe("Workspace ID"),
-    limit: z.number().optional().describe("Maximum results"),
+    limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
   }),
 
@@ -139,20 +139,20 @@ export const schemas = {
   listUsers: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     search: z.string().optional().describe("Search by name or email"),
-    limit: z.number().optional().describe("Maximum results"),
+    limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
   }),
 
   listLabels: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     search: z.string().optional().describe("Search query"),
-    limit: z.number().optional().describe("Maximum results"),
+    limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
   }),
 
   getProjects: z.object({
     workspaceId: z.string().describe("Workspace ID"),
-    limit: z.number().optional().describe("Maximum results"),
+    limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
   }),
 
@@ -215,13 +215,13 @@ export const schemas = {
 export const toolDefinitions = [
   {
     name: "nestr_list_workspaces",
-    description: "List all Nestr workspaces you have access to. Response includes meta.total_pages for pagination.",
+    description: "List all Nestr workspaces you have access to. Response includes meta.total showing total count.",
     inputSchema: {
       type: "object" as const,
       properties: {
         search: { type: "string", description: "Search query to filter workspaces" },
-        limit: { type: "number", description: "Maximum number of results" },
-        page: { type: "number", description: "Page number (1-indexed). Check meta.total_pages in response for available pages." },
+        limit: { type: "number", description: "Omit on first call to see meta.total count" },
+        page: { type: "number", description: "Page number (1-indexed) for pagination" },
       },
     },
   },
@@ -238,14 +238,14 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_search",
-    description: "Search for nests within a workspace. Supports operators: label:role (filter by type), assignee:me, completed:false, has:due, depth:1, project->status:Current (field values). Combine with spaces for AND, commas for OR. Examples: 'label:project assignee:me', 'label:role', 'marketing label:todo'. Response includes meta.total_pages for pagination.",
+    description: "Search for nests within a workspace. Supports operators: label:role (filter by type), assignee:me, completed:false, has:due, depth:1, project->status:Current (field values). Combine with spaces for AND, commas for OR. Examples: 'label:project assignee:me', 'label:role', 'marketing label:todo'. Response includes meta.total showing total matching results.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID to search in" },
         query: { type: "string", description: "Search query with optional operators (e.g., 'label:role', 'assignee:me completed:false')" },
-        limit: { type: "number", description: "Maximum results (default 20)" },
-        page: { type: "number", description: "Page number (1-indexed). Check meta.total_pages in response." },
+        limit: { type: "number", description: "Max results per page. Do NOT set on first call - let API return default with meta.total count showing total matches." },
+        page: { type: "number", description: "Page number (1-indexed) for fetching additional pages" },
       },
       required: ["workspaceId", "query"],
     },
@@ -263,12 +263,12 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_nest_children",
-    description: "Get child nests (sub-tasks, sub-projects) of a nest. Response includes meta.total_pages for pagination.",
+    description: "Get child nests (sub-tasks, sub-projects) of a nest. Response includes meta.total showing total matching count.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Parent nest ID" },
-        limit: { type: "number", description: "Maximum results" },
+        limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
       },
       required: ["nestId"],
@@ -353,12 +353,12 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_circles",
-    description: "List all circles (teams/departments) in a workspace. Response includes meta.total_pages for pagination.",
+    description: "List all circles (teams/departments) in a workspace. Response includes meta.total showing total matching count.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
-        limit: { type: "number", description: "Maximum results" },
+        limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
       },
       required: ["workspaceId"],
@@ -366,13 +366,13 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_circle_roles",
-    description: "Get all roles within a specific circle, including accountabilities. Response includes meta.total_pages for pagination.",
+    description: "Get all roles within a specific circle, including accountabilities. Response includes meta.total showing total matching count.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         circleId: { type: "string", description: "Circle ID" },
-        limit: { type: "number", description: "Maximum results" },
+        limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
       },
       required: ["workspaceId", "circleId"],
@@ -380,12 +380,12 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_roles",
-    description: "List all roles in a workspace. Response includes meta.total_pages for pagination.",
+    description: "List all roles in a workspace. Response includes meta.total showing total matching count.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
-        limit: { type: "number", description: "Maximum results" },
+        limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
       },
       required: ["workspaceId"],
@@ -405,13 +405,13 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_users",
-    description: "List members of a workspace. Response includes meta.total_pages for pagination.",
+    description: "List members of a workspace. Response includes meta.total showing total matching count.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         search: { type: "string", description: "Search by name or email" },
-        limit: { type: "number", description: "Maximum results" },
+        limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
       },
       required: ["workspaceId"],
@@ -419,13 +419,13 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_labels",
-    description: "List available labels in a workspace. Response includes meta.total_pages for pagination.",
+    description: "List available labels in a workspace. Response includes meta.total showing total matching count.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         search: { type: "string", description: "Search query" },
-        limit: { type: "number", description: "Maximum results" },
+        limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
       },
       required: ["workspaceId"],
@@ -433,12 +433,12 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_projects",
-    description: "List all projects in a workspace. Check fields['project.status'] for status: Future (planned), Current (active), Waiting (blocked), Done (completed). The 'due' field contains the project due date. Response includes meta.total_pages for pagination.",
+    description: "List all projects in a workspace. Check fields['project.status'] for status: Future (planned), Current (active), Waiting (blocked), Done (completed). The 'due' field contains the project due date. Response includes meta.total showing total matching count.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
-        limit: { type: "number", description: "Maximum results" },
+        limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
       },
       required: ["workspaceId"],

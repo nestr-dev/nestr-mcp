@@ -231,9 +231,32 @@ label:accountability customer
 ### Additional Operators
 
 - \`parent-label:circle\` - Items under a circle
-- \`in:nestId\` - Search within specific nest
 - \`type:comment\` - Search comments/posts
 - \`deleted:true\` - Include deleted items
+
+### Scoping Search to a Specific Nest
+
+Use \`in:nestId\` to limit search results to only items within a specific nest (its descendants at any depth).
+
+**Examples:**
+\`\`\`
+in:abc123 label:project
+  -> All projects under nest abc123
+
+in:circleId label:role
+  -> All roles within a specific circle
+
+in:projectId completed:false
+  -> Incomplete tasks within a specific project
+
+in:roleId label:project project->status:Current
+  -> Current projects owned by a specific role
+\`\`\`
+
+This is useful for:
+- Finding all work under a specific circle or role
+- Listing tasks within a project
+- Scoping searches to a particular part of the hierarchy
 
 ### Finding Recently Updated Items
 
