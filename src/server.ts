@@ -232,9 +232,41 @@ label:accountability customer
 
 - \`parent-label:circle\` - Items under a circle
 - \`in:nestId\` - Search within specific nest
-- \`updated-date:past_7_days\` - Recently updated (also: past_30_days, this_month, etc.)
 - \`type:comment\` - Search comments/posts
 - \`deleted:true\` - Include deleted items
+
+### Finding Recently Updated Items
+
+Use \`updated-date:\` to find items modified within a time period. Useful for finding recent activity or stale items.
+
+**Important:** This uses \`treeUpdatedAt\`, which updates when the nest itself OR any of its descendants (children, grandchildren, etc.) are modified. For example, a project will match \`updated-date:past_7_days\` if any task under it was updated, even if the project itself wasn't touched.
+
+**Preset values:**
+- \`updated-date:past_7_days\` - Last 7 days
+- \`updated-date:past_30_days\` - Last 30 days
+- \`updated-date:past_12_months\` - Last 12 months
+- \`updated-date:this_month\` - This calendar month
+- \`updated-date:last_month\` - Last calendar month
+- \`updated-date:this_quarter\` - This quarter
+- \`updated-date:last_quarter\` - Last quarter
+- \`updated-date:this_year\` - This calendar year
+- \`updated-date:last_year\` - Last calendar year
+
+**Custom date range:** \`updated-date:2024-01-01_2024-03-31\` (format: \`YYYY-MM-DD_YYYY-MM-DD\`)
+
+**Invert with \`!\`:** \`updated-date:!past_30_days\` finds items NOT updated recently (stale items)
+
+**Examples:**
+\`\`\`
+label:project updated-date:past_7_days
+  -> Projects updated this week
+
+assignee:me updated-date:!past_30_days
+  -> My stale tasks (no activity in 30+ days)
+
+label:role updated-date:this_quarter
+  -> Roles with governance changes this quarter
+\`\`\`
 
 ## Linking to the Web App
 
