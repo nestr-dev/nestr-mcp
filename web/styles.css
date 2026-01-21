@@ -192,6 +192,11 @@ nav a:hover {
   font-weight: 600;
 }
 
+.step-content {
+  flex: 1;
+  min-width: 0;
+}
+
 .step-content h3 {
   margin-bottom: 16px;
 }
@@ -274,7 +279,7 @@ nav a:hover {
 /* Auth Options */
 .auth-options {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   gap: 20px;
   margin-top: 16px;
 }
@@ -372,7 +377,7 @@ nav a:hover {
 /* Setup Options */
 .setup-options {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   gap: 20px;
   margin-top: 16px;
 }
@@ -506,6 +511,7 @@ kbd {
 /* Tabs */
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
   border-bottom: 1px solid var(--border);
@@ -520,6 +526,7 @@ kbd {
   color: var(--text-muted);
   font-size: 0.9rem;
   border-radius: 4px;
+  white-space: nowrap;
 }
 
 .tab.active {
@@ -761,6 +768,37 @@ footer a {
   font-weight: 500;
 }
 
+/* Fallback notes for one-click install */
+.fallback-note {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
+.fallback-note a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.fallback-note a:hover {
+  text-decoration: underline;
+}
+
+.manual-fallback {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border);
+}
+
+.vscode-status {
+  margin-top: 12px;
+}
+
+.vscode-status a {
+  color: var(--primary);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .hero h1 {
@@ -778,6 +816,20 @@ footer a {
 
   nav {
     gap: 16px;
+  }
+
+  .tabs {
+    gap: 4px 6px;
+  }
+
+  .tab {
+    padding: 6px 10px;
+    font-size: 0.85rem;
+  }
+
+  .auth-options,
+  .setup-options {
+    grid-template-columns: 1fr;
   }
 
   .token-display {

@@ -38,35 +38,56 @@ jobs:
           name: build
           path: build/
 
-#  publish-npm:
-#    needs: build-and-test
-#    runs-on: ubuntu-latest
-#    permissions:
-#      contents: read
-#      id-token: write
-#    steps:
-#      - uses: actions/checkout@v4
-#
-#      - name: Setup Node.js
-#        uses: actions/setup-node@v4
-#        with:
-#          node-version: '22'
-#          registry-url: 'https://registry.npmjs.org'
-#          cache: 'npm'
-#
-#      - name: Install dependencies
-#        run: npm ci
-#
-#      - name: Download build artifacts
-#        uses: actions/download-artifact@v4
-#        with:
-#          name: build
-#          path: build/
-#
-#      - name: Publish to npm
-#        run: npm publish --provenance --access public
-#        env:
-#          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  publish-npm:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build
+          path: build/
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-mcp-registry:
+    needs: publish-npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz
+          sudo mv mcp-publisher /usr/local/bin/
+
+      - name: Login to MCP Registry
+        run: |
+          mcp-publisher login dns \
+            -algorithm ed25519 \
+            -domain nestr.io \
+            -private-key "${{ secrets.MCP_REGISTRY_PRIVATE_KEY }}"
+
+      - name: Publish to MCP Registry
+        run: mcp-publisher publish
 
   publish-ghcr:
     needs: build-and-test

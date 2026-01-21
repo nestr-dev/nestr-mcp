@@ -1,0 +1,26 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.nestr/mcp",
+  "description": "Connect AI to Nestr for Holacracy, Sociocracy, and self-organizing teams.",
+  "repository": {
+    "url": "https://github.com/nestr-dev/nestr-mcp",
+    "source": "github"
+  },
+  "version": "0.1.14",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@nestr/mcp",
+      "version": "0.1.14",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.nestr.io/mcp"
+    }
+  ]
+}

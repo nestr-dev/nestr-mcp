@@ -162,24 +162,29 @@
             <h3>Configure Your AI Client</h3>
 
             <div class="tabs">
-              <button class="tab active" data-tab="claude-desktop">Claude Desktop</button>
+              <button class="tab active" data-tab="claude-desktop">Claude</button>
+              <button class="tab" data-tab="gemini">Gemini</button>
+              <button class="tab" data-tab="chatgpt">ChatGPT</button>
+              <button class="tab" data-tab="copilot">Copilot</button>
               <button class="tab" data-tab="claude-code">Claude Code</button>
               <button class="tab" data-tab="cursor">Cursor</button>
               <button class="tab" data-tab="manual">Other / Manual</button>
             </div>
 
             <div class="tab-content active" id="claude-desktop">
+              <p class="tip" style="margin-bottom: 16px;">Works for both <strong>claude.ai</strong> (web) and <strong>Claude Desktop</strong> app. Connectors sync across both.</p>
+
               <div class="config-block hosted oauth active">
                 <div class="quickstart-box">
                   <h4>Quickstart (Recommended)</h4>
-                  <p><strong>Step 1:</strong> In Claude Desktop, go to <strong>Settings &rarr; Connectors &rarr; Add custom connector</strong></p>
+                  <p><strong>Step 1:</strong> In Claude, go to <strong>Settings &rarr; Connectors &rarr; Add custom connector</strong></p>
                   <p><strong>Step 2:</strong> Fill in the following:</p>
                   <table class="field-table">
                     <tr><td><strong>Name</strong></td><td><code>Nestr</code></td></tr>
                     <tr><td><strong>Remote MCP URL</strong></td><td><code>https://mcp.nestr.io/mcp</code></td></tr>
                   </table>
                   <p><strong>Step 3:</strong> Click "Add" and then "Authenticate" to log in with your Nestr account.</p>
-                  <p class="quickstart-note">That's it! Claude Desktop will handle the OAuth flow automatically.</p>
+                  <p class="quickstart-note">That's it! Claude will handle the OAuth flow automatically.</p>
                 </div>
               </div>
 
@@ -193,7 +198,8 @@
               </div>
 
               <div class="config-block local oauth">
-                <p>For local setup, edit your config file:</p>
+                <p class="warning" style="margin-bottom: 12px;">Local setup only works with the <strong>Claude Desktop app</strong>, not claude.ai web.</p>
+                <p>Edit your Claude Desktop config file:</p>
                 <ul>
                   <li><strong>macOS:</strong> <code>~/Library/Application Support/Claude/claude_desktop_config.json</code></li>
                   <li><strong>Windows:</strong> <code>%APPDATA%\Claude\claude_desktop_config.json</code></li>
@@ -213,7 +219,8 @@
               </div>
 
               <div class="config-block local apikey">
-                <p>For local setup, edit your config file:</p>
+                <p class="warning" style="margin-bottom: 12px;">Local setup only works with the <strong>Claude Desktop app</strong>, not claude.ai web.</p>
+                <p>Edit your Claude Desktop config file:</p>
                 <ul>
                   <li><strong>macOS:</strong> <code>~/Library/Application Support/Claude/claude_desktop_config.json</code></li>
                   <li><strong>Windows:</strong> <code>%APPDATA%\Claude\claude_desktop_config.json</code></li>
@@ -359,6 +366,247 @@
 }</code></pre>
               </div>
               <p>Restart Cursor after saving.</p>
+            </div>
+
+            <div class="tab-content" id="chatgpt">
+              <p class="tip" style="margin-bottom: 16px;">Works for <strong>chatgpt.com</strong> (web), <strong>desktop app</strong>, and <strong>mobile</strong>. Apps sync across all.</p>
+              <div class="warning" style="margin-bottom: 1rem;">
+                <strong>Note:</strong> Requires Developer Mode (Pro, Team, Enterprise, Edu plans). Not available in EEA, Switzerland, or UK.
+              </div>
+
+              <div class="config-block hosted oauth active">
+                <div class="quickstart-box">
+                  <h4>Quickstart</h4>
+                  <p><strong>Step 1:</strong> In ChatGPT, go to <strong>Settings &rarr; Apps &rarr; Advanced settings</strong> and enable <strong>Developer Mode</strong></p>
+                  <p><strong>Step 2:</strong> Click <strong>Add more</strong>, then <strong>Create</strong> to add a new app:</p>
+                  <table class="field-table">
+                    <tr><td><strong>Name</strong></td><td><code>Nestr</code></td></tr>
+                    <tr><td><strong>Server URL</strong></td><td><code>https://mcp.nestr.io/mcp</code></td></tr>
+                  </table>
+                  <p><strong>Step 3:</strong> Check "I trust this provider" and click <strong>Create</strong></p>
+                  <p><strong>Step 4:</strong> In each chat, click <strong>+ &rarr; More &rarr; Developer Mode</strong> and enable Nestr</p>
+                  <p class="quickstart-note">ChatGPT will prompt you to authenticate with Nestr when the app is first used.</p>
+                </div>
+              </div>
+
+              <div class="config-block hosted apikey">
+                <p><strong>Step 1:</strong> In ChatGPT, go to <strong>Settings &rarr; Apps &rarr; Advanced settings</strong> and enable <strong>Developer Mode</strong></p>
+                <p><strong>Step 2:</strong> Click <strong>Add more</strong>, then <strong>Create</strong> to add a new app:</p>
+                <table class="field-table">
+                  <tr><td><strong>Name</strong></td><td><code>Nestr</code></td></tr>
+                  <tr><td><strong>Server URL</strong></td><td><code>https://mcp.nestr.io/mcp</code></td></tr>
+                  <tr><td><strong>Authentication</strong></td><td>Add header <code>X-Nestr-API-Key: your-api-key-here</code></td></tr>
+                </table>
+                <p><strong>Step 3:</strong> Check "I trust this provider" and click <strong>Create</strong></p>
+                <p><strong>Step 4:</strong> In each chat, click <strong>+ &rarr; More &rarr; Developer Mode</strong> and enable Nestr</p>
+              </div>
+
+              <div class="config-block local oauth">
+                <p class="warning">ChatGPT only supports remote MCP servers. Please use the <strong>Cloud</strong> setup method for ChatGPT.</p>
+              </div>
+
+              <div class="config-block local apikey">
+                <p class="warning">ChatGPT only supports remote MCP servers. Please use the <strong>Cloud</strong> setup method for ChatGPT.</p>
+              </div>
+            </div>
+
+            <div class="tab-content" id="gemini">
+              <p>Configure the Nestr MCP server in your Gemini CLI settings file:</p>
+              <ul>
+                <li><strong>macOS/Linux:</strong> <code>~/.gemini/settings.json</code></li>
+                <li><strong>Windows:</strong> <code>%USERPROFILE%\.gemini\settings.json</code></li>
+              </ul>
+
+              <div class="config-block hosted oauth active">
+                <div class="token-section" id="gemini-hosted-oauth-token">
+                  <a href="/oauth/authorize" class="btn primary token-btn" onclick="saveStateBeforeOAuth('gemini')">Get Your Token</a>
+                  <span class="token-hint">Login with Nestr to get your OAuth token</span>
+                </div>
+                <div class="token-success" id="gemini-hosted-oauth-success" style="display: none;">
+                  <div class="token-success-header">Authentication Successful</div>
+                  <p>Copy this token into the configuration below:</p>
+                  <div class="token-display">
+                    <input type="text" class="token-value" readonly>
+                    <button class="btn primary" onclick="copyToken(this)">Copy</button>
+                  </div>
+                  <p class="copy-feedback" style="display: none;">Copied to clipboard!</p>
+                </div>
+                <p>Add the following configuration:</p>
+                <pre><code>{
+  "mcpServers": {
+    "nestr": {
+      "httpUrl": "https://mcp.nestr.io/mcp",
+      "headers": {
+        "Authorization": "Bearer <span class="token-placeholder">your-oauth-token-here</span>"
+      }
+    }
+  }
+}</code></pre>
+              </div>
+
+              <div class="config-block hosted apikey">
+                <p>Add the following configuration:</p>
+                <pre><code>{
+  "mcpServers": {
+    "nestr": {
+      "httpUrl": "https://mcp.nestr.io/mcp",
+      "headers": {
+        "X-Nestr-API-Key": "your-api-key-here"
+      }
+    }
+  }
+}</code></pre>
+              </div>
+
+              <div class="config-block local oauth">
+                <div class="token-section" id="gemini-local-oauth-token">
+                  <a href="/oauth/authorize" class="btn primary token-btn" onclick="saveStateBeforeOAuth('gemini')">Get Your Token</a>
+                  <span class="token-hint">Login with Nestr to get your OAuth token</span>
+                </div>
+                <div class="token-success" id="gemini-local-oauth-success" style="display: none;">
+                  <div class="token-success-header">Authentication Successful</div>
+                  <p>Copy this token into the configuration below:</p>
+                  <div class="token-display">
+                    <input type="text" class="token-value" readonly>
+                    <button class="btn primary" onclick="copyToken(this)">Copy</button>
+                  </div>
+                  <p class="copy-feedback" style="display: none;">Copied to clipboard!</p>
+                </div>
+                <p>Add the following configuration:</p>
+                <pre><code>{
+  "mcpServers": {
+    "nestr": {
+      "command": "npx",
+      "args": ["-y", "@nestr/mcp"],
+      "env": {
+        "NESTR_OAUTH_TOKEN": "<span class="token-placeholder">your-oauth-token-here</span>"
+      }
+    }
+  }
+}</code></pre>
+              </div>
+
+              <div class="config-block local apikey">
+                <p>Add the following configuration:</p>
+                <pre><code>{
+  "mcpServers": {
+    "nestr": {
+      "command": "npx",
+      "args": ["-y", "@nestr/mcp"],
+      "env": {
+        "NESTR_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}</code></pre>
+              </div>
+              <p>Restart Gemini CLI after saving.</p>
+            </div>
+
+            <div class="tab-content" id="copilot">
+              <p>Configure GitHub Copilot in VS Code to use the Nestr MCP server.</p>
+
+              <div class="config-block hosted oauth active">
+                <div class="quickstart-box">
+                  <h4>One-Click Install</h4>
+                  <p>Click the button below to add Nestr to VS Code:</p>
+                  <a href="#" class="btn primary" id="vscode-install-btn" onclick="installVSCodeMCP(event)">Add to VS Code</a>
+                  <p class="quickstart-note" style="margin-top: 0.5rem;">After installation, authenticate via the GitHub Copilot Chat panel.</p>
+                  <p class="fallback-note">Button not working? <a href="#" onclick="showManualConfig(event, 'copilot-hosted-oauth')">Show manual setup</a></p>
+                </div>
+                <div class="manual-fallback" id="copilot-hosted-oauth-fallback" style="display: none;">
+                  <p><strong>Manual setup:</strong> Edit your VS Code settings (<code>.vscode/mcp.json</code> or user settings):</p>
+                  <div class="token-section" id="copilot-hosted-oauth-token">
+                    <a href="/oauth/authorize" class="btn primary token-btn" onclick="saveStateBeforeOAuth('copilot')">Get Your Token</a>
+                    <span class="token-hint">Login with Nestr to get your OAuth token</span>
+                  </div>
+                  <div class="token-success" id="copilot-hosted-oauth-success" style="display: none;">
+                    <div class="token-success-header">Authentication Successful</div>
+                    <p>Copy this token into the configuration below:</p>
+                    <div class="token-display">
+                      <input type="text" class="token-value" readonly>
+                      <button class="btn primary" onclick="copyToken(this)">Copy</button>
+                    </div>
+                    <p class="copy-feedback" style="display: none;">Copied to clipboard!</p>
+                  </div>
+                  <pre><code>{
+  "servers": {
+    "nestr": {
+      "url": "https://mcp.nestr.io/mcp",
+      "headers": {
+        "Authorization": "Bearer <span class="token-placeholder">your-oauth-token-here</span>"
+      }
+    }
+  }
+}</code></pre>
+                </div>
+              </div>
+
+              <div class="config-block hosted apikey">
+                <div class="quickstart-box">
+                  <h4>One-Click Install</h4>
+                  <p>Click the button below to add Nestr to VS Code (you'll need to add your API key after):</p>
+                  <a href="#" class="btn primary" id="vscode-install-btn-apikey" onclick="installVSCodeMCP(event)">Add to VS Code</a>
+                  <p class="fallback-note">Button not working? <a href="#" onclick="showManualConfig(event, 'copilot-hosted-apikey')">Show manual setup</a></p>
+                </div>
+                <div class="manual-fallback" id="copilot-hosted-apikey-fallback" style="display: none;">
+                  <p><strong>Manual setup:</strong> Edit your VS Code settings (<code>.vscode/mcp.json</code> or user settings):</p>
+                  <pre><code>{
+  "servers": {
+    "nestr": {
+      "url": "https://mcp.nestr.io/mcp",
+      "headers": {
+        "X-Nestr-API-Key": "your-api-key-here"
+      }
+    }
+  }
+}</code></pre>
+                </div>
+              </div>
+
+              <div class="config-block local oauth">
+                <div class="token-section" id="copilot-local-oauth-token">
+                  <a href="/oauth/authorize" class="btn primary token-btn" onclick="saveStateBeforeOAuth('copilot')">Get Your Token</a>
+                  <span class="token-hint">Login with Nestr to get your OAuth token</span>
+                </div>
+                <div class="token-success" id="copilot-local-oauth-success" style="display: none;">
+                  <div class="token-success-header">Authentication Successful</div>
+                  <p>Copy this token into the configuration below:</p>
+                  <div class="token-display">
+                    <input type="text" class="token-value" readonly>
+                    <button class="btn primary" onclick="copyToken(this)">Copy</button>
+                  </div>
+                  <p class="copy-feedback" style="display: none;">Copied to clipboard!</p>
+                </div>
+                <p>Edit your VS Code settings (<code>.vscode/mcp.json</code> or user settings):</p>
+                <pre><code>{
+  "servers": {
+    "nestr": {
+      "command": "npx",
+      "args": ["-y", "@nestr/mcp"],
+      "env": {
+        "NESTR_OAUTH_TOKEN": "<span class="token-placeholder">your-oauth-token-here</span>"
+      }
+    }
+  }
+}</code></pre>
+              </div>
+
+              <div class="config-block local apikey">
+                <p>Edit your VS Code settings (<code>.vscode/mcp.json</code> or user settings):</p>
+                <pre><code>{
+  "servers": {
+    "nestr": {
+      "command": "npx",
+      "args": ["-y", "@nestr/mcp"],
+      "env": {
+        "NESTR_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}</code></pre>
+              </div>
+              <p>Reload VS Code window after saving (<code>Cmd/Ctrl + Shift + P</code> &rarr; "Developer: Reload Window").</p>
             </div>
 
             <div class="tab-content" id="manual">
@@ -811,6 +1059,49 @@
         }
       }
     })();
+
+    // Install VS Code MCP server via deeplink
+    function installVSCodeMCP(event) {
+      event.preventDefault();
+
+      // VS Code MCP server configuration
+      const config = {
+        name: 'nestr',
+        url: 'https://mcp.nestr.io/mcp'
+      };
+
+      // Create the VS Code deeplink URL
+      const vscodeLinkStable = `vscode:mcp/install?${encodeURIComponent(JSON.stringify(config))}`;
+      const vscodeLinkInsiders = `vscode-insiders:mcp/install?${encodeURIComponent(JSON.stringify(config))}`;
+
+      // Try to open VS Code
+      window.location.href = vscodeLinkStable;
+
+      // Show a message after a short delay in case VS Code didn't open
+      setTimeout(() => {
+        // Find the parent quickstart-box and show a helpful message
+        const btn = event.target;
+        const quickstartBox = btn.closest('.quickstart-box');
+        if (quickstartBox) {
+          let statusMsg = quickstartBox.querySelector('.vscode-status');
+          if (!statusMsg) {
+            statusMsg = document.createElement('p');
+            statusMsg.className = 'vscode-status quickstart-note';
+            statusMsg.innerHTML = 'If VS Code didn\'t open, try <a href="' + vscodeLinkInsiders + '">VS Code Insiders</a> or use the manual setup below.';
+            quickstartBox.appendChild(statusMsg);
+          }
+        }
+      }, 1500);
+    }
+
+    // Show manual configuration fallback
+    function showManualConfig(event, id) {
+      event.preventDefault();
+      const fallback = document.getElementById(id + '-fallback');
+      if (fallback) {
+        fallback.style.display = 'block';
+      }
+    }
 
   </script>
 </body>
