@@ -85,14 +85,84 @@ export interface WorkspaceApp {
   enabled: boolean;
 }
 
+/** Error codes for structured error handling */
+export type ErrorCode =
+  | "AUTH_FAILED"      // 401 - Invalid or missing credentials
+  | "FORBIDDEN"        // 403 - Valid auth but no permission
+  | "APP_DISABLED"     // 403 - Feature/app not enabled
+  | "PLAN_REQUIRED"    // 403 - Requires plan upgrade
+  | "NOT_FOUND"        // 404 - Resource doesn't exist
+  | "VALIDATION"       // 400 - Invalid input
+  | "RATE_LIMITED"     // 429 - Too many requests
+  | "SERVER_ERROR"     // 5xx - Server-side issue
+  | "NETWORK_ERROR"    // Connection/timeout issues
+  | "UNKNOWN";         // Unclassified error
+
+/** Structured error for MCP tool responses */
+export interface ToolError {
+  error: true;
+  code: ErrorCode;
+  message: string;
+  status?: number;
+  retryable: boolean;
+  hint?: string;
+}
+
 export class NestrApiError extends Error {
+  public code: ErrorCode;
+  public hint?: string;
+  public retryable: boolean;
+
   constructor(
     message: string,
     public status: number,
-    public endpoint: string
+    public endpoint: string,
+    options?: { code?: ErrorCode; hint?: string; retryable?: boolean }
   ) {
     super(message);
     this.name = "NestrApiError";
+    this.code = options?.code ?? this.inferCode(status, message);
+    this.hint = options?.hint;
+    this.retryable = options?.retryable ?? this.inferRetryable(this.code);
+  }
+
+  private inferCode(status: number, message: string): ErrorCode {
+    const lowerMsg = message.toLowerCase();
+
+    if (status === 401) return "AUTH_FAILED";
+    if (status === 404) return "NOT_FOUND";
+    if (status === 429) return "RATE_LIMITED";
+    if (status === 400) return "VALIDATION";
+    if (status >= 500) return "SERVER_ERROR";
+
+    if (status === 403) {
+      if (lowerMsg.includes("app") && (lowerMsg.includes("enabled") || lowerMsg.includes("disabled"))) {
+        return "APP_DISABLED";
+      }
+      if (lowerMsg.includes("pro") || lowerMsg.includes("plan") || lowerMsg.includes("upgrade")) {
+        return "PLAN_REQUIRED";
+      }
+      return "FORBIDDEN";
+    }
+
+    return "UNKNOWN";
+  }
+
+  private inferRetryable(code: ErrorCode): boolean {
+    // Only retry transient errors
+    return code === "RATE_LIMITED" || code === "SERVER_ERROR" || code === "NETWORK_ERROR";
+  }
+
+  /** Convert to structured error for MCP responses */
+  toToolError(): ToolError {
+    return {
+      error: true,
+      code: this.code,
+      message: this.message,
+      status: this.status,
+      retryable: this.retryable,
+      hint: this.hint,
+    };
   }
 }
 
@@ -133,11 +203,63 @@ export class NestrClient {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "Unknown error");
-      throw new NestrApiError(
-        `API request failed: ${response.status} ${response.statusText} - ${errorText}`,
+
+      // Try to parse JSON error response for clearer error messages
+      let errorMessage = errorText;
+      try {
+        const errorJson = JSON.parse(errorText);
+        // Check common error message field patterns
+        errorMessage =
+          errorJson.message ||
+          errorJson.error ||
+          errorJson.reason ||
+          errorJson.detail ||
+          errorJson.description ||
+          // Nested patterns
+          errorJson.data?.message ||
+          errorJson.data?.error ||
+          // Fallback: if it's an object, stringify it compactly
+          (typeof errorJson === "object" ? JSON.stringify(errorJson) : errorText);
+      } catch {
+        // Not JSON, use raw text
+      }
+
+      // Create error and let it infer the code
+      const error = new NestrApiError(
+        errorMessage,
         response.status,
         endpoint
       );
+
+      // Set hints based on inferred error code
+      switch (error.code) {
+        case "AUTH_FAILED":
+          error.hint = "Check your API key or OAuth token is valid.";
+          break;
+        case "APP_DISABLED":
+          error.hint = "Enable this app in workspace settings > Apps.";
+          break;
+        case "PLAN_REQUIRED":
+          error.hint = "This feature requires a Pro plan. Upgrade in workspace settings.";
+          break;
+        case "FORBIDDEN":
+          error.hint = "You don't have permission for this action. Check your role/access level.";
+          break;
+        case "NOT_FOUND":
+          error.hint = "The resource doesn't exist or you don't have access to it.";
+          break;
+        case "RATE_LIMITED":
+          error.hint = "Too many requests. Wait a moment and try again.";
+          break;
+        case "VALIDATION":
+          error.hint = "Check the input parameters are correct.";
+          break;
+        case "SERVER_ERROR":
+          error.hint = "Server error. Try again in a few moments.";
+          break;
+      }
+
+      throw error;
     }
 
     // Handle empty responses (e.g., DELETE)
@@ -152,11 +274,13 @@ export class NestrClient {
   async listWorkspaces(options?: {
     search?: string;
     limit?: number;
+    page?: number;
     cleanText?: boolean;
   }): Promise<Nest[]> {
     const params = new URLSearchParams();
     if (options?.search) params.set("search", options.search);
     if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
 
     const query = params.toString();
@@ -171,10 +295,11 @@ export class NestrClient {
   async searchWorkspace(
     workspaceId: string,
     search: string,
-    options?: { limit?: number; cleanText?: boolean }
+    options?: { limit?: number; page?: number; cleanText?: boolean }
   ): Promise<Nest[]> {
     const params = new URLSearchParams({ search });
     if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
 
     return this.fetch<Nest[]>(`/workspaces/${workspaceId}/search?${params}`);
@@ -182,10 +307,11 @@ export class NestrClient {
 
   async getWorkspaceProjects(
     workspaceId: string,
-    options?: { limit?: number; cleanText?: boolean }
+    options?: { limit?: number; page?: number; cleanText?: boolean }
   ): Promise<Nest[]> {
     const params = new URLSearchParams();
     if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
 
     const query = params.toString();
@@ -203,10 +329,15 @@ export class NestrClient {
 
   async getNestChildren(
     nestId: string,
-    cleanText = false
+    options?: { limit?: number; page?: number; cleanText?: boolean }
   ): Promise<Nest[]> {
-    const params = cleanText ? "?cleanText=true" : "";
-    return this.fetch<Nest[]>(`/nests/${nestId}/children${params}`);
+    const params = new URLSearchParams();
+    if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.page) params.set("page", options.page.toString());
+    if (options?.cleanText) params.set("cleanText", "true");
+
+    const query = params.toString();
+    return this.fetch<Nest[]>(`/nests/${nestId}/children${query ? `?${query}` : ""}`);
   }
 
   async createNest(data: {
@@ -286,10 +417,11 @@ export class NestrClient {
 
   async listCircles(
     workspaceId: string,
-    options?: { limit?: number; cleanText?: boolean }
+    options?: { limit?: number; page?: number; cleanText?: boolean }
   ): Promise<Role[]> {
     const params = new URLSearchParams();
     if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
 
     const query = params.toString();
@@ -312,10 +444,11 @@ export class NestrClient {
   async getCircleRoles(
     workspaceId: string,
     circleId: string,
-    options?: { limit?: number; cleanText?: boolean }
+    options?: { limit?: number; page?: number; cleanText?: boolean }
   ): Promise<Role[]> {
     const params = new URLSearchParams();
     if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
 
     const query = params.toString();
@@ -326,10 +459,11 @@ export class NestrClient {
 
   async listRoles(
     workspaceId: string,
-    options?: { limit?: number; cleanText?: boolean }
+    options?: { limit?: number; page?: number; cleanText?: boolean }
   ): Promise<Role[]> {
     const params = new URLSearchParams();
     if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
 
     const query = params.toString();
@@ -342,10 +476,12 @@ export class NestrClient {
 
   async listUsers(
     workspaceId: string,
-    options?: { search?: string; includeSuspended?: boolean }
+    options?: { search?: string; limit?: number; page?: number; includeSuspended?: boolean }
   ): Promise<User[]> {
     const params = new URLSearchParams();
     if (options?.search) params.set("search", options.search);
+    if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.page) params.set("page", options.page.toString());
     if (options?.includeSuspended) params.set("includeSuspended", "true");
 
     const query = params.toString();
@@ -362,10 +498,12 @@ export class NestrClient {
 
   async listLabels(
     workspaceId: string,
-    options?: { search?: string }
+    options?: { search?: string; limit?: number; page?: number }
   ): Promise<Label[]> {
     const params = new URLSearchParams();
     if (options?.search) params.set("search", options.search);
+    if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.page) params.set("page", options.page.toString());
 
     const query = params.toString();
     return this.fetch<Label[]>(

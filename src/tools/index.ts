@@ -4,7 +4,7 @@
  */
 
 import { z } from "zod";
-import type { NestrClient } from "../api/client.js";
+import { NestrApiError, type NestrClient, type ToolError, type ErrorCode } from "../api/client.js";
 
 // Fields to keep for compact list responses (reduces token usage)
 const COMPACT_FIELDS = {
@@ -60,6 +60,7 @@ export const schemas = {
   listWorkspaces: z.object({
     search: z.string().optional().describe("Search query to filter workspaces"),
     limit: z.number().optional().describe("Maximum number of results"),
+    page: z.number().optional().describe("Page number for pagination (check meta.total_pages in response)"),
   }),
 
   getWorkspace: z.object({
@@ -70,6 +71,7 @@ export const schemas = {
     workspaceId: z.string().describe("Workspace ID to search in"),
     query: z.string().describe("Search query"),
     limit: z.number().optional().default(20).describe("Maximum results (default 20)"),
+    page: z.number().optional().describe("Page number for pagination (check meta.total_pages in response)"),
   }),
 
   getNest: z.object({
@@ -78,6 +80,8 @@ export const schemas = {
 
   getNestChildren: z.object({
     nestId: z.string().describe("Parent nest ID"),
+    limit: z.number().optional().describe("Maximum results"),
+    page: z.number().optional().describe("Page number for pagination"),
   }),
 
   createNest: z.object({
@@ -111,16 +115,20 @@ export const schemas = {
   listCircles: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     limit: z.number().optional().describe("Maximum results"),
+    page: z.number().optional().describe("Page number for pagination"),
   }),
 
   getCircleRoles: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     circleId: z.string().describe("Circle ID"),
+    limit: z.number().optional().describe("Maximum results"),
+    page: z.number().optional().describe("Page number for pagination"),
   }),
 
   listRoles: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     limit: z.number().optional().describe("Maximum results"),
+    page: z.number().optional().describe("Page number for pagination"),
   }),
 
   getInsights: z.object({
@@ -131,16 +139,21 @@ export const schemas = {
   listUsers: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     search: z.string().optional().describe("Search by name or email"),
+    limit: z.number().optional().describe("Maximum results"),
+    page: z.number().optional().describe("Page number for pagination"),
   }),
 
   listLabels: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     search: z.string().optional().describe("Search query"),
+    limit: z.number().optional().describe("Maximum results"),
+    page: z.number().optional().describe("Page number for pagination"),
   }),
 
   getProjects: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     limit: z.number().optional().describe("Maximum results"),
+    page: z.number().optional().describe("Page number for pagination"),
   }),
 
   getComments: z.object({
@@ -202,12 +215,13 @@ export const schemas = {
 export const toolDefinitions = [
   {
     name: "nestr_list_workspaces",
-    description: "List all Nestr workspaces you have access to",
+    description: "List all Nestr workspaces you have access to. Response includes meta.total_pages for pagination.",
     inputSchema: {
       type: "object" as const,
       properties: {
         search: { type: "string", description: "Search query to filter workspaces" },
         limit: { type: "number", description: "Maximum number of results" },
+        page: { type: "number", description: "Page number (1-indexed). Check meta.total_pages in response for available pages." },
       },
     },
   },
@@ -224,13 +238,14 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_search",
-    description: "Search for nests within a workspace. Supports operators: label:role (filter by type), assignee:me, completed:false, has:due, depth:1, project->status:Current (field values). Combine with spaces for AND, commas for OR. Examples: 'label:project assignee:me', 'label:role', 'marketing label:todo'",
+    description: "Search for nests within a workspace. Supports operators: label:role (filter by type), assignee:me, completed:false, has:due, depth:1, project->status:Current (field values). Combine with spaces for AND, commas for OR. Examples: 'label:project assignee:me', 'label:role', 'marketing label:todo'. Response includes meta.total_pages for pagination.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID to search in" },
         query: { type: "string", description: "Search query with optional operators (e.g., 'label:role', 'assignee:me completed:false')" },
         limit: { type: "number", description: "Maximum results (default 20)" },
+        page: { type: "number", description: "Page number (1-indexed). Check meta.total_pages in response." },
       },
       required: ["workspaceId", "query"],
     },
@@ -248,11 +263,13 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_nest_children",
-    description: "Get child nests (sub-tasks, sub-projects) of a nest",
+    description: "Get child nests (sub-tasks, sub-projects) of a nest. Response includes meta.total_pages for pagination.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Parent nest ID" },
+        limit: { type: "number", description: "Maximum results" },
+        page: { type: "number", description: "Page number (1-indexed)" },
       },
       required: ["nestId"],
     },
@@ -336,36 +353,40 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_circles",
-    description: "List all circles (teams/departments) in a workspace",
+    description: "List all circles (teams/departments) in a workspace. Response includes meta.total_pages for pagination.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         limit: { type: "number", description: "Maximum results" },
+        page: { type: "number", description: "Page number (1-indexed)" },
       },
       required: ["workspaceId"],
     },
   },
   {
     name: "nestr_get_circle_roles",
-    description: "Get all roles within a specific circle, including accountabilities",
+    description: "Get all roles within a specific circle, including accountabilities. Response includes meta.total_pages for pagination.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         circleId: { type: "string", description: "Circle ID" },
+        limit: { type: "number", description: "Maximum results" },
+        page: { type: "number", description: "Page number (1-indexed)" },
       },
       required: ["workspaceId", "circleId"],
     },
   },
   {
     name: "nestr_list_roles",
-    description: "List all roles in a workspace",
+    description: "List all roles in a workspace. Response includes meta.total_pages for pagination.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         limit: { type: "number", description: "Maximum results" },
+        page: { type: "number", description: "Page number (1-indexed)" },
       },
       required: ["workspaceId"],
     },
@@ -384,36 +405,41 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_users",
-    description: "List members of a workspace",
+    description: "List members of a workspace. Response includes meta.total_pages for pagination.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         search: { type: "string", description: "Search by name or email" },
+        limit: { type: "number", description: "Maximum results" },
+        page: { type: "number", description: "Page number (1-indexed)" },
       },
       required: ["workspaceId"],
     },
   },
   {
     name: "nestr_list_labels",
-    description: "List available labels in a workspace",
+    description: "List available labels in a workspace. Response includes meta.total_pages for pagination.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         search: { type: "string", description: "Search query" },
+        limit: { type: "number", description: "Maximum results" },
+        page: { type: "number", description: "Page number (1-indexed)" },
       },
       required: ["workspaceId"],
     },
   },
   {
     name: "nestr_get_projects",
-    description: "List all projects in a workspace. Check fields['project.status'] for status: Future (planned), Current (active), Waiting (blocked), Done (completed). The 'due' field contains the project due date.",
+    description: "List all projects in a workspace. Check fields['project.status'] for status: Future (planned), Current (active), Waiting (blocked), Done (completed). The 'due' field contains the project due date. Response includes meta.total_pages for pagination.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         limit: { type: "number", description: "Maximum results" },
+        page: { type: "number", description: "Page number (1-indexed)" },
       },
       required: ["workspaceId"],
     },
@@ -562,6 +588,7 @@ export async function handleToolCall(
         const workspaces = await client.listWorkspaces({
           search: parsed.search,
           limit: parsed.limit,
+          page: parsed.page,
           cleanText: true,
         });
         return formatResult(compactResponse(workspaces));
@@ -578,7 +605,7 @@ export async function handleToolCall(
         const results = await client.searchWorkspace(
           parsed.workspaceId,
           parsed.query,
-          { limit: parsed.limit, cleanText: true }
+          { limit: parsed.limit, page: parsed.page, cleanText: true }
         );
         return formatResult(compactResponse(results));
       }
@@ -591,7 +618,11 @@ export async function handleToolCall(
 
       case "nestr_get_nest_children": {
         const parsed = schemas.getNestChildren.parse(args);
-        const children = await client.getNestChildren(parsed.nestId, true);
+        const children = await client.getNestChildren(parsed.nestId, {
+          limit: parsed.limit,
+          page: parsed.page,
+          cleanText: true,
+        });
         return formatResult(compactResponse(children));
       }
 
@@ -637,6 +668,7 @@ export async function handleToolCall(
         const parsed = schemas.listCircles.parse(args);
         const circles = await client.listCircles(parsed.workspaceId, {
           limit: parsed.limit,
+          page: parsed.page,
           cleanText: true,
         });
         return formatResult(compactResponse(circles, "role"));
@@ -647,7 +679,7 @@ export async function handleToolCall(
         const roles = await client.getCircleRoles(
           parsed.workspaceId,
           parsed.circleId,
-          { cleanText: true }
+          { limit: parsed.limit, page: parsed.page, cleanText: true }
         );
         return formatResult(compactResponse(roles, "role"));
       }
@@ -656,6 +688,7 @@ export async function handleToolCall(
         const parsed = schemas.listRoles.parse(args);
         const roles = await client.listRoles(parsed.workspaceId, {
           limit: parsed.limit,
+          page: parsed.page,
           cleanText: true,
         });
         return formatResult(compactResponse(roles, "role"));
@@ -673,6 +706,8 @@ export async function handleToolCall(
         const parsed = schemas.listUsers.parse(args);
         const users = await client.listUsers(parsed.workspaceId, {
           search: parsed.search,
+          limit: parsed.limit,
+          page: parsed.page,
         });
         return formatResult(compactResponse(users, "user"));
       }
@@ -681,6 +716,8 @@ export async function handleToolCall(
         const parsed = schemas.listLabels.parse(args);
         const labels = await client.listLabels(parsed.workspaceId, {
           search: parsed.search,
+          limit: parsed.limit,
+          page: parsed.page,
         });
         return formatResult(compactResponse(labels, "label"));
       }
@@ -689,6 +726,7 @@ export async function handleToolCall(
         const parsed = schemas.getProjects.parse(args);
         const projects = await client.getWorkspaceProjects(parsed.workspaceId, {
           limit: parsed.limit,
+          page: parsed.page,
           cleanText: true,
         });
         return formatResult(compactResponse(projects));
@@ -780,17 +818,39 @@ export async function handleToolCall(
       }
 
       default:
-        return {
-          content: [{ type: "text", text: `Unknown tool: ${name}` }],
-          isError: true,
-        };
+        return formatError({
+          error: true,
+          code: "UNKNOWN",
+          message: `Unknown tool: ${name}`,
+          retryable: false,
+          hint: "Check available tools with the MCP tools/list endpoint.",
+        });
     }
   } catch (error) {
+    // Handle Nestr API errors with structured response
+    if (error instanceof NestrApiError) {
+      return formatError(error.toToolError());
+    }
+
+    // Handle Zod validation errors
+    if (error instanceof z.ZodError) {
+      return formatError({
+        error: true,
+        code: "VALIDATION",
+        message: error.errors.map(e => `${e.path.join(".")}: ${e.message}`).join("; "),
+        retryable: false,
+        hint: "Check the tool parameters match the expected schema.",
+      });
+    }
+
+    // Handle other errors
     const message = error instanceof Error ? error.message : "Unknown error";
-    return {
-      content: [{ type: "text", text: `Error: ${message}` }],
-      isError: true,
-    };
+    return formatError({
+      error: true,
+      code: "UNKNOWN",
+      message,
+      retryable: false,
+    });
   }
 }
 
@@ -802,5 +862,17 @@ function formatResult(data: unknown): ToolResult {
         text: JSON.stringify(data, null, 2),
       },
     ],
+  };
+}
+
+function formatError(error: ToolError): ToolResult {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(error, null, 2),
+      },
+    ],
+    isError: true,
   };
 }
