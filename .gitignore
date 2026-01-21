@@ -34,3 +34,6 @@ coverage/
 tmp/
 temp/
 *.tmp
+
+# OAuth storage (contains client secrets)
+.data/

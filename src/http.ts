@@ -428,6 +428,8 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
       const clientRedirect = new URL(pending.redirectUri);
       clientRedirect.searchParams.set("code", code as string);
       clientRedirect.searchParams.set("state", state as string);
+      // Add issuer parameter (OAuth 2.1 / some clients expect this)
+      clientRedirect.searchParams.set("iss", getServerBaseUrl(req));
 
       res.redirect(clientRedirect.toString());
       return;
@@ -547,25 +549,17 @@ app.post("/oauth/token", express.urlencoded({ extended: true }), async (req: Req
           });
           return;
         }
-
-        console.log(`OAuth Token: MCP client ${client_id} exchanging code with PKCE`);
       }
 
       // Build the request to Nestr's token endpoint (without PKCE - Nestr doesn't support it)
+      // IMPORTANT: Always use OUR callback URL and client credentials when talking to Nestr
+      // The redirect_uri must match what we used during authorization
       const body: Record<string, string> = {
         grant_type,
         code,
-        client_id: config.clientId || client_id,
+        client_id: config.clientId!, // Always use our registered client_id
+        redirect_uri: getCallbackUrl(req), // Always use our callback URL
       };
-
-      // For MCP clients, use OUR callback URL (what we told Nestr during authorization)
-      // not the MCP client's localhost redirect_uri
-      if (client_id && client_id.startsWith("mcp-")) {
-        // Use our callback URL that we sent to Nestr
-        body.redirect_uri = getCallbackUrl(req);
-      } else if (redirect_uri) {
-        body.redirect_uri = redirect_uri;
-      }
 
       // Use our server's client secret to talk to Nestr
       if (config.clientSecret) {
