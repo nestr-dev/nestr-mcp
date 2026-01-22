@@ -226,6 +226,7 @@ function getCallbackUrl(req: Request): string {
  *   - state: CSRF protection state
  *   - code_challenge: PKCE challenge (required by MCP spec)
  *   - code_challenge_method: Must be "S256"
+ *   - client_consumer: (optional) Identifier for the MCP client (e.g., "claude-code", "cursor")
  */
 app.get("/oauth/authorize", (req: Request, res: Response) => {
   const config = getOAuthConfig();
@@ -238,6 +239,7 @@ app.get("/oauth/authorize", (req: Request, res: Response) => {
   const state = req.query.state as string | undefined;
   const codeChallenge = req.query.code_challenge as string | undefined;
   const codeChallengeMethod = req.query.code_challenge_method as string | undefined;
+  const clientConsumer = req.query.client_consumer as string | undefined;
 
   // If this is an MCP client request (has client_id), use full OAuth flow
   if (clientId) {
@@ -306,6 +308,7 @@ app.get("/oauth/authorize", (req: Request, res: Response) => {
         state,
         codeChallenge,
         codeChallengeMethod: codeChallengeMethod || "S256",
+        clientConsumer,
       });
 
       // Override the redirect_uri in the auth URL to use OUR callback
@@ -313,7 +316,7 @@ app.get("/oauth/authorize", (req: Request, res: Response) => {
       const authUrlObj = new URL(authUrl);
       authUrlObj.searchParams.set("redirect_uri", ourCallbackUrl);
 
-      console.log(`OAuth: MCP client ${clientId} initiating auth flow`);
+      console.log(`OAuth: MCP client ${clientId} initiating auth flow${clientConsumer ? ` (consumer: ${clientConsumer})` : ""}`);
       res.redirect(authUrlObj.toString());
       return;
     } catch (error) {
@@ -479,6 +482,7 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
  * Request body:
  *   - client_id: The registered client ID
  *   - scope: (optional) Requested scopes
+ *   - client_consumer: (optional) Identifier for the MCP client (e.g., "claude-code", "cursor")
  *
  * Response:
  *   - device_code: Code for the device to poll with
@@ -492,7 +496,7 @@ app.post("/oauth/device", express.urlencoded({ extended: true }), async (req: Re
   const config = getOAuthConfig();
 
   try {
-    const { client_id, scope } = req.body;
+    const { client_id, scope, client_consumer } = req.body;
 
     // Validate client if it's a dynamically registered client
     if (client_id && client_id.startsWith("mcp-")) {
@@ -512,7 +516,12 @@ app.post("/oauth/device", express.urlencoded({ extended: true }), async (req: Re
       scope: scope || config.scopes.join(" "),
     };
 
-    console.log(`OAuth Device: Requesting device code from Nestr`);
+    // Pass client_consumer to Nestr for token metadata
+    if (client_consumer) {
+      body.client_consumer = client_consumer;
+    }
+
+    console.log(`OAuth Device: Requesting device code from Nestr${client_consumer ? ` (consumer: ${client_consumer})` : ""}`);
 
     const response = await fetch(config.deviceAuthorizationEndpoint, {
       method: "POST",
@@ -543,6 +552,10 @@ app.post("/oauth/device", express.urlencoded({ extended: true }), async (req: Re
  *   - grant_type=authorization_code (exchange code for tokens, with PKCE verification)
  *   - grant_type=refresh_token (refresh expired tokens)
  *   - grant_type=urn:ietf:params:oauth:grant-type:device_code (device flow polling)
+ *
+ * Optional parameters:
+ *   - client_consumer: Identifier for the MCP client (e.g., "claude-code", "cursor")
+ *     Passed to Nestr for token metadata to differentiate tokens by consuming client.
  */
 app.post("/oauth/token", express.urlencoded({ extended: true }), async (req: Request, res: Response) => {
   const config = getOAuthConfig();
@@ -557,6 +570,7 @@ app.post("/oauth/token", express.urlencoded({ extended: true }), async (req: Req
       client_id,
       client_secret,
       code_verifier,
+      client_consumer,
     } = req.body;
 
     if (grant_type === "authorization_code") {
@@ -631,6 +645,11 @@ app.post("/oauth/token", express.urlencoded({ extended: true }), async (req: Req
         body.client_secret = config.clientSecret;
       }
 
+      // Pass client_consumer to Nestr for token metadata
+      if (client_consumer) {
+        body.client_consumer = client_consumer;
+      }
+
       const response = await fetch(config.tokenEndpoint, {
         method: "POST",
         headers: {
@@ -702,7 +721,12 @@ app.post("/oauth/token", express.urlencoded({ extended: true }), async (req: Req
         body.client_secret = config.clientSecret;
       }
 
-      console.log(`OAuth Token: Polling device code at Nestr`);
+      // Pass client_consumer to Nestr for token metadata (if provided again during polling)
+      if (client_consumer) {
+        body.client_consumer = client_consumer;
+      }
+
+      console.log(`OAuth Token: Polling device code at Nestr${client_consumer ? ` (consumer: ${client_consumer})` : ""}`);
 
       const response = await fetch(config.tokenEndpoint, {
         method: "POST",

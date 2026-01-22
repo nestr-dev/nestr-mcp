@@ -41,6 +41,8 @@ export interface PendingAuthWithPKCE {
   codeChallengeMethod?: string;
   createdAt: number;
   scope?: string;
+  /** Identifier for the MCP client (e.g., "claude-code", "cursor") for token metadata */
+  clientConsumer?: string;
 }
 
 // In-memory cache backed by disk

@@ -96,6 +96,8 @@ export interface AuthorizationRequestParams {
   state?: string;
   codeChallenge?: string;
   codeChallengeMethod?: string;
+  /** Identifier for the MCP client (e.g., "claude-code", "cursor") for token metadata */
+  clientConsumer?: string;
 }
 
 /**
@@ -162,6 +164,7 @@ export function createAuthorizationRequest(
     codeChallengeMethod: params.codeChallengeMethod,
     createdAt: Date.now(),
     scope: params.scope,
+    clientConsumer: params.clientConsumer,
   });
 
   // Build authorization URL for Nestr (without PKCE - we handle it ourselves)
