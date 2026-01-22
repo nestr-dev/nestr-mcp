@@ -219,6 +219,71 @@ in:circleId completed:false
    - **Especially valuable for roles and circles**: Store information relevant to the *role*, not the person filling it (e.g., key contacts, recurring processes, domain knowledge). This context transfers automatically when the role is assigned to a different user.
    - Enables future agentic work: AI agents can autonomously energize roles, maintaining continuity as they learn preferences, make decisions, and accumulate role-specific knowledge over time
 
+## Autonomous Work
+
+When asked to do work autonomously, follow these practices to ensure work is properly captured, tracked, and documented in Nestr:
+
+### Setting Up Work
+
+1. **Find the appropriate role** for the work:
+   - Identify which role has accountability for this type of work
+   - Check who fills that role (the \`users\` array on the role)
+   - **If the current user fills the role**: Proceed with creating the project under that role
+   - **If the current user does NOT fill the role**:
+     - Inform the user who fills the role
+     - Ask if they still want to create the project under that role
+     - If yes, create the project and add a comment (post) asking the role filler if they accept this project in their role
+     - Example comment: "@rolefiller - [Username] is proposing this project for your role. Do you accept this work?"
+
+2. **Create a project** under the role:
+   - Title in past tense describing what "done" looks like (e.g., "API integration completed", "User onboarding flow redesigned")
+   - Set \`labels: ["project"]\` and \`fields: { "project.status": "Current" }\`
+   - Use \`purpose\` to describe the Definition of Done (DoD) with clear acceptance criteria
+   - Assign to the role filler (not necessarily the requesting user)
+
+3. **If a project is already provided**, review and enhance it:
+   - Check if the description has clear DoD criteria
+   - If not, **append** to the description (don't overwrite) with suggested criteria
+   - Suggest a clearer DoD to the user if needed
+
+4. **Break down into tasks** under the project:
+   - Create individual tasks (nests without labels) for discrete pieces of work
+   - Use \`description\` for additional context, acceptance criteria, or notes
+   - Keep tasks small enough to complete in one sitting
+
+### While Working
+
+5. **Document progress as comments** (\`nestr_add_comment\`):
+   - Post updates to individual tasks as you work on them
+   - Post summaries or milestone updates to the project itself
+   - Capture relevant questions you asked the user and their answers
+   - Note: Comments on a task automatically appear on the parent project, so don't double-post
+
+6. **Mark tasks complete** as you finish them:
+   - Use \`nestr_update_nest\` with \`completed: true\`
+   - Add a final comment summarizing what was done if helpful
+
+### Example Flow
+
+\`\`\`
+User: "Can you refactor our authentication module to use JWT?"
+
+1. Search for relevant role (e.g., Developer role in Tech circle)
+2. Create project: "Authentication module refactored to JWT"
+   - Purpose: "Replace session-based auth with JWT tokens. DoD: All endpoints use JWT, tests pass, documentation updated."
+   - Parent: Developer role
+   - Assign to user
+3. Create tasks:
+   - "Research JWT library options"
+   - "Update auth middleware"
+   - "Migrate existing sessions"
+   - "Update API documentation"
+   - "Add/update tests"
+4. Work through tasks, posting findings as comments
+5. Mark each task complete as finished
+6. Post final summary to project when all done
+\`\`\`
+
 ## Important Labels
 
 Labels define what type a nest is. The API strips the "circleplus-" prefix, so use labels without it.
