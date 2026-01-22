@@ -9,6 +9,7 @@ export interface OAuthConfig {
   // Nestr OAuth endpoints
   authorizationEndpoint: string;
   tokenEndpoint: string;
+  deviceAuthorizationEndpoint: string;
 
   // MCP server resource identifier
   resourceIdentifier: string;
@@ -40,6 +41,7 @@ export function getOAuthConfig(): OAuthConfig {
     // Note: /oauth/* may need to be whitelisted in Cloudflare to avoid bot challenge
     authorizationEndpoint: `${nestrBase}/dialog/oauth`,
     tokenEndpoint: `${nestrBase}/oauth/token`,
+    deviceAuthorizationEndpoint: `${nestrBase}/oauth/device`,
     resourceIdentifier,
     clientId: process.env.NESTR_OAUTH_CLIENT_ID,
     clientSecret: process.env.NESTR_OAUTH_CLIENT_SECRET,
@@ -94,6 +96,7 @@ export interface AuthorizationServerMetadata {
   issuer: string;
   authorization_endpoint: string;
   token_endpoint: string;
+  device_authorization_endpoint?: string;
   registration_endpoint?: string;
   response_types_supported: string[];
   grant_types_supported: string[];
@@ -119,9 +122,14 @@ export function getAuthorizationServerMetadata(mcpServerBaseUrl?: string): Autho
       issuer: mcpServerBaseUrl,
       authorization_endpoint: `${mcpServerBaseUrl}/oauth/authorize`,
       token_endpoint: `${mcpServerBaseUrl}/oauth/token`,
+      device_authorization_endpoint: `${mcpServerBaseUrl}/oauth/device`,
       registration_endpoint: `${mcpServerBaseUrl}/oauth/register`,
       response_types_supported: ["code"],
-      grant_types_supported: ["authorization_code", "refresh_token"],
+      grant_types_supported: [
+        "authorization_code",
+        "refresh_token",
+        "urn:ietf:params:oauth:grant-type:device_code",
+      ],
       code_challenge_methods_supported: ["S256"], // We handle PKCE in our proxy
       scopes_supported: config.scopes,
     };
@@ -133,8 +141,13 @@ export function getAuthorizationServerMetadata(mcpServerBaseUrl?: string): Autho
     issuer: nestrBase,
     authorization_endpoint: config.authorizationEndpoint,
     token_endpoint: config.tokenEndpoint,
+    device_authorization_endpoint: config.deviceAuthorizationEndpoint,
     response_types_supported: ["code"],
-    grant_types_supported: ["authorization_code", "refresh_token"],
+    grant_types_supported: [
+      "authorization_code",
+      "refresh_token",
+      "urn:ietf:params:oauth:grant-type:device_code",
+    ],
     code_challenge_methods_supported: [],
     scopes_supported: config.scopes,
   };

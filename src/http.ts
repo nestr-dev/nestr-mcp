@@ -11,6 +11,7 @@
  *   POST /oauth/register                      - Dynamic client registration (RFC 7591)
  *   GET  /oauth/authorize                     - Initiates OAuth flow, redirects to Nestr
  *   GET  /oauth/callback                      - Handles OAuth callback from Nestr
+ *   POST /oauth/device                        - Device authorization endpoint (RFC 8628)
  *   POST /oauth/token                         - Token endpoint (proxies to Nestr with PKCE verification)
  *   POST /mcp                                 - MCP protocol endpoint (Streamable HTTP)
  *   GET  /mcp                                 - SSE stream for server-initiated messages
@@ -419,8 +420,8 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
 
   try {
     // Check if this is an MCP client flow (has PKCE challenge stored)
-    // For MCP clients, we redirect back to them with the code
-    // They will then call /oauth/token to exchange it
+    // For MCP clients, redirect back to their callback URL with the code
+    // CLI tools should use Device Flow (RFC 8628) for headless environments
     if (pending.codeChallenge && pending.clientId?.startsWith("mcp-")) {
       console.log(`OAuth: Redirecting code to MCP client ${pending.clientId}`);
 
@@ -428,7 +429,6 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
       const clientRedirect = new URL(pending.redirectUri);
       clientRedirect.searchParams.set("code", code as string);
       clientRedirect.searchParams.set("state", state as string);
-      // Add issuer parameter (OAuth 2.1 / some clients expect this)
       clientRedirect.searchParams.set("iss", getServerBaseUrl(req));
 
       res.redirect(clientRedirect.toString());
@@ -470,6 +470,70 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
 });
 
 /**
+ * Device Authorization Endpoint (RFC 8628)
+ *
+ * Initiates the device authorization flow for CLI tools and headless environments.
+ * The client receives a device_code and user_code, displays the user_code to the user,
+ * and polls the token endpoint until the user completes authorization.
+ *
+ * Request body:
+ *   - client_id: The registered client ID
+ *   - scope: (optional) Requested scopes
+ *
+ * Response:
+ *   - device_code: Code for the device to poll with
+ *   - user_code: Short code for user to enter
+ *   - verification_uri: URL for user to visit
+ *   - verification_uri_complete: URL with user_code embedded (optional)
+ *   - expires_in: Lifetime of codes in seconds
+ *   - interval: Minimum polling interval in seconds
+ */
+app.post("/oauth/device", express.urlencoded({ extended: true }), async (req: Request, res: Response) => {
+  const config = getOAuthConfig();
+
+  try {
+    const { client_id, scope } = req.body;
+
+    // Validate client if it's a dynamically registered client
+    if (client_id && client_id.startsWith("mcp-")) {
+      const client = getClient(client_id);
+      if (!client) {
+        res.status(401).json({
+          error: "invalid_client",
+          error_description: "Unknown client",
+        });
+        return;
+      }
+    }
+
+    // Proxy to Nestr's device authorization endpoint
+    const body: Record<string, string> = {
+      client_id: config.clientId!, // Use our registered client_id with Nestr
+      scope: scope || config.scopes.join(" "),
+    };
+
+    console.log(`OAuth Device: Requesting device code from Nestr`);
+
+    const response = await fetch(config.deviceAuthorizationEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams(body),
+    });
+
+    const responseData = await response.json();
+    res.status(response.status).json(responseData);
+  } catch (error) {
+    console.error("OAuth device authorization error:", error);
+    res.status(500).json({
+      error: "server_error",
+      error_description: error instanceof Error ? error.message : "Failed to initiate device authorization",
+    });
+  }
+});
+
+/**
  * OAuth Token Endpoint (Proxy to Nestr with PKCE verification)
  *
  * Proxies token requests to Nestr's OAuth server.
@@ -478,6 +542,7 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
  * Supports:
  *   - grant_type=authorization_code (exchange code for tokens, with PKCE verification)
  *   - grant_type=refresh_token (refresh expired tokens)
+ *   - grant_type=urn:ietf:params:oauth:grant-type:device_code (device flow polling)
  */
 app.post("/oauth/token", express.urlencoded({ extended: true }), async (req: Request, res: Response) => {
   const config = getOAuthConfig();
@@ -600,6 +665,44 @@ app.post("/oauth/token", express.urlencoded({ extended: true }), async (req: Req
       }
 
       console.log(`OAuth Token: Proxying refresh_token request to Nestr`);
+
+      const response = await fetch(config.tokenEndpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams(body),
+      });
+
+      const responseData = await response.json();
+      res.status(response.status).json(responseData);
+      return;
+    }
+
+    // Device code grant type (RFC 8628)
+    if (grant_type === "urn:ietf:params:oauth:grant-type:device_code") {
+      const { device_code } = req.body;
+
+      if (!device_code) {
+        res.status(400).json({
+          error: "invalid_request",
+          error_description: "Missing required parameter: device_code",
+        });
+        return;
+      }
+
+      // Proxy to Nestr's token endpoint
+      const body: Record<string, string> = {
+        grant_type,
+        device_code,
+        client_id: config.clientId!,
+      };
+
+      if (config.clientSecret) {
+        body.client_secret = config.clientSecret;
+      }
+
+      console.log(`OAuth Token: Polling device code at Nestr`);
 
       const response = await fetch(config.tokenEndpoint, {
         method: "POST",
