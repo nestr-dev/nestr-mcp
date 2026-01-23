@@ -73,8 +73,8 @@ When in doubt with \`custom\`, explain concepts in plain language rather than as
 Nestr uses different formats for different fields:
 
 - **\`title\`**: Plain text only. HTML tags are stripped. Keep titles concise.
-- **\`purpose\`, \`description\`**: HTML supported. Use basic tags: \`<b>\`, \`<i>\`, \`<code>\`, \`<ul>\`, \`<ol>\`, \`<li>\`, \`<a href="...">\`, \`<br>\`. Markdown is NOT supported (will display as literal text).
-- **Comment \`body\`**: HTML supported (same as above). Use \`@username\` for mentions.
+- **\`purpose\`, \`description\`**: HTML supported. Use basic tags: \`<b>\`, \`<i>\`, \`<code>\`, \`<ul>\`, \`<ol>\`, \`<li>\`, \`<a href="...">\`, \`<br>\`, \`<img src="...">\` (including base64 data URIs). Markdown is NOT supported (will display as literal text).
+- **Comment \`body\`**: HTML supported (same as above, including base64 images). Use \`@username\` for mentions.
 - **\`data.botContext\`**: Plain text. Stored as-is for AI context persistence, not rendered in UI.
 
 **Example HTML in purpose:**

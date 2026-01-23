@@ -930,4 +930,45 @@ footer a {
   .token-display input {
     font-size: 0.75rem;
   }
+
+  /* Field table mobile fixes */
+  .field-table {
+    display: block;
+    width: 100%;
+  }
+
+  .field-table tbody {
+    display: block;
+  }
+
+  .field-table tr {
+    display: flex;
+    flex-direction: column;
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .field-table tr:last-child {
+    border-bottom: none;
+  }
+
+  .field-table td {
+    display: block;
+    padding: 0;
+    border-bottom: none;
+    width: 100% !important;
+  }
+
+  .field-table td:first-child {
+    font-size: 0.8rem;
+    margin-bottom: 4px;
+  }
+
+  .field-table td:last-child {
+    font-size: 0.85rem;
+  }
+
+  .field-table code {
+    word-break: break-all;
+  }
 }
