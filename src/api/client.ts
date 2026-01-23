@@ -366,6 +366,7 @@ export class NestrClient {
       fields: Record<string, unknown>;
       users: string[];
       data: Record<string, unknown>;
+      due: string;
       completed: boolean;
     }>
   ): Promise<Nest> {

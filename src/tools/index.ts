@@ -98,10 +98,12 @@ export const schemas = {
     title: z.string().optional().describe("New title (plain text, HTML stripped)"),
     purpose: z.string().optional().describe("New purpose (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)"),
     description: z.string().optional().describe("New description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)"),
-    parentId: z.string().optional().describe("New parent ID (move nest to different location, e.g., move inbox item to a project)"),
-    fields: z.record(z.unknown()).optional().describe("Field updates (e.g., status)"),
+    parentId: z.string().optional().describe("New parent ID (move nest to different location, e.g., move inbox item to a role or project)"),
+    labels: z.array(z.string()).optional().describe("Label IDs to set (e.g., ['project'] to convert an item into a project)"),
+    fields: z.record(z.unknown()).optional().describe("Field updates (e.g., { 'project.status': 'Current' })"),
     users: z.array(z.string()).optional().describe("User IDs to assign"),
     data: z.record(z.unknown()).optional().describe("Data updates (e.g., { botContext: 'Key info...' }, plain text)"),
+    due: z.string().optional().describe("Due date (ISO format). For projects/tasks: deadline. For roles: re-election date. For meetings: start time."),
     completed: z.boolean().optional().describe("Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead."),
   }),
 
@@ -240,7 +242,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_search",
-    description: "Search for nests within a workspace. Supports operators: label:type, assignee:me, completed:false, has:due, depth:N, in:nestId, updated-date:past_7_days, field->value:X. IMPORTANT: Use completed:false when searching for work to exclude old completed items. Response includes meta.total showing total matching count.",
+    description: "Search for nests within a workspace. Supports operators: label:, parent-label:, assignee: (me/userId/!userId/none), admin:, createdby:, completed:, type:, has: (due/pastdue/children/incompletechildren), depth:, mindepth:, in:, updated-date:, limit:, template:, data.property:, fieldValues.property:, label->field:value. Use ! prefix for negation. IMPORTANT: Use completed:false when searching for work to exclude old completed items. Response includes meta.total showing total matching count.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -311,9 +313,14 @@ export const toolDefinitions = [
         purpose: { type: "string", description: "New purpose (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
         description: { type: "string", description: "New description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
         parentId: { type: "string", description: "New parent ID (move nest to different location)" },
+        labels: {
+          type: "array",
+          items: { type: "string" },
+          description: "Label IDs to set (e.g., ['project'] to convert an item into a project)",
+        },
         fields: {
           type: "object",
-          description: "Field updates (e.g., {status: 'done'})",
+          description: "Field updates (e.g., { 'project.status': 'Current' })",
         },
         users: {
           type: "array",
@@ -323,6 +330,10 @@ export const toolDefinitions = [
         data: {
           type: "object",
           description: "Data updates (e.g., { botContext: 'Key info here...' } for AI memory, plain text)",
+        },
+        due: {
+          type: "string",
+          description: "Due date (ISO format). For projects/tasks: deadline. For roles: re-election date. For meetings: start time.",
         },
         completed: {
           type: "boolean",
@@ -650,9 +661,11 @@ export async function handleToolCall(
           purpose: parsed.purpose,
           description: parsed.description,
           parentId: parsed.parentId,
+          labels: parsed.labels,
           fields: parsed.fields,
           users: parsed.users,
           data: parsed.data as Record<string, unknown> | undefined,
+          due: parsed.due,
           completed: parsed.completed,
         });
         return formatResult({ message: "Nest updated successfully", nest });

@@ -325,11 +325,33 @@ The \`nestr_search\` tool supports powerful query operators. Combine multiple op
 |----------|---------|-------------|
 | \`label:\` | \`label:role\` | Filter by label type |
 | \`label:!\` | \`label:!project\` | Exclude label |
-| \`assignee:\` | \`assignee:me\` | Filter by assignee (use \`me\` for current user) |
-| \`completed:\` | \`completed:false\` | Filter by completion status |
-| \`has:\` | \`has:due\` | Items with a property (due, children, etc.) |
-| \`depth:\` | \`depth:1\` | Limit search depth (1 = direct children only) |
+| \`parent-label:\` | \`parent-label:circle\` | Filter items whose parent has a specific label |
+| \`assignee:\` | \`assignee:me\` | Filter by assignee (use \`me\` for current user, \`none\` for unassigned) |
+| \`assignee:\` | \`assignee:userId\` | Filter by specific user ID |
+| \`assignee:!\` | \`assignee:!userId\` | Exclude items assigned to specific user |
+| \`admin:\` | \`admin:me\` | Filter by admin user (same syntax as assignee) |
 | \`createdby:\` | \`createdby:me\` | Filter by creator |
+| \`completed:\` | \`completed:false\` | Filter by completion status |
+| \`type:\` | \`type:comment\` | Filter by nest type (e.g., \`comment\`, \`nest\` for untyped items) |
+| \`has:\` | \`has:due\` | Items with a property (see has: values below) |
+| \`depth:\` | \`depth:1\` | Limit search depth (1 = direct children only) |
+| \`mindepth:\` | \`mindepth:2\` | Minimum depth from search context |
+| \`limit:\` | \`limit:10\` | Limit number of results |
+
+### The \`has:\` Operator
+
+The \`has:\` operator checks for property existence. Supports \`!\` prefix for negation (e.g., \`has:!due\`).
+
+**Available values:**
+- \`has:due\` - Items with a due date set
+- \`has:pastdue\` - Items with overdue due dates
+- \`has:children\` - Items that have children
+- \`has:incompletechildren\` - Items with incomplete children
+- \`has:parent\` - Items that have a parent
+- \`has:color\` - Items with a color set
+- \`has:icon\` - Items with an icon set
+- \`has:tabs\` - Items with tabs configured
+- \`has:header\` - Items with a header
 
 ### Field Value Search
 
@@ -369,11 +391,26 @@ label:accountability customer
   -> Accountabilities related to customers
 \`\`\`
 
+### Data and Field Property Search
+
+Search by data properties or field values directly:
+
+- \`data.{property}:value\` - Search by data property (e.g., \`data.externalId:123\`)
+- \`fieldValues.{property}:value\` - Search by field value directly
+
+Both support multiple values (comma-separated for OR logic) and \`!\` prefix for negation.
+
+### Template Operators
+
+- \`template:templateId\` - Items created from a specific template
+- \`child-from-template:templateId\` - Children derived from a specific template
+
+Both support \`!\` prefix for negation.
+
 ### Additional Operators
 
-- \`parent-label:circle\` - Items under a circle
-- \`type:comment\` - Search comments/posts
-- \`deleted:true\` - Include deleted items
+- \`deleted:true\` - Include deleted items (hidden by default)
+- \`linkeditems:true\` - Items linked to the current context
 
 ### Sorting Results
 
@@ -562,16 +599,22 @@ The inbox is a collection point for capturing "stuff" that still needs processin
 
 ### Moving Items Out of Inbox
 
-To clarify/organize an inbox item, use \`nestr_update_nest\` to change its \`parentId\`:
+To clarify/organize an inbox item, use \`nestr_update_nest\` to update it in place. You can change any properties in a single call:
 
 \`\`\`json
 {
   "nestId": "inboxItemId",
-  "parentId": "projectOrRoleId"
+  "parentId": "roleOrCircleOrProjectId",
+  "labels": ["project"],
+  "users": ["userId"],
+  "fields": { "project.status": "Current" },
+  "due": "2024-02-15T00:00:00Z"
 }
 \`\`\`
 
-This moves the item from inbox to the specified project, role, or other location. A nest without any labels is the basic building block - it's completable and acts as a todo/action item.
+This moves the item from inbox to the specified location. The \`parentId\` is typically a role, circle, or project (the most common destinations). Add the \`project\` label to convert it into a project, or leave labels empty for a simple action/todo.
+
+**Important:** When processing inbox items, prefer updating existing items using \`nestr_update_nest\` rather than creating new items. This preserves the original item's history, comments, and metadata.
 
 ## Common Workflows
 
