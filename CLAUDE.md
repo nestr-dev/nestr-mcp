@@ -46,6 +46,7 @@ npm run start:http
 | `NESTR_OAUTH_CLIENT_SECRET` | OAuth client secret (for registered clients) | No |
 | `MCP_RESOURCE_URL` | MCP resource identifier (default: `https://mcp.nestr.io/mcp`) | No |
 | `PORT` | HTTP server port (default: `3000`) | No (HTTP only) |
+| `GTM_ID` or `NESTR_GTM_ID` | Google Tag Manager container ID (e.g., `GTM-XXXXXXX`) | No (HTTP only) |
 
 \* Either `NESTR_OAUTH_TOKEN` (recommended) or `NESTR_API_KEY` is required.
 

@@ -49,12 +49,14 @@ import {
   type RegisteredClient,
 } from "./oauth/storage.js";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 3000;
+const GTM_ID = process.env.GTM_ID || process.env.NESTR_GTM_ID;
 
 /**
  * Escape HTML special characters to prevent XSS
@@ -82,9 +84,41 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "nestr-mcp" });
 });
 
-// Landing page
+// Landing page (with optional GTM injection)
 app.get("/", (_req, res) => {
-  res.sendFile(path.join(webDir, "index.html"));
+  const indexPath = path.join(webDir, "index.html");
+
+  // If GTM is not configured, serve the static file directly
+  if (!GTM_ID) {
+    res.sendFile(indexPath);
+    return;
+  }
+
+  // Read and inject GTM scripts
+  try {
+    let html = fs.readFileSync(indexPath, "utf-8");
+
+    // GTM head script
+    const gtmScript = `<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+})(window,document,'script','dataLayer','${GTM_ID}');</script>`;
+
+    // GTM noscript fallback
+    const gtmNoscript = `<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=${GTM_ID}"
+height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>`;
+
+    // Replace placeholders
+    html = html.replace("<!-- __GTM_SCRIPT__ -->", gtmScript);
+    html = html.replace("<!-- __GTM_NOSCRIPT__ -->", gtmNoscript);
+
+    res.setHeader("Content-Type", "text/html");
+    res.send(html);
+  } catch (error) {
+    console.error("Error serving landing page:", error);
+    res.sendFile(indexPath);
+  }
 });
 
 // OAuth Protected Resource Metadata (RFC 9728)
