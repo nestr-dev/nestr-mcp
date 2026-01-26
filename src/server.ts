@@ -778,17 +778,49 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
     const helpResources = getHelpResources();
 
-    return {
-      resources: [
-        {
-          uri: "nestr://workspaces",
-          name: "My Workspaces",
-          description: "List of Nestr workspaces you have access to",
-          mimeType: "application/json",
-        },
-        ...helpResources,
-      ],
-    };
+    // Start with static resources
+    const resources = [
+      {
+        uri: "nestr://workspaces",
+        name: "My Workspaces",
+        description: "List of Nestr workspaces you have access to",
+        mimeType: "application/json",
+      },
+      ...helpResources,
+    ];
+
+    // Fetch workspace files (AI assistant files) dynamically
+    try {
+      const workspaces = await client.listWorkspaces({ cleanText: true });
+
+      // Handle both array and wrapped response formats
+      const workspaceList = Array.isArray(workspaces)
+        ? workspaces
+        : (workspaces as { data?: unknown[] }).data || [];
+
+      for (const workspace of workspaceList as Array<{ _id: string; title: string }>) {
+        try {
+          const filesResult = await client.listNestFiles(workspace._id, {
+            context: "nestradamus_files",
+          });
+
+          for (const file of filesResult.data || []) {
+            resources.push({
+              uri: `nestr://workspace/${workspace._id}/file/${file._id}`,
+              name: `${file.name} (${workspace.title})`,
+              description: `AI assistant file: ${file.name} - uploaded to workspace "${workspace.title}"`,
+              mimeType: file.type || "application/octet-stream",
+            });
+          }
+        } catch {
+          // Skip workspace if files fetch fails (may not have permission or feature disabled)
+        }
+      }
+    } catch {
+      // If workspace fetch fails, just return static resources
+    }
+
+    return { resources };
   });
 
   // Register resource read handler
@@ -812,6 +844,32 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
     const workspaceMatch = uri.match(/^nestr:\/\/workspace\/([^/]+)\/(.+)$/);
     if (workspaceMatch) {
       const [, workspaceId, resource] = workspaceMatch;
+
+      // Handle file resources: nestr://workspace/{workspaceId}/file/{fileId}
+      const fileMatch = resource.match(/^file\/(.+)$/);
+      if (fileMatch) {
+        const fileId = fileMatch[1];
+        const fileResult = await client.getNestFile(workspaceId, fileId, { includeUrl: true });
+        const file = fileResult.data;
+
+        // Return file metadata with download URL
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: file.type || "application/octet-stream",
+              text: JSON.stringify({
+                id: file._id,
+                name: file.name,
+                type: file.type,
+                size: file.size,
+                url: file.url,
+                hint: "Use the 'url' field to download the file content",
+              }, null, 2),
+            },
+          ],
+        };
+      }
 
       switch (resource) {
         case "structure": {
