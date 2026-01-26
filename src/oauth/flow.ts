@@ -183,6 +183,11 @@ export function createAuthorizationRequest(
     scope: params.scope || config.scopes.join(" "),
   });
 
+  // Pass client_consumer to Nestr for token metadata (identifies MCP client like claude-code, cursor)
+  if (params.clientConsumer) {
+    urlParams.set("client_consumer", params.clientConsumer);
+  }
+
   const authUrl = `${config.authorizationEndpoint}?${urlParams}`;
   return { authUrl, state };
 }
