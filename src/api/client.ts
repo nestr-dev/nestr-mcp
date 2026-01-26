@@ -93,10 +93,6 @@ export interface WorkspaceFile {
   uploadedAt?: string;
 }
 
-export interface WorkspaceFileWithContent extends WorkspaceFile {
-  content: string;
-}
-
 /** Error codes for structured error handling */
 export type ErrorCode =
   | "AUTH_FAILED"      // 401 - Invalid or missing credentials
@@ -612,37 +608,6 @@ export class NestrClient {
     return this.fetch<{ status: string; data: WorkspaceFile & { url?: string } }>(
       `/nests/${nestId}/files/${fileId}${query ? `?${query}` : ""}`
     );
-  }
-
-  // Legacy methods for backwards compatibility - these now use the new nest files endpoint
-
-  /**
-   * @deprecated Use listNestFiles instead. Lists AI assistant files for a workspace.
-   */
-  async listWorkspaceFiles(
-    workspaceId: string,
-    options?: { query?: string }
-  ): Promise<{ files: WorkspaceFile[]; hint: string }> {
-    // Use the new endpoint with context=nestradamus_files for AI assistant files
-    const result = await this.listNestFiles(workspaceId, { context: "nestradamus_files" });
-    return {
-      files: result.data,
-      hint: "Use nestr_get_nest_files with context='nestradamus_files' for AI assistant files, or without context for general files.",
-    };
-  }
-
-  /**
-   * @deprecated Use getNestFile instead. Gets a specific AI assistant file from a workspace.
-   */
-  async getWorkspaceFile(
-    workspaceId: string,
-    fileId: string
-  ): Promise<WorkspaceFileWithContent> {
-    const result = await this.getNestFile(workspaceId, fileId, { includeUrl: true });
-    return {
-      ...result.data,
-      content: result.data.url || "", // URL instead of content
-    } as WorkspaceFileWithContent;
   }
 
   // ============ INBOX (requires OAuth token) ============

@@ -223,7 +223,6 @@ The server exposes these tools to AI assistants:
 | `nestr_create_inbox_item` | `POST /users/me/inbox` (OAuth only) |
 | `nestr_get_inbox_item` | `GET /users/me/inbox/{id}` (OAuth only) |
 | `nestr_update_inbox_item` | `PATCH /users/me/inbox/{id}` (OAuth only) |
-| `nestr_get_workspace_files` | `GET /nests/{id}/files?context=nestradamus_files` (AI assistant files) |
 | `nestr_get_nest_files` | `GET /nests/{id}/files`, `GET /nests/{id}/files/{fid}` |
 
 ## Adding a New Tool

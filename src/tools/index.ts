@@ -214,14 +214,7 @@ export const schemas = {
     data: z.record(z.unknown()).optional().describe("Custom data storage"),
   }),
 
-  // Workspace files (legacy - AI assistant files)
-  getWorkspaceFiles: z.object({
-    workspaceId: z.string().describe("The workspace ID to get AI assistant files from"),
-    fileId: z.string().optional().describe("Optional: specific file ID to retrieve"),
-    query: z.string().optional().describe("Optional: search query to filter files"),
-  }),
-
-  // Generic nest files
+  // Nest files
   getNestFiles: z.object({
     nestId: z.string().describe("The nest ID (can be a workspace ID) to get files from"),
     fileId: z.string().optional().describe("Optional: specific file ID to retrieve details"),
@@ -599,21 +592,7 @@ export const toolDefinitions = [
       required: ["nestId"],
     },
   },
-  // Workspace files (legacy - specifically for AI assistant files)
-  {
-    name: "nestr_get_workspace_files",
-    description: "List AI assistant files uploaded to a workspace. These are files uploaded by workspace admins to provide custom context for the AI (e.g., company policies, product docs). For general file access, use nestr_get_nest_files instead.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        workspaceId: { type: "string", description: "The workspace ID to get AI assistant files from" },
-        fileId: { type: "string", description: "Optional: specific file ID to retrieve" },
-        query: { type: "string", description: "Optional: search query to filter files" },
-      },
-      required: ["workspaceId"],
-    },
-  },
-  // Generic nest files
+  // Nest files
   {
     name: "nestr_get_nest_files",
     description: "List and retrieve files attached to any nest (task, project, role, workspace, etc.). By default, excludes context-specific files (like AI assistant files). Use context parameter to filter by specific context (e.g., 'nestradamus_files' for AI files), or includeContextFiles=true to get all files. Response includes meta.total showing total count.",
@@ -884,24 +863,7 @@ export async function handleToolCall(
         return formatResult({ message: "Inbox item updated successfully", item });
       }
 
-      // Workspace files (legacy - AI assistant files)
-      case "nestr_get_workspace_files": {
-        const parsed = schemas.getWorkspaceFiles.parse(args);
-
-        // If specific fileId requested, return file details
-        if (parsed.fileId) {
-          const file = await client.getWorkspaceFile(parsed.workspaceId, parsed.fileId);
-          return formatResult(file);
-        }
-
-        // Otherwise list AI assistant files
-        const result = await client.listWorkspaceFiles(parsed.workspaceId, {
-          query: parsed.query,
-        });
-        return formatResult(result);
-      }
-
-      // Generic nest files
+      // Nest files
       case "nestr_get_nest_files": {
         const parsed = schemas.getNestFiles.parse(args);
 
