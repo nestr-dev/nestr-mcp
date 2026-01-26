@@ -12,6 +12,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { NestrClient, createClientFromEnv } from "./api/client.js";
 import { toolDefinitions, handleToolCall } from "./tools/index.js";
+import { getHelpResources, readHelpResource } from "./help/index.js";
 
 export interface NestrMcpServerConfig {
   client?: NestrClient;
@@ -775,6 +776,8 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
 
   // Register resource list handler
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    const helpResources = getHelpResources();
+
     return {
       resources: [
         {
@@ -783,6 +786,7 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
           description: "List of Nestr workspaces you have access to",
           mimeType: "application/json",
         },
+        ...helpResources,
       ],
     };
   });
@@ -836,6 +840,22 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
             ],
           };
         }
+      }
+    }
+
+    // Handle help resources
+    if (uri.startsWith("nestr://help")) {
+      const result = await readHelpResource(uri);
+      if (result) {
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: result.mimeType,
+              text: result.text,
+            },
+          ],
+        };
       }
     }
 

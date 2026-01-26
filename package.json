@@ -15,7 +15,8 @@
     "web"
   ],
   "scripts": {
-    "build": "tsc",
+    "fetch-help": "tsx scripts/fetch-help-docs.ts",
+    "build": "npm run fetch-help && tsc && cp src/help/docs.json build/help/docs.json",
     "start": "node build/index.js",
     "start:http": "node build/http.js",
     "dev": "tsx src/index.ts",
@@ -70,6 +71,7 @@
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.0",
+    "cheerio": "^1.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }

@@ -22,7 +22,10 @@ npm run dev
 # Development (HTTP server for mcp.nestr.io)
 npm run dev:http
 
-# Build TypeScript
+# Fetch help docs only (from help.nestr.io)
+npm run fetch-help
+
+# Build TypeScript (includes fetching help docs)
 npm run build
 
 # Test with MCP Inspector
@@ -64,8 +67,14 @@ src/
 ├── oauth/
 │   ├── config.ts     # OAuth configuration and metadata (RFC 9728)
 │   └── flow.ts       # OAuth authorization code flow with PKCE
-└── tools/
-    └── index.ts      # Tool definitions and handlers
+├── tools/
+│   └── index.ts      # Tool definitions and handlers
+└── help/
+    ├── index.ts      # Help resource handlers
+    └── docs.json     # Generated help docs (gitignored)
+
+scripts/
+└── fetch-help-docs.ts  # Build-time script to fetch help.nestr.io content
 
 web/
 ├── index.html        # Landing page for mcp.nestr.io
@@ -152,6 +161,35 @@ To enable the OAuth flow, register an OAuth client in Nestr:
 - **src/oauth/config.ts** - OAuth configuration and metadata endpoints (RFC 9728)
 - **src/oauth/flow.ts** - OAuth authorization code flow
 - **web/index.html** - User-facing documentation at mcp.nestr.io
+- **scripts/fetch-help-docs.ts** - Fetches help docs from help.nestr.io at build time
+- **src/help/index.ts** - Serves help documentation as MCP resources
+
+## MCP Resources
+
+The server exposes read-only resources that AI clients can browse and read:
+
+| Resource URI | Description |
+|--------------|-------------|
+| `nestr://workspaces` | List of workspaces the user has access to |
+| `nestr://help` | Index of all help documentation articles |
+| `nestr://help/{slug}` | Full content of a specific help article |
+
+### Help Documentation
+
+Help docs are fetched from `help.nestr.io` at build time and bundled with the MCP server. This ensures:
+- No runtime dependency on the help site
+- Fast, offline-capable access
+- Automatic updates on each build/publish
+
+To manually refresh help docs:
+```bash
+npm run fetch-help
+```
+
+The fetch script:
+1. Reads the sitemap from `help.nestr.io/sitemap_en.xml`
+2. Fetches each article page and extracts content
+3. Saves to `src/help/docs.json` (gitignored, regenerated on build)
 
 ## MCP Tools
 
