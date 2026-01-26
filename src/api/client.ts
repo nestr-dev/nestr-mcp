@@ -571,33 +571,78 @@ export class NestrClient {
   // ============ FILES ============
 
   /**
-   * List files uploaded to a workspace for the AI assistant (Nestradamus files).
-   * Returns file metadata; use getWorkspaceFile to retrieve content.
+   * List files attached to a nest.
+   * By default, excludes files with a specific context (like AI assistant files).
+   * Use context parameter to filter by a specific context (e.g., "nestradamus_files" for AI files).
+   */
+  async listNestFiles(
+    nestId: string,
+    options?: {
+      context?: string;
+      includeContextFiles?: boolean;
+      limit?: number;
+      page?: number;
+    }
+  ): Promise<{ status: string; meta: { per_page: number; total: number; page: number; total_pages: number }; data: WorkspaceFile[] }> {
+    const params = new URLSearchParams();
+    if (options?.context) params.set("context", options.context);
+    if (options?.includeContextFiles) params.set("includeContextFiles", "true");
+    if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.page) params.set("page", options.page.toString());
+
+    const query = params.toString();
+    return this.fetch<{ status: string; meta: { per_page: number; total: number; page: number; total_pages: number }; data: WorkspaceFile[] }>(
+      `/nests/${nestId}/files${query ? `?${query}` : ""}`
+    );
+  }
+
+  /**
+   * Get a specific file's details from a nest.
+   * Use includeUrl=true to get a signed download URL.
+   */
+  async getNestFile(
+    nestId: string,
+    fileId: string,
+    options?: { includeUrl?: boolean }
+  ): Promise<{ status: string; data: WorkspaceFile & { url?: string } }> {
+    const params = new URLSearchParams();
+    if (options?.includeUrl) params.set("includeUrl", "true");
+
+    const query = params.toString();
+    return this.fetch<{ status: string; data: WorkspaceFile & { url?: string } }>(
+      `/nests/${nestId}/files/${fileId}${query ? `?${query}` : ""}`
+    );
+  }
+
+  // Legacy methods for backwards compatibility - these now use the new nest files endpoint
+
+  /**
+   * @deprecated Use listNestFiles instead. Lists AI assistant files for a workspace.
    */
   async listWorkspaceFiles(
     workspaceId: string,
     options?: { query?: string }
   ): Promise<{ files: WorkspaceFile[]; hint: string }> {
-    const params = new URLSearchParams();
-    if (options?.query) params.set("query", options.query);
-
-    const query = params.toString();
-    return this.fetch<{ files: WorkspaceFile[]; hint: string }>(
-      `/workspaces/${workspaceId}/files${query ? `?${query}` : ""}`
-    );
+    // Use the new endpoint with context=nestradamus_files for AI assistant files
+    const result = await this.listNestFiles(workspaceId, { context: "nestradamus_files" });
+    return {
+      files: result.data,
+      hint: "Use nestr_get_nest_files with context='nestradamus_files' for AI assistant files, or without context for general files.",
+    };
   }
 
   /**
-   * Get a specific file's content from a workspace.
-   * Returns the file with extracted text content.
+   * @deprecated Use getNestFile instead. Gets a specific AI assistant file from a workspace.
    */
   async getWorkspaceFile(
     workspaceId: string,
     fileId: string
   ): Promise<WorkspaceFileWithContent> {
-    return this.fetch<WorkspaceFileWithContent>(
-      `/workspaces/${workspaceId}/files/${fileId}`
-    );
+    const result = await this.getNestFile(workspaceId, fileId, { includeUrl: true });
+    return {
+      ...result.data,
+      content: result.data.url || "", // URL instead of content
+    } as WorkspaceFileWithContent;
   }
 
   // ============ INBOX (requires OAuth token) ============
