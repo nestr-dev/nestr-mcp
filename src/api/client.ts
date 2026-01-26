@@ -85,6 +85,18 @@ export interface WorkspaceApp {
   enabled: boolean;
 }
 
+export interface WorkspaceFile {
+  _id: string;
+  name: string;
+  type: string;
+  size: number;
+  uploadedAt?: string;
+}
+
+export interface WorkspaceFileWithContent extends WorkspaceFile {
+  content: string;
+}
+
 /** Error codes for structured error handling */
 export type ErrorCode =
   | "AUTH_FAILED"      // 401 - Invalid or missing credentials
@@ -554,6 +566,38 @@ export class NestrClient {
 
   async getWorkspaceApps(workspaceId: string): Promise<WorkspaceApp[]> {
     return this.fetch<WorkspaceApp[]>(`/workspaces/${workspaceId}/apps`);
+  }
+
+  // ============ FILES ============
+
+  /**
+   * List files uploaded to a workspace for the AI assistant (Nestradamus files).
+   * Returns file metadata; use getWorkspaceFile to retrieve content.
+   */
+  async listWorkspaceFiles(
+    workspaceId: string,
+    options?: { query?: string }
+  ): Promise<{ files: WorkspaceFile[]; hint: string }> {
+    const params = new URLSearchParams();
+    if (options?.query) params.set("query", options.query);
+
+    const query = params.toString();
+    return this.fetch<{ files: WorkspaceFile[]; hint: string }>(
+      `/workspaces/${workspaceId}/files${query ? `?${query}` : ""}`
+    );
+  }
+
+  /**
+   * Get a specific file's content from a workspace.
+   * Returns the file with extracted text content.
+   */
+  async getWorkspaceFile(
+    workspaceId: string,
+    fileId: string
+  ): Promise<WorkspaceFileWithContent> {
+    return this.fetch<WorkspaceFileWithContent>(
+      `/workspaces/${workspaceId}/files/${fileId}`
+    );
   }
 
   // ============ INBOX (requires OAuth token) ============

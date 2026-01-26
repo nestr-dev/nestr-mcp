@@ -213,6 +213,13 @@ export const schemas = {
     completed: z.boolean().optional().describe("Mark as completed (processed)"),
     data: z.record(z.unknown()).optional().describe("Custom data storage"),
   }),
+
+  // Workspace files
+  getWorkspaceFiles: z.object({
+    workspaceId: z.string().describe("The workspace ID to get files from"),
+    fileId: z.string().optional().describe("Optional: specific file ID to retrieve full content"),
+    query: z.string().optional().describe("Optional: search query to filter/search file contents"),
+  }),
 };
 
 // Tool definitions for MCP
@@ -582,6 +589,20 @@ export const toolDefinitions = [
       required: ["nestId"],
     },
   },
+  // Workspace files
+  {
+    name: "nestr_get_workspace_files",
+    description: "List and retrieve content from files uploaded to a workspace for the AI assistant. Files are uploaded by workspace admins to provide custom context (e.g., company policies, product docs, guidelines). Call without fileId to list available files, then with fileId to get full content.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "The workspace ID to get files from" },
+        fileId: { type: "string", description: "Optional: specific file ID to retrieve full content" },
+        query: { type: "string", description: "Optional: search query to filter/search file contents" },
+      },
+      required: ["workspaceId"],
+    },
+  },
 ];
 
 // Tool handler type
@@ -834,6 +855,23 @@ export async function handleToolCall(
           data: parsed.data as Record<string, unknown> | undefined,
         });
         return formatResult({ message: "Inbox item updated successfully", item });
+      }
+
+      // Workspace files
+      case "nestr_get_workspace_files": {
+        const parsed = schemas.getWorkspaceFiles.parse(args);
+
+        // If specific fileId requested, return full content
+        if (parsed.fileId) {
+          const file = await client.getWorkspaceFile(parsed.workspaceId, parsed.fileId);
+          return formatResult(file);
+        }
+
+        // Otherwise list all files (optionally filtered by query)
+        const result = await client.listWorkspaceFiles(parsed.workspaceId, {
+          query: parsed.query,
+        });
+        return formatResult(result);
       }
 
       default:
