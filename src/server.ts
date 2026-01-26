@@ -790,6 +790,7 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
     ];
 
     // Fetch workspace files (AI assistant files) dynamically
+    // IMPORTANT: Files are strictly scoped per workspace - no cross-workspace access
     try {
       const workspaces = await client.listWorkspaces({ cleanText: true });
 
@@ -804,13 +805,25 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
             context: "nestradamus_files",
           });
 
-          for (const file of filesResult.data || []) {
+          const files = filesResult.data || [];
+          if (files.length > 0) {
+            // Add workspace-level files index
             resources.push({
-              uri: `nestr://workspace/${workspace._id}/file/${file._id}`,
-              name: `${file.name} (${workspace.title})`,
-              description: `AI assistant file: ${file.name} - uploaded to workspace "${workspace.title}"`,
-              mimeType: file.type || "application/octet-stream",
+              uri: `nestr://workspace/${workspace._id}/files`,
+              name: `[${workspace.title}] AI Assistant Files`,
+              description: `List of ${files.length} AI assistant file(s) for workspace "${workspace.title}". These files are ONLY accessible within this workspace context.`,
+              mimeType: "application/json",
             });
+
+            // Add individual file resources, clearly scoped to workspace
+            for (const file of files) {
+              resources.push({
+                uri: `nestr://workspace/${workspace._id}/file/${file._id}`,
+                name: `[${workspace.title}] ${file.name}`,
+                description: `AI assistant file in workspace "${workspace.title}". File: ${file.name} (${file.type || "unknown type"}, ${file.size ? Math.round(file.size / 1024) + "KB" : "unknown size"})`,
+                mimeType: file.type || "application/octet-stream",
+              });
+            }
           }
         } catch {
           // Skip workspace if files fetch fails (may not have permission or feature disabled)
@@ -841,29 +854,76 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
     }
 
     // Handle dynamic workspace resources
+    // IMPORTANT: All workspace resources are strictly scoped - workspaceId in URI must match
     const workspaceMatch = uri.match(/^nestr:\/\/workspace\/([^/]+)\/(.+)$/);
     if (workspaceMatch) {
       const [, workspaceId, resource] = workspaceMatch;
 
-      // Handle file resources: nestr://workspace/{workspaceId}/file/{fileId}
+      // Fetch workspace details for context
+      let workspaceTitle = workspaceId;
+      try {
+        const workspace = await client.getWorkspace(workspaceId, true);
+        workspaceTitle = workspace.title || workspaceId;
+      } catch {
+        // Continue with ID if workspace fetch fails
+      }
+
+      // Handle workspace files index: nestr://workspace/{workspaceId}/files
+      if (resource === "files") {
+        const filesResult = await client.listNestFiles(workspaceId, {
+          context: "nestradamus_files",
+        });
+
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify({
+                workspace: {
+                  id: workspaceId,
+                  title: workspaceTitle,
+                },
+                notice: "These files are ONLY for this workspace. Do not use for other workspaces.",
+                files: (filesResult.data || []).map(f => ({
+                  id: f._id,
+                  name: f.name,
+                  type: f.type,
+                  size: f.size,
+                  resourceUri: `nestr://workspace/${workspaceId}/file/${f._id}`,
+                })),
+              }, null, 2),
+            },
+          ],
+        };
+      }
+
+      // Handle individual file: nestr://workspace/{workspaceId}/file/{fileId}
       const fileMatch = resource.match(/^file\/(.+)$/);
       if (fileMatch) {
         const fileId = fileMatch[1];
         const fileResult = await client.getNestFile(workspaceId, fileId, { includeUrl: true });
         const file = fileResult.data;
 
-        // Return file metadata with download URL
+        // Return file metadata with workspace context and download URL
         return {
           contents: [
             {
               uri,
               mimeType: file.type || "application/octet-stream",
               text: JSON.stringify({
-                id: file._id,
-                name: file.name,
-                type: file.type,
-                size: file.size,
-                url: file.url,
+                workspace: {
+                  id: workspaceId,
+                  title: workspaceTitle,
+                },
+                notice: "This file belongs ONLY to the workspace specified above. Do not use for other workspaces.",
+                file: {
+                  id: file._id,
+                  name: file.name,
+                  type: file.type,
+                  size: file.size,
+                  url: file.url,
+                },
                 hint: "Use the 'url' field to download the file content",
               }, null, 2),
             },
