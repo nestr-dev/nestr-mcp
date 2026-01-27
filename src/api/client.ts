@@ -85,6 +85,14 @@ export interface WorkspaceApp {
   enabled: boolean;
 }
 
+export interface WorkspaceFile {
+  _id: string;
+  name: string;
+  type: string;
+  size: number;
+  uploadedAt?: string;
+}
+
 /** Error codes for structured error handling */
 export type ErrorCode =
   | "AUTH_FAILED"      // 401 - Invalid or missing credentials
@@ -554,6 +562,52 @@ export class NestrClient {
 
   async getWorkspaceApps(workspaceId: string): Promise<WorkspaceApp[]> {
     return this.fetch<WorkspaceApp[]>(`/workspaces/${workspaceId}/apps`);
+  }
+
+  // ============ FILES ============
+
+  /**
+   * List files attached to a nest.
+   * By default, excludes files with a specific context (like AI assistant files).
+   * Use context parameter to filter by a specific context (e.g., "nestradamus_files" for AI files).
+   */
+  async listNestFiles(
+    nestId: string,
+    options?: {
+      context?: string;
+      includeContextFiles?: boolean;
+      limit?: number;
+      page?: number;
+    }
+  ): Promise<{ status: string; meta: { per_page: number; total: number; page: number; total_pages: number }; data: WorkspaceFile[] }> {
+    const params = new URLSearchParams();
+    if (options?.context) params.set("context", options.context);
+    if (options?.includeContextFiles) params.set("includeContextFiles", "true");
+    if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.page) params.set("page", options.page.toString());
+
+    const query = params.toString();
+    return this.fetch<{ status: string; meta: { per_page: number; total: number; page: number; total_pages: number }; data: WorkspaceFile[] }>(
+      `/nests/${nestId}/files${query ? `?${query}` : ""}`
+    );
+  }
+
+  /**
+   * Get a specific file's details from a nest.
+   * Use includeUrl=true to get a signed download URL.
+   */
+  async getNestFile(
+    nestId: string,
+    fileId: string,
+    options?: { includeUrl?: boolean }
+  ): Promise<{ status: string; data: WorkspaceFile & { url?: string } }> {
+    const params = new URLSearchParams();
+    if (options?.includeUrl) params.set("includeUrl", "true");
+
+    const query = params.toString();
+    return this.fetch<{ status: string; data: WorkspaceFile & { url?: string } }>(
+      `/nests/${nestId}/files/${fileId}${query ? `?${query}` : ""}`
+    );
   }
 
   // ============ INBOX (requires OAuth token) ============

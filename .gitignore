@@ -35,5 +35,8 @@ tmp/
 temp/
 *.tmp
 
+# Generated help docs (fetched at build time)
+src/help/docs.json
+
 # OAuth storage (contains client secrets)
 .data/

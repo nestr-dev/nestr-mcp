@@ -213,6 +213,16 @@ export const schemas = {
     completed: z.boolean().optional().describe("Mark as completed (processed)"),
     data: z.record(z.unknown()).optional().describe("Custom data storage"),
   }),
+
+  // Nest files
+  getNestFiles: z.object({
+    nestId: z.string().describe("The nest ID (can be a workspace ID) to get files from"),
+    fileId: z.string().optional().describe("Optional: specific file ID to retrieve details"),
+    context: z.string().optional().describe("Optional: filter by context (e.g., 'nestradamus_files' for AI assistant files)"),
+    includeContextFiles: z.boolean().optional().describe("Set to true to include all files regardless of context. By default, context-specific files are excluded."),
+    limit: z.number().optional().describe("Max results per page"),
+    page: z.number().optional().describe("Page number (1-indexed) for pagination"),
+  }),
 };
 
 // Tool definitions for MCP
@@ -582,6 +592,23 @@ export const toolDefinitions = [
       required: ["nestId"],
     },
   },
+  // Nest files
+  {
+    name: "nestr_get_nest_files",
+    description: "List and retrieve files attached to any nest (task, project, role, workspace, etc.). By default, excludes context-specific files (like AI assistant files). Use context parameter to filter by specific context (e.g., 'nestradamus_files' for AI files), or includeContextFiles=true to get all files. Response includes meta.total showing total count.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The nest ID (can be a workspace ID) to get files from" },
+        fileId: { type: "string", description: "Optional: specific file ID to retrieve details and download URL" },
+        context: { type: "string", description: "Optional: filter by context (e.g., 'nestradamus_files' for AI assistant files)" },
+        includeContextFiles: { type: "boolean", description: "Set to true to include all files. By default, context-specific files are excluded." },
+        limit: { type: "number", description: "Max results per page. Omit on first call to see meta.total count." },
+        page: { type: "number", description: "Page number (1-indexed) for pagination" },
+      },
+      required: ["nestId"],
+    },
+  },
 ];
 
 // Tool handler type
@@ -834,6 +861,26 @@ export async function handleToolCall(
           data: parsed.data as Record<string, unknown> | undefined,
         });
         return formatResult({ message: "Inbox item updated successfully", item });
+      }
+
+      // Nest files
+      case "nestr_get_nest_files": {
+        const parsed = schemas.getNestFiles.parse(args);
+
+        // If specific fileId requested, return file details with URL
+        if (parsed.fileId) {
+          const result = await client.getNestFile(parsed.nestId, parsed.fileId, { includeUrl: true });
+          return formatResult(result);
+        }
+
+        // Otherwise list files
+        const result = await client.listNestFiles(parsed.nestId, {
+          context: parsed.context,
+          includeContextFiles: parsed.includeContextFiles,
+          limit: parsed.limit,
+          page: parsed.page,
+        });
+        return formatResult(result);
       }
 
       default:
