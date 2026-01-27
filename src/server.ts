@@ -402,6 +402,37 @@ User: "Can you refactor our authentication module to use JWT?"
 6. Post final summary to project when all done
 \`\`\`
 
+## Label Architecture
+
+Labels give nests meaning and define their behavior. There are three types of labels:
+
+### 1. Global Labels (Nestr-defined)
+Core labels defined by Nestr that provide foundational structure (e.g., \`role\`, \`circle\`, \`project\`, \`accountability\`). These are available in all workspaces and define the fundamental building blocks of self-organization.
+
+### 2. Workspace Labels
+Labels created within a workspace for categorizing and organizing nests. These are:
+- Only available within that specific workspace
+- Visible to all users who have access to the workspace
+- Used for workspace-specific categorization (e.g., custom project types, priority levels, departments)
+
+### 3. Personal Labels
+Labels created by individual users for their own organization:
+- Only visible to the user who created them
+- Work across all workspaces the user has access to
+- Help users maintain personal categorization systems
+- Managed via \`nestr_list_personal_labels\` and \`nestr_create_personal_label\` (OAuth only)
+
+### Field Schemas and Customization
+
+Labels define field schemas - the custom fields available on nests with that label. Key points:
+
+- **Namespacing**: All fields are namespaced by the label that defines them (e.g., \`project.status\`, \`role.electable-role\`, \`metric.frequency\`)
+- **Schema inheritance**: Global and workspace labels can be customized within a specific context (e.g., a sub-circle might add or alter fields defined by parent labels)
+- **Dynamic schemas**: This is why you may encounter extra fields or fields with different options than expected - sub-contexts can extend the schema
+- **API limitation**: The schema customization hierarchy is not yet exposed through the API, so treat field schemas as potentially variable
+
+**Example**: A workspace might customize the global \`project\` label to add a \`project.department\` field, and a sub-circle might further customize it to add \`project.sprint\` - both would appear on projects within that sub-circle.
+
 ## Important Labels
 
 Labels define what type a nest is. The API strips the "circleplus-" prefix, so use labels without it.
