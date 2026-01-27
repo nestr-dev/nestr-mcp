@@ -455,7 +455,32 @@ Labels define field schemas - the custom fields available on nests with that lab
 - **Namespacing**: All fields are namespaced by the label that defines them (e.g., \`project.status\`, \`role.electable-role\`, \`metric.frequency\`)
 - **Schema inheritance**: Global and workspace labels can be customized within a specific context (e.g., a sub-circle might add or alter fields defined by parent labels)
 - **Dynamic schemas**: This is why you may encounter extra fields or fields with different options than expected - sub-contexts can extend the schema
-- **API limitation**: The schema customization hierarchy is not yet exposed through the API, so treat field schemas as potentially variable
+- **Common example**: \`project.status\` often has different options than the default (Future/Current/Waiting/Done). Workspaces frequently customize this with additional statuses like "In Review", "Blocked", "On Hold", etc.
+
+#### Fetching Field Metadata
+
+To discover the actual field schema (including available options), add \`fieldsMetaData=true\` to any nest fetch:
+
+\`\`\`
+GET /nests/{nestId}?fieldsMetaData=true
+\`\`\`
+
+This adds a \`fieldsMetaData\` object to the response showing field definitions and options:
+
+\`\`\`json
+{
+  "_id": "nestId",
+  "fields": { "project.status": "Current" },
+  "fieldsMetaData": {
+    "project.status": {
+      "type": "select",
+      "options": ["Future", "Current", "In Review", "Waiting", "Done"]
+    }
+  }
+}
+\`\`\`
+
+Use this when you need to know what values are valid for a field, especially before updating.
 
 **Example**: A workspace might customize the global \`project\` label to add a \`project.department\` field, and a sub-circle might further customize it to add \`project.sprint\` - both would appear on projects within that sub-circle.
 

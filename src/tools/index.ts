@@ -76,6 +76,7 @@ export const schemas = {
 
   getNest: z.object({
     nestId: z.string().describe("Nest ID"),
+    fieldsMetaData: z.boolean().optional().describe("Set to true to include field schema metadata (e.g., available options for project.status)"),
   }),
 
   getNestChildren: z.object({
@@ -266,11 +267,12 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_nest",
-    description: "Get details of a specific nest (task, project, role, etc.)",
+    description: "Get details of a specific nest (task, project, role, etc.). Use fieldsMetaData=true to get field schema info like available options for project.status.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID" },
+        fieldsMetaData: { type: "boolean", description: "Set to true to include field schema metadata (available options, field types)" },
       },
       required: ["nestId"],
     },
@@ -660,7 +662,10 @@ export async function handleToolCall(
 
       case "nestr_get_nest": {
         const parsed = schemas.getNest.parse(args);
-        const nest = await client.getNest(parsed.nestId, true);
+        const nest = await client.getNest(parsed.nestId, {
+          cleanText: true,
+          fieldsMetaData: parsed.fieldsMetaData,
+        });
         return formatResult(nest);
       }
 

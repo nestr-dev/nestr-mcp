@@ -322,9 +322,18 @@ export class NestrClient {
 
   // ============ NESTS ============
 
-  async getNest(nestId: string, cleanText = false): Promise<Nest> {
-    const params = cleanText ? "?cleanText=true" : "";
-    return this.fetch<Nest>(`/nests/${nestId}${params}`);
+  async getNest(
+    nestId: string,
+    options?: { cleanText?: boolean; fieldsMetaData?: boolean }
+  ): Promise<Nest & { fieldsMetaData?: Record<string, unknown> }> {
+    const params = new URLSearchParams();
+    if (options?.cleanText) params.set("cleanText", "true");
+    if (options?.fieldsMetaData) params.set("fieldsMetaData", "true");
+
+    const query = params.toString();
+    return this.fetch<Nest & { fieldsMetaData?: Record<string, unknown> }>(
+      `/nests/${nestId}${query ? `?${query}` : ""}`
+    );
   }
 
   async getNestChildren(
