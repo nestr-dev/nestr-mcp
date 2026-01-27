@@ -614,6 +614,32 @@ export class NestrClient {
       body: JSON.stringify(updates),
     });
   }
+
+  // ============ PERSONAL LABELS (requires OAuth token) ============
+
+  /**
+   * List the current user's personal labels.
+   * Requires OAuth token (user-scoped) - does not work with workspace API keys.
+   */
+  async listPersonalLabels(): Promise<Label[]> {
+    return this.fetch<Label[]>("/users/me/labels");
+  }
+
+  /**
+   * Create a new personal label for the current user.
+   * Requires OAuth token (user-scoped) - does not work with workspace API keys.
+   */
+  async createPersonalLabel(data: {
+    title: string;
+    description?: string;
+    color?: string;
+    icon?: string;
+  }): Promise<Label> {
+    return this.fetch<Label>("/users/me/labels", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
 }
 
 /**

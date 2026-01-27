@@ -213,6 +213,16 @@ export const schemas = {
     completed: z.boolean().optional().describe("Mark as completed (processed)"),
     data: z.record(z.unknown()).optional().describe("Custom data storage"),
   }),
+
+  // Personal labels (require OAuth token)
+  listPersonalLabels: z.object({}),
+
+  createPersonalLabel: z.object({
+    title: z.string().describe("Label title"),
+    description: z.string().optional().describe("Label description"),
+    color: z.string().optional().describe("Label color (hex code, e.g., '#FF5733')"),
+    icon: z.string().optional().describe("Label icon identifier"),
+  }),
 };
 
 // Tool definitions for MCP
@@ -582,6 +592,29 @@ export const toolDefinitions = [
       required: ["nestId"],
     },
   },
+  // Personal labels (require OAuth token - user's own labels, not workspace labels)
+  {
+    name: "nestr_list_personal_labels",
+    description: "List the current user's personal labels. These are labels owned by the user, not workspace labels. Requires OAuth token.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
+  {
+    name: "nestr_create_personal_label",
+    description: "Create a new personal label for the current user. Personal labels are owned by the user and can be used across workspaces. Requires OAuth token.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        title: { type: "string", description: "Label title" },
+        description: { type: "string", description: "Label description" },
+        color: { type: "string", description: "Label color (hex code, e.g., '#FF5733')" },
+        icon: { type: "string", description: "Label icon identifier" },
+      },
+      required: ["title"],
+    },
+  },
 ];
 
 // Tool handler type
@@ -834,6 +867,24 @@ export async function handleToolCall(
           data: parsed.data as Record<string, unknown> | undefined,
         });
         return formatResult({ message: "Inbox item updated successfully", item });
+      }
+
+      // Personal labels (require OAuth token)
+      case "nestr_list_personal_labels": {
+        schemas.listPersonalLabels.parse(args);
+        const labels = await client.listPersonalLabels();
+        return formatResult(compactResponse(labels, "label"));
+      }
+
+      case "nestr_create_personal_label": {
+        const parsed = schemas.createPersonalLabel.parse(args);
+        const label = await client.createPersonalLabel({
+          title: parsed.title,
+          description: parsed.description,
+          color: parsed.color,
+          icon: parsed.icon,
+        });
+        return formatResult({ message: "Personal label created successfully", label });
       }
 
       default:
