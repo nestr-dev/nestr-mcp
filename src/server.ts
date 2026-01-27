@@ -229,18 +229,38 @@ Every nest has these **standard fields**:
 
 ### User Assignment
 
-**Important:** When creating tasks or projects, you must explicitly set the \`users\` array to associate work with a person. Placing a nest under a role does NOT automatically assign it to the role filler.
+**CRITICAL:** When creating tasks or projects under a role, you MUST explicitly set the \`users\` array. Placing a nest under a role does NOT automatically assign it to the role filler. Forgetting this is a common mistake that leaves work unassigned.
 
-\`\`\`json
-{
-  "parentId": "roleId",
-  "title": "Complete quarterly report",
-  "users": ["userId123"]
-}
-\`\`\`
+#### Assignment Rules for Work Under Roles
 
-- \`users: ["userId"]\` - Assign to specific user(s)
-- \`users: []\` or omitted - Unassigned (valid for work under unfilled roles or shared tasks)
+Before creating work under a role, check who fills the role (the \`users\` array on the role):
+
+1. **Role has one filler**: Assign to that user
+   \`\`\`json
+   { "parentId": "roleId", "title": "Complete report", "users": ["roleFillerUserId"] }
+   \`\`\`
+
+2. **Role has multiple fillers**:
+   - If the current user (caller) is one of the fillers → assign to self
+   - If the current user is NOT a filler → **ask the user** which role filler should own this work
+   \`\`\`
+   "This role is filled by Alice, Bob, and Carol. Who should this project be assigned to?"
+   \`\`\`
+
+3. **Role is unfilled**: Leave \`users\` empty or omit - the work belongs to the role itself until someone fills it
+   \`\`\`json
+   { "parentId": "roleId", "title": "Future task", "users": [] }
+   \`\`\`
+
+#### Quick Reference
+
+| Scenario | Action |
+|----------|--------|
+| Single role filler | \`users: [fillerUserId]\` |
+| Multiple fillers, caller is one | \`users: [callerId]\` (assign to self) |
+| Multiple fillers, caller is not one | Ask user to choose |
+| Role unfilled | \`users: []\` or omit |
+| Work not under a role | Assign to whoever should own it |
 
 **Note:** Accountabilities, domains, and policies never have users assigned - they belong to roles, not people.
 
@@ -345,8 +365,11 @@ When asked to do work autonomously, follow these practices to ensure work is pro
 
 1. **Find the appropriate role** for the work:
    - Identify which role has accountability for this type of work
-   - Check who fills that role (the \`users\` array on the role)
-   - **If the current user fills the role**: Proceed with creating the project under that role
+   - **Fetch the role** to check who fills it (the \`users\` array on the role)
+   - **If the current user fills the role**: Proceed with creating the project under that role, assigned to self
+   - **If multiple users fill the role**:
+     - If caller is one of the fillers → assign to caller (self)
+     - If caller is NOT a filler → ask which filler should own the work
    - **If the current user does NOT fill the role**:
      - Inform the user who fills the role
      - Ask if they still want to create the project under that role
@@ -357,7 +380,10 @@ When asked to do work autonomously, follow these practices to ensure work is pro
    - Title in past tense describing what "done" looks like (e.g., "API integration completed", "User onboarding flow redesigned")
    - Set \`labels: ["project"]\` and \`fields: { "project.status": "Current" }\`
    - Use \`purpose\` to describe the Definition of Done (DoD) with clear acceptance criteria
-   - Assign to the role filler (not necessarily the requesting user)
+   - **ALWAYS set \`users\` explicitly** - see "User Assignment" section above for rules:
+     \`\`\`json
+     { "parentId": "roleId", "title": "...", "labels": ["project"], "users": ["roleFillerUserId"] }
+     \`\`\`
 
 3. **If a project is already provided**, review and enhance it:
    - Check if the description has clear DoD criteria
