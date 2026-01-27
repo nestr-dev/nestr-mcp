@@ -335,6 +335,12 @@ app.get("/oauth/authorize", (req: Request, res: Response) => {
       // We'll redirect to the MCP client after Nestr's callback
       const ourCallbackUrl = getCallbackUrl(req);
 
+      // Use client_consumer from URL if provided, otherwise fall back to client_name
+      // from dynamic registration. This ensures tokens are properly tagged with the
+      // MCP client identity (e.g., "claude-desktop", "cursor") for deduplication.
+      // Normalize to lowercase for consistent matching with API layer.
+      const effectiveClientConsumer = (clientConsumer || client.client_name)?.toLowerCase();
+
       const { authUrl } = createAuthorizationRequest({
         clientId,
         redirectUri, // MCP client's redirect_uri (stored for later)
@@ -342,7 +348,7 @@ app.get("/oauth/authorize", (req: Request, res: Response) => {
         state,
         codeChallenge,
         codeChallengeMethod: codeChallengeMethod || "S256",
-        clientConsumer,
+        clientConsumer: effectiveClientConsumer,
       });
 
       // Override the redirect_uri in the auth URL to use OUR callback
@@ -350,7 +356,7 @@ app.get("/oauth/authorize", (req: Request, res: Response) => {
       const authUrlObj = new URL(authUrl);
       authUrlObj.searchParams.set("redirect_uri", ourCallbackUrl);
 
-      console.log(`OAuth: MCP client ${clientId} initiating auth flow${clientConsumer ? ` (consumer: ${clientConsumer})` : ""}`);
+      console.log(`OAuth: MCP client ${clientId} initiating auth flow${effectiveClientConsumer ? ` (consumer: ${effectiveClientConsumer})` : ""}`);
       res.redirect(authUrlObj.toString());
       return;
     } catch (error) {
@@ -533,6 +539,8 @@ app.post("/oauth/device", express.urlencoded({ extended: true }), async (req: Re
     const { client_id, scope, client_consumer } = req.body;
 
     // Validate client if it's a dynamically registered client
+    // Also capture client_name to use as fallback for client_consumer
+    let registeredClientName: string | undefined;
     if (client_id && client_id.startsWith("mcp-")) {
       const client = getClient(client_id);
       if (!client) {
@@ -542,7 +550,14 @@ app.post("/oauth/device", express.urlencoded({ extended: true }), async (req: Re
         });
         return;
       }
+      registeredClientName = client.client_name;
     }
+
+    // Use client_consumer from request if provided, otherwise fall back to client_name
+    // from dynamic registration. This ensures tokens are properly tagged with the
+    // MCP client identity (e.g., "claude-desktop", "cursor") for deduplication.
+    // Normalize to lowercase for consistent matching with API layer.
+    const effectiveClientConsumer = (client_consumer || registeredClientName)?.toLowerCase();
 
     // Proxy to Nestr's device authorization endpoint
     const body: Record<string, string> = {
@@ -551,11 +566,11 @@ app.post("/oauth/device", express.urlencoded({ extended: true }), async (req: Re
     };
 
     // Pass client_consumer to Nestr for token metadata
-    if (client_consumer) {
-      body.client_consumer = client_consumer;
+    if (effectiveClientConsumer) {
+      body.client_consumer = effectiveClientConsumer;
     }
 
-    console.log(`OAuth Device: Requesting device code from Nestr${client_consumer ? ` (consumer: ${client_consumer})` : ""}`);
+    console.log(`OAuth Device: Requesting device code from Nestr${effectiveClientConsumer ? ` (consumer: ${effectiveClientConsumer})` : ""}`);
 
     const response = await fetch(config.deviceAuthorizationEndpoint, {
       method: "POST",
