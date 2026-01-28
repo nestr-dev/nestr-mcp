@@ -12,6 +12,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { NestrClient, createClientFromEnv } from "./api/client.js";
 import { toolDefinitions, handleToolCall } from "./tools/index.js";
+import { getCompletableListHtml, appResources } from "./apps/index.js";
 
 export interface NestrMcpServerConfig {
   client?: NestrClient;
@@ -510,7 +511,10 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 
 **Work Tracking:**
 - \`project\` - An outcome requiring multiple steps to complete. Define in past tense as what "done" looks like (e.g., "Website redesign launched", "Q1 report published"). Has status: Future/Current/Waiting/Done.
-- *(no label)* - A nest without labels is a todo/action: a single, concrete action that can be done in one sitting (e.g., "Call supplier about pricing", "Draft intro paragraph"). The next physical step to move something forward.
+- *(no system label)* - A nest without system labels is a todo/action: a single, concrete action that can be done in one sitting (e.g., "Call supplier about pricing", "Draft intro paragraph"). The next physical step to move something forward. Note: todos CAN have other labels (personal or workspace labels for categorization) - what makes them todos is the absence of system labels.
+
+**System Labels** (define structure, not categorization):
+\`circle\`, \`anchor-circle\`, \`role\`, \`policy\`, \`domain\`, \`accountability\`, \`project\`, \`prepared-tension\`, \`goal\`, \`result\`, \`contact\`, \`deal\`, \`organisation\`, \`metric\`, \`checklist\`, \`meeting\`, \`feedback\`
 - \`note\` - A simple note
 - \`meeting\` - A calendar meeting
 - \`prepared-tension\` - A tension (gap between current and desired state). Used for meeting agenda items, async governance proposals, and general tension processing. Central to Holacracy practice.
@@ -910,6 +914,92 @@ User: "What should I work on today?"
 5. Support them working through the list
 \`\`\`
 
+## MCP Apps (Interactive UI)
+
+Nestr provides interactive UI components that can be embedded in MCP clients that support the \`ui://\` resource protocol.
+
+### Completable List App
+
+**Resource URI:** \`ui://nestr/completable-list\`
+
+An interactive list for displaying and managing completable items (tasks and projects). Use this when you want to give users a rich, interactive experience for managing their work.
+
+#### When to Use
+
+- Showing a user's daily plan, inbox, or work items
+- Displaying search results for completable items
+- Listing projects under a role or circle
+- Any time users might want to check off, edit, or reorder items
+
+#### Data Format
+
+Send data in this format:
+\`\`\`json
+{
+  "title": "Daily Plan",
+  "items": [
+    {
+      "_id": "nestId",
+      "title": "Task title",
+      "description": "<p>HTML description</p>",
+      "path": "Workspace / Circle / Role",
+      "labels": ["project"],
+      "completed": false
+    }
+  ]
+}
+\`\`\`
+
+**Fields:**
+- \`title\` - Header title for the list (e.g., "Daily Plan", "Inbox", "Projects under Developer")
+- \`items\` - Array of nests to display
+  - \`_id\` - Required for all interactions
+  - \`title\` - Display text (editable in UI)
+  - \`description\` - HTML content (editable via rich text editor)
+  - \`path\` - Shows the parent context below the title
+  - \`labels\` - Determines icon: \`project\` label shows cube icon, others show checkbox
+  - \`completed\` - Completion state
+
+#### UI Features
+
+The app provides:
+- **Completion toggle**: Click checkbox/icon to complete/uncomplete (calls \`nestr_update_nest\`)
+- **Title editing**: Click title to edit inline (calls \`nestr_update_nest\`)
+- **Description editing**: Click document icon to open rich text editor with bold, italic, lists (calls \`nestr_update_nest\`)
+- **Drag-drop reordering**: Drag items to reorder (calls \`nestr_reorder_nest\`)
+- **Quick link**: Opens item in Nestr web app
+- **Refresh button**: User can request fresh data
+
+#### Example Usage
+
+**Daily Plan:**
+\`\`\`
+User: "Show me my daily plan"
+
+1. Fetch daily plan: nestr_get_daily_plan
+2. Return the app resource with data:
+   {
+     "title": "Daily Plan",
+     "items": [/* nests from daily plan */]
+   }
+3. User can interact: check off items, edit titles, reorder
+4. App calls tools automatically - changes sync to Nestr
+\`\`\`
+
+**Tasks in a Project:**
+\`\`\`
+User: "Show me the tasks in the Website Redesign project"
+
+1. Search for the project: nestr_search with "Website Redesign label:project"
+2. Get project children: nestr_get_nest_children with projectId, completed:false
+3. Return the app resource with data:
+   {
+     "title": "Website Redesign",
+     "items": [/* child tasks from the project */]
+   }
+4. User can check off tasks as they complete them, reorder priorities
+\`\`\`
+
 ## Common Workflows
 
 - **Task Management**: Create nests (no label needed for basic todos), update completed status, add comments for updates
@@ -958,6 +1048,13 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
           name: "My Workspaces",
           description: "List of Nestr workspaces you have access to",
           mimeType: "application/json",
+        },
+        // MCP App UI resources
+        {
+          uri: appResources.completableList.uri,
+          name: appResources.completableList.name,
+          description: appResources.completableList.description,
+          mimeType: appResources.completableList.mimeType,
         },
       ],
     };
@@ -1013,6 +1110,19 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
           };
         }
       }
+    }
+
+    // Handle UI resources for MCP Apps
+    if (uri === appResources.completableList.uri) {
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "text/html",
+            text: getCompletableListHtml(),
+          },
+        ],
+      };
     }
 
     throw new Error(`Unknown resource: ${uri}`);

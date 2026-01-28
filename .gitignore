@@ -37,3 +37,6 @@ temp/
 
 # OAuth storage (contains client secrets)
 .data/
+
+# Local test files
+test-app.html

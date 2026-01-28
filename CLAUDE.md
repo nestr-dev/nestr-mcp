@@ -61,6 +61,8 @@ src/
 ├── server.ts         # MCP server setup, tool & resource registration
 ├── api/
 │   └── client.ts     # Nestr REST API client wrapper
+├── apps/
+│   └── index.ts      # MCP Apps - interactive UI components (HTML inlined)
 ├── oauth/
 │   ├── config.ts     # OAuth configuration and metadata (RFC 9728)
 │   └── flow.ts       # OAuth authorization code flow with PKCE
@@ -149,6 +151,7 @@ To enable the OAuth flow, register an OAuth client in Nestr:
 - **src/server.ts** - Creates the MCP server, registers tools and resources
 - **src/tools/index.ts** - Defines all 31 MCP tools with Zod schemas and handlers
 - **src/api/client.ts** - Type-safe wrapper for Nestr REST API
+- **src/apps/index.ts** - MCP Apps with inlined HTML for interactive UI components
 - **src/oauth/config.ts** - OAuth configuration and metadata endpoints (RFC 9728)
 - **src/oauth/flow.ts** - OAuth authorization code flow
 - **web/index.html** - User-facing documentation at mcp.nestr.io
@@ -229,6 +232,33 @@ case "nestr_my_new_tool": {
   return formatResult(result);
 }
 ```
+
+## MCP Apps (Interactive UI)
+
+The server includes MCP Apps - interactive UI components that can be embedded in MCP clients that support them (like Claude.ai).
+
+### Completable List App
+
+**Resource URI:** `ui://nestr/completable-list`
+
+An interactive list for completing tasks and projects. Features:
+- Projects show a box icon, todos show a checkbox
+- Box icon becomes checkbox on hover
+- Checked items are strikethrough
+- Parent path shown below the title
+- Editable titles (triggers PATCH on update)
+- Drag-and-drop reordering (triggers reorder tool)
+- Quick link to open nest in Nestr
+
+**Source:** `src/apps/index.ts`
+
+### Adding a New MCP App
+
+1. Add the HTML content as a const in `src/apps/index.ts`
+2. Export a getter function for the HTML
+3. Add resource definition to `appResources`
+4. Register the resource in `src/server.ts` (ListResourcesRequestSchema handler)
+5. Add read handler in `src/server.ts` (ReadResourceRequestSchema handler)
 
 ## Deployment
 
