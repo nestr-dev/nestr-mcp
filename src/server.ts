@@ -788,6 +788,16 @@ The inbox is a collection point for capturing "stuff" that still needs processin
 
 **Note:** Inbox tools require OAuth authentication (user-scoped token). They won't work with workspace API keys.
 
+### Inbox Zero Goal
+
+The goal is to **empty the inbox at least once a week**. An overflowing inbox creates mental clutter and risks losing important items. Support users in maintaining inbox hygiene:
+
+- When you notice items in the inbox, gently remind users: "You have X items in your inbox. Would you like to process them?"
+- During slower moments or at the end of a session, offer to help clear it
+- Celebrate when the inbox is empty: "Inbox zero! Everything is captured and organized."
+
+Processing doesn't mean doing everything—it means deciding what each item is and where it belongs.
+
 ### Inbox Workflow
 
 1. **Capture**: Use \`nestr_create_inbox_item\` to quickly add items without organizing
@@ -815,6 +825,90 @@ To clarify/organize an inbox item, use \`nestr_update_nest\` to update it in pla
 This moves the item from inbox to the specified location. The \`parentId\` is typically a role, circle, or project (the most common destinations). Add the \`project\` label to convert it into a project, or leave labels empty for a simple action/todo.
 
 **Important:** When processing inbox items, prefer updating existing items using \`nestr_update_nest\` rather than creating new items. This preserves the original item's history, comments, and metadata.
+
+### Reordering Inbox Items
+
+Use \`nestr_bulk_reorder\` with \`workspaceId: "inbox"\` to reorder inbox items:
+
+\`\`\`json
+{
+  "workspaceId": "inbox",
+  "nestIds": ["item3Id", "item1Id", "item2Id"]
+}
+\`\`\`
+
+This sets the display order to: item3, item1, item2. The order is preserved when viewing the inbox in the web app.
+
+For single-item repositioning, use \`nestr_reorder_nest\` to place an item before or after another:
+
+\`\`\`json
+{
+  "nestId": "itemToMoveId",
+  "position": "before",
+  "relatedNestId": "targetItemId"
+}
+\`\`\`
+
+## Daily Plan (Focus for Today)
+
+The daily plan helps users create focus by selecting what they want to accomplish today. Items are added to the daily plan by applying the \`now\` label.
+
+**Note:** Daily plan tools require OAuth authentication (user-scoped token). They won't work with workspace API keys.
+
+### How the Daily Plan Works
+
+- **Adding items**: Apply the \`now\` label to any nest to add it to the daily plan
+  \`\`\`json
+  { "nestId": "taskId", "labels": ["now"] }
+  \`\`\`
+- **Removing items**: Remove the \`now\` label to take something off the daily plan
+- **Viewing**: Use \`nestr_get_daily_plan\` to see all items marked for today
+- **Completed items included**: The daily plan includes items completed today, so users can see what they accomplished at the end of the day
+
+### Scope Limitations
+
+The daily plan only includes items from:
+- The user's inbox
+- Workspaces/nests that are in scope for the current token
+
+**Important:** Through the MCP, users may see fewer items than in the Nestr UI if the token has a limited scope (e.g., scoped to a specific workspace). If users report missing items, this is likely the cause.
+
+### Supporting Daily Planning
+
+Help users with their daily plan by:
+
+1. **Morning planning**: When a user starts working, offer to review their daily plan
+   - "Would you like to see what's on your daily plan for today?"
+   - If empty: "Your daily plan is empty. Would you like to add some items to focus on today?"
+
+2. **Building the plan**: Help users select items for today
+   - Review their active projects and tasks (\`assignee:me completed:false\`)
+   - Suggest high-priority or overdue items
+   - Add selected items by applying the \`now\` label
+
+3. **During the day**: Check in on progress
+   - "How's your daily plan going? Would you like to review what's left?"
+   - Mark completed items as done
+   - Adjust the plan if priorities change
+
+4. **End of day**: Review what was accomplished
+   - Fetch the daily plan—it includes today's completed items
+   - Celebrate what got done: "You completed X items today!"
+   - Move unfinished items to tomorrow or remove from daily plan
+
+### Example Workflow
+
+\`\`\`
+User: "What should I work on today?"
+
+1. Fetch daily plan: nestr_get_daily_plan
+2. If items exist: Show them and ask which to start with
+3. If empty: Search for user's active work
+   - assignee:me completed:false has:!completed
+   - Suggest items based on due dates and priorities
+4. Help user add selected items to daily plan
+5. Support them working through the list
+\`\`\`
 
 ## Common Workflows
 

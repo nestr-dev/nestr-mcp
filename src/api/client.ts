@@ -649,6 +649,54 @@ export class NestrClient {
       body: JSON.stringify(data),
     });
   }
+
+  // ============ DAILY PLAN (requires OAuth token) ============
+
+  /**
+   * Get the user's daily plan - items marked with the 'now' label.
+   * Requires OAuth token (user-scoped) - does not work with workspace API keys.
+   * Note: Only returns items from inbox and in-scope workspaces.
+   */
+  async getDailyPlan(): Promise<Nest[]> {
+    return this.fetch<Nest[]>("/users/me/today");
+  }
+
+  // ============ REORDER ============
+
+  /**
+   * Reorder a nest by positioning it before or after another nest.
+   * Updates searchOrder (and order if both nests share the same parent).
+   */
+  async reorderNest(
+    nestId: string,
+    position: "before" | "after",
+    relatedNestId: string
+  ): Promise<Nest & { searchOrder?: number; order?: number }> {
+    const response = await this.fetch<{ status: string; data: Nest & { searchOrder?: number; order?: number } }>(
+      `/nests/${nestId}/reorder/${position}/${relatedNestId}`,
+      { method: "POST" }
+    );
+    return response.data;
+  }
+
+  /**
+   * Bulk reorder nests by providing an array of nest IDs in the desired order.
+   * Updates searchOrder for all nests and order for nests sharing the same parent.
+   * Use workspaceId='inbox' to reorder inbox items.
+   */
+  async bulkReorder(
+    workspaceId: string,
+    nestIds: string[]
+  ): Promise<Array<Nest & { searchOrder?: number; order?: number }>> {
+    const response = await this.fetch<{ status: string; data: Array<Nest & { searchOrder?: number; order?: number }> }>(
+      `/workspaces/${workspaceId}/reorder`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(nestIds),
+      }
+    );
+    return response.data;
+  }
 }
 
 /**

@@ -224,6 +224,21 @@ export const schemas = {
     color: z.string().optional().describe("Label color (hex code, e.g., '#FF5733')"),
     icon: z.string().optional().describe("Label icon identifier"),
   }),
+
+  // Reorder tools
+  reorderNest: z.object({
+    nestId: z.string().describe("ID of the nest to reorder"),
+    position: z.enum(["before", "after"]).describe("Position relative to the reference nest"),
+    relatedNestId: z.string().describe("ID of the reference nest to position relative to"),
+  }),
+
+  bulkReorder: z.object({
+    workspaceId: z.string().describe("Workspace ID, or 'inbox' to reorder inbox items"),
+    nestIds: z.array(z.string()).describe("Array of nest IDs in the desired order"),
+  }),
+
+  // Daily plan (requires OAuth token)
+  getDailyPlan: z.object({}),
 };
 
 // Tool definitions for MCP
@@ -617,6 +632,45 @@ export const toolDefinitions = [
       required: ["title"],
     },
   },
+  // Reorder tools
+  {
+    name: "nestr_reorder_nest",
+    description: "Reorder a nest by positioning it before or after another nest. Updates searchOrder (global sort order) and order (if both nests share the same parent). Use this to change the display order of items.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the nest to reorder" },
+        position: { type: "string", enum: ["before", "after"], description: "Position relative to the reference nest" },
+        relatedNestId: { type: "string", description: "ID of the reference nest to position relative to" },
+      },
+      required: ["nestId", "position", "relatedNestId"],
+    },
+  },
+  {
+    name: "nestr_bulk_reorder",
+    description: "Bulk reorder multiple nests by providing an array of nest IDs in the desired order. Updates searchOrder for all nests and order for nests sharing the same parent. Use workspaceId='inbox' to reorder inbox items.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID, or 'inbox' to reorder inbox items" },
+        nestIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Array of nest IDs in the desired order",
+        },
+      },
+      required: ["workspaceId", "nestIds"],
+    },
+  },
+  // Daily plan (requires OAuth token)
+  {
+    name: "nestr_get_daily_plan",
+    description: "Get the user's daily plan - items marked for 'today'. Returns todos and projects the user has added to their daily focus list by applying the 'now' label. Use this to help users plan their day or review what's on their plate. Note: Only includes items from inbox and in-scope workspaces (token scope may limit results). Requires OAuth token.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
 ];
 
 // Tool handler type
@@ -890,6 +944,30 @@ export async function handleToolCall(
           icon: parsed.icon,
         });
         return formatResult({ message: "Personal label created successfully", label });
+      }
+
+      // Reorder tools
+      case "nestr_reorder_nest": {
+        const parsed = schemas.reorderNest.parse(args);
+        const result = await client.reorderNest(
+          parsed.nestId,
+          parsed.position,
+          parsed.relatedNestId
+        );
+        return formatResult({ message: "Nest reordered successfully", nest: result });
+      }
+
+      case "nestr_bulk_reorder": {
+        const parsed = schemas.bulkReorder.parse(args);
+        const result = await client.bulkReorder(parsed.workspaceId, parsed.nestIds);
+        return formatResult({ message: "Nests reordered successfully", nests: result });
+      }
+
+      // Daily plan (requires OAuth token)
+      case "nestr_get_daily_plan": {
+        schemas.getDailyPlan.parse(args);
+        const items = await client.getDailyPlan();
+        return formatResult(compactResponse(items));
       }
 
       default:
