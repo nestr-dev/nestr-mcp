@@ -966,9 +966,25 @@ The app provides:
 - **Completion toggle**: Click checkbox/icon to complete/uncomplete (calls \`nestr_update_nest\`)
 - **Title editing**: Click title to edit inline (calls \`nestr_update_nest\`)
 - **Description editing**: Click document icon to open rich text editor with bold, italic, lists (calls \`nestr_update_nest\`)
+- **Due date**: Click calendar icon to set/change due date (calls \`nestr_update_nest\`)
 - **Drag-drop reordering**: Drag items to reorder (calls \`nestr_reorder_nest\`)
 - **Quick link**: Opens item in Nestr web app
 - **Refresh button**: User can request fresh data
+
+#### Keeping the App in Sync
+
+The app displays a snapshot of data. To keep it current:
+
+1. **After agent makes changes**: When the agent creates, updates, or deletes items that affect what's displayed (e.g., adding an inbox item while viewing the inbox), re-fetch and send updated data to the app.
+
+2. **User clicks refresh**: The app sends a \`context/update\` message with \`{ action: 'refresh' }\`. Re-fetch the data using the same query and send it back via \`notifications/toolResult\`.
+
+3. **User interactions**: Changes made through the app UI (checking items, editing) are handled automatically - no refresh needed for those.
+
+Example: User is viewing their inbox and says "Add a reminder to call John"
+1. Agent calls \`nestr_create_inbox_item\` to add the item
+2. Agent re-fetches inbox with \`nestr_list_inbox\`
+3. Agent sends updated data to the app so the new item appears
 
 #### Example Usage
 
