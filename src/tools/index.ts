@@ -67,6 +67,13 @@ export const schemas = {
     workspaceId: z.string().describe("Workspace ID"),
   }),
 
+  createWorkspace: z.object({
+    title: z.string().describe("Workspace name"),
+    purpose: z.string().optional().describe("Workspace purpose or description"),
+    type: z.enum(['personal', 'collaborative']).optional().describe("'personal' for individual use (free forever), 'collaborative' for team use (free trial, then paid). Defaults to 'collaborative'."),
+    governance: z.enum(['holacracy', 'sociocracy', 'roles_circles']).optional().describe("Self-organization model. Defaults to 'roles_circles' (generic role-based)."),
+  }),
+
   search: z.object({
     workspaceId: z.string().describe("Workspace ID to search in"),
     query: z.string().describe("Search query"),
@@ -264,6 +271,40 @@ export const toolDefinitions = [
         workspaceId: { type: "string", description: "Workspace ID" },
       },
       required: ["workspaceId"],
+    },
+  },
+  {
+    name: "nestr_create_workspace",
+    description: `Create a new workspace. Use this rarely - mainly when a user has no workspaces (e.g., new signup).
+
+**If the user has no workspaces, they must create one first using this tool before they can do anything else in Nestr.**
+
+A workspace is a container for work - either personal or collaborative:
+- **Personal**: For individual use, free forever. Only you have access.
+- **Collaborative**: For teams, starts with free trial (no auto-payment - user must explicitly activate).
+
+The creator is the only one with access initially. Others must be explicitly invited. Safe to create and test - no one else will see it.
+
+**Important**: Always ask the user to provide a purpose - why does this workspace exist? What is it trying to achieve? They can always change it later, but starting with a clear purpose is valuable. However, if they don't have a clear "why" yet, don't create the workspace - help them think through the purpose first.
+
+Requires user-scoped authentication (OAuth token or personal API key with user scope).`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        title: { type: "string", description: "Workspace name" },
+        purpose: { type: "string", description: "Workspace purpose or description" },
+        type: {
+          type: "string",
+          enum: ["personal", "collaborative"],
+          description: "'personal' for individual use (free forever), 'collaborative' for team use (free trial). Defaults to 'collaborative'."
+        },
+        governance: {
+          type: "string",
+          enum: ["holacracy", "sociocracy", "roles_circles"],
+          description: "Self-organization model. Defaults to 'roles_circles' (generic role-based)."
+        },
+      },
+      required: ["title"],
     },
   },
   {
@@ -701,6 +742,19 @@ export async function handleToolCall(
       case "nestr_get_workspace": {
         const parsed = schemas.getWorkspace.parse(args);
         const workspace = await client.getWorkspace(parsed.workspaceId, true);
+        return formatResult(workspace);
+      }
+
+      case "nestr_create_workspace": {
+        const parsed = schemas.createWorkspace.parse(args);
+        const workspace = await client.createWorkspace({
+          title: parsed.title,
+          purpose: parsed.purpose,
+          configuration: {
+            collaborators: parsed.type === 'personal' ? 'personal' : 'collaborate',
+            governance: parsed.governance,
+          },
+        });
         return formatResult(workspace);
       }
 

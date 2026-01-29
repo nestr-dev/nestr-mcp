@@ -292,6 +292,32 @@ export class NestrClient {
     return this.fetch<Nest>(`/workspaces/${workspaceId}${params}`);
   }
 
+  async createWorkspace(options: {
+    title: string;
+    purpose?: string;
+    configuration?: {
+      /** 'collaborate' for team workspace, 'personal' for individual workspace */
+      collaborators?: 'collaborate' | 'personal';
+      /** Self-organization model */
+      governance?: 'holacracy' | 'sociocracy' | 'roles_circles';
+      /** Subscription plan for collaborative workspaces */
+      plan?: 'plan_starter' | 'plan_pro';
+      /** Optional apps to enable */
+      variableApps?: Array<'okr' | 'feedback' | 'insights'>;
+      /** Layout style (personal workspaces only) */
+      layout?: 'board' | 'list';
+    };
+  }): Promise<Nest> {
+    return this.fetch<Nest>('/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: options.title,
+        purpose: options.purpose,
+        configuration: options.configuration,
+      }),
+    });
+  }
+
   async searchWorkspace(
     workspaceId: string,
     search: string,

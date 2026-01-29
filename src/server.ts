@@ -13,6 +13,7 @@ import {
 import { NestrClient, createClientFromEnv } from "./api/client.js";
 import { toolDefinitions, handleToolCall } from "./tools/index.js";
 import { getCompletableListHtml, appResources } from "./apps/index.js";
+import * as mcpcat from "mcpcat";
 
 export interface NestrMcpServerConfig {
   client?: NestrClient;
@@ -92,6 +93,10 @@ Only do work that is actually expressed through your role's purpose or accountab
 
 If work is not yet captured in a role but is needed for organizational purpose, do the work outside of role and process a governance tension to ensure it is reflected in governance going forward.
 
+**Prefer more smaller roles over few large ones.** When someone holds one big role, they start to identify with it—and unconscious personal needs seep into organizational decisions. Smaller, focused roles maintain clearer boundaries between role and soul.
+
+**Governance before operations.** When working ON the organization (defining roles, circles, accountabilities), don't compromise structure based on current operational constraints like "we don't have enough people" or "no one has the skills for that." Define all the roles and circles needed to effectively serve purpose today. Operational constraints are solved operationally—people almost always fill multiple roles, and circle leads are accountable for any unfilled roles until capacity grows. Premature compromises in governance obscure that there is a clear need for work to be done and insufficient operational resources to do it. Capturing the governance explicitly ensures both needs are served rather than both hidden.
+
 ### 6. Heartbeats
 
 A heartbeat for each container is crucial to effectively serve all. Without rhythm, we don't create the space to process what is alive in that specific container. There needs to be a governance/structure heartbeat, an operational/tactical heartbeat, and a community/interpersonal heartbeat—often expressed in the form of a meeting facilitated by an explicitly elected facilitator, not a conventional manager.
@@ -134,11 +139,43 @@ AI agents should actively listen for expressed tensions—even when the person m
 
 This helps people recognize their own tensions and learn to process them effectively.
 
+### Matching Work to Roles
+
+When determining which role should own a piece of work:
+
+**Role names are hints, not definitions.** A role's name is like a person's name—it suggests but doesn't define. "Developer" might handle infrastructure, "Architect" might write code. Never assume responsibilities from the name alone.
+
+**Purpose and accountabilities define expectations.** Only the role's explicit purpose and accountabilities tell you what work belongs there. If a role has the accountability "Developing new functionality in our IT product", that role owns development work—regardless of whether it's called "Developer", "Engineer", or "Builder".
+
+**Domains define exclusive control, not expectations.** A domain doesn't mean the role will do work in that area—it means the role controls organizational assets in that area. Other roles must get permission to impact those assets.
+
+**Example:** A project "Make data available to our clients in MongoDB" likely belongs to a role with accountability "Developing new functionality in our IT product" (perhaps called "Developer"). However, if another role has the domain "Development stack", note that adding MongoDB to the stack requires that role's input or approval—the domain holder controls what technologies are used, even if they don't implement them.
+
+When presenting work assignments, consider:
+1. Which role's accountabilities match the work?
+2. Does the work impact any role's domain? If so, flag the need for coordination.
+3. Are there multiple roles whose accountabilities overlap? Surface this for clarification.
+
 ---
 
 # Using Nestr
 
 Nestr is a work management platform for teams practicing self-organization, Holacracy, Sociocracy, and Teal methodologies.
+
+## Linking to Nests
+
+**Always link to nests when mentioning them.** When referring to any nest (role, circle, project, task, etc.), include a clickable link using this URL format:
+
+\`https://app.nestr.io/n/{circleId}/{nestId}\`
+
+Where:
+- \`{circleId}\` is the ID of the nearest circle ancestor (the circle containing the nest)
+- \`{nestId}\` is the ID of the nest itself
+
+Example: When mentioning the "Developer" role in the Tech Circle, link it as:
+\`[Developer](https://app.nestr.io/n/techCircleId/developerRoleId)\`
+
+This allows users to quickly navigate to any item you reference.
 
 ## Workspace Types
 
@@ -1143,6 +1180,20 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
 
     throw new Error(`Unknown resource: ${uri}`);
   });
+
+  // MCPcat analytics (https://mcpcat.io) - helps us understand usage patterns
+  // PRIVACY NOTE: By default, only metadata is tracked (tool names, timestamps).
+  // All request/response content is redacted. Session replay is DISABLED by default.
+  // Nestr will NEVER enable replay without explicit user opt-in. If you're reviewing
+  // this code: we respect your privacy and are not capturing your data.
+  const mcpcatProjectId = process.env.MCPCAT_PROJECT_ID;
+  if (mcpcatProjectId) {
+    const enableReplay = process.env.MCPCAT_ENABLE_REPLAY === 'true';
+    mcpcat.track(server, mcpcatProjectId, enableReplay ? {} : {
+      // Redact all content when replay is disabled - only metadata is tracked
+      redactSensitiveInformation: async () => '[REDACTED]'
+    });
+  }
 
   return server;
 }

@@ -47,6 +47,8 @@ npm run start:http
 | `MCP_RESOURCE_URL` | MCP resource identifier (default: `https://mcp.nestr.io/mcp`) | No |
 | `PORT` | HTTP server port (default: `3000`) | No (HTTP only) |
 | `GTM_ID` or `NESTR_GTM_ID` | Google Tag Manager container ID (e.g., `GTM-XXXXXXX`) | No (HTTP only) |
+| `MCPCAT_PROJECT_ID` | MCPcat project ID for analytics (from [mcpcat.io](https://mcpcat.io)) | No |
+| `MCPCAT_ENABLE_REPLAY` | Enable session replay in MCPcat (default: `false`, only metadata tracked) | No |
 
 \* Either `NESTR_OAUTH_TOKEN` (recommended) or `NESTR_API_KEY` is required.
 
@@ -164,6 +166,7 @@ The server exposes these tools to AI assistants:
 |------|-----------|
 | `nestr_list_workspaces` | `GET /workspaces` |
 | `nestr_get_workspace` | `GET /workspaces/{id}` |
+| `nestr_create_workspace` | `POST /workspaces` (OAuth only) |
 | `nestr_search` | `GET /workspaces/{id}/search` |
 | `nestr_get_nest` | `GET /nests/{id}` |
 | `nestr_get_nest_children` | `GET /nests/{id}/children` |

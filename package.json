@@ -65,6 +65,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.2",
     "express": "^5.0.1",
+    "mcpcat": "^0.1.11",
     "zod": "^3.25.0"
   },
   "devDependencies": {
