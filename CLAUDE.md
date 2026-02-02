@@ -49,8 +49,11 @@ npm run start:http
 | `GTM_ID` or `NESTR_GTM_ID` | Google Tag Manager container ID (e.g., `GTM-XXXXXXX`) | No (HTTP only) |
 | `MCPCAT_PROJECT_ID` | MCPcat project ID for analytics (from [mcpcat.io](https://mcpcat.io)) | No |
 | `MCPCAT_ENABLE_REPLAY` | Enable session replay in MCPcat (default: `false`, only metadata tracked) | No |
+| `OAUTH_ENCRYPTION_KEY` | 32-byte base64-encoded key for encrypting OAuth sessions at rest. If not set, sessions are stored in plaintext. | No |
 
 \* Either `NESTR_OAUTH_TOKEN` (recommended) or `NESTR_API_KEY` is required.
+
+**Security Note:** OAuth sessions can be encrypted at rest using AES-256-GCM. Set `OAUTH_ENCRYPTION_KEY` to enable encryption. When the key is added, existing plaintext sessions are automatically migrated to encrypted storage. Generate a key with: `openssl rand -base64 32`
 
 **OAuth is recommended** because it respects user-specific permissions. API keys have full workspace access regardless of user permissions.
 

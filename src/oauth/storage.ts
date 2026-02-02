@@ -3,10 +3,12 @@
  *
  * Stores registered OAuth clients and pending auth requests to disk.
  * Uses a simple JSON file-based storage that persists across restarts.
+ * OAuth sessions are encrypted at rest using AES-256-GCM.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
 
 // Storage directory - use /data in production (mounted volume), fallback to local .data
 const STORAGE_DIR = process.env.OAUTH_STORAGE_DIR ||
@@ -14,7 +16,72 @@ const STORAGE_DIR = process.env.OAUTH_STORAGE_DIR ||
 
 const CLIENTS_FILE = join(STORAGE_DIR, "oauth-clients.json");
 const PENDING_AUTH_FILE = join(STORAGE_DIR, "pending-auth.json");
-const SESSIONS_FILE = join(STORAGE_DIR, "oauth-sessions.json");
+const SESSIONS_FILE_ENCRYPTED = join(STORAGE_DIR, "oauth-sessions.enc");
+const SESSIONS_FILE_PLAINTEXT = join(STORAGE_DIR, "oauth-sessions.json");
+
+// Encryption constants
+const ALGORITHM = "aes-256-gcm";
+const IV_LENGTH = 16;
+
+/**
+ * Check if encryption is enabled (OAUTH_ENCRYPTION_KEY env var is set)
+ */
+function isEncryptionEnabled(): boolean {
+  return !!process.env.OAUTH_ENCRYPTION_KEY;
+}
+
+/**
+ * Get the encryption key from environment variable.
+ * Returns null if not set.
+ */
+function getEncryptionKey(): Buffer | null {
+  if (!process.env.OAUTH_ENCRYPTION_KEY) {
+    return null;
+  }
+
+  const key = Buffer.from(process.env.OAUTH_ENCRYPTION_KEY, "base64");
+  if (key.length !== 32) {
+    throw new Error("OAUTH_ENCRYPTION_KEY must be 32 bytes (256 bits) base64-encoded");
+  }
+  return key;
+}
+
+/**
+ * Encrypt data using AES-256-GCM
+ */
+function encrypt(data: string, key: Buffer): string {
+  const iv = randomBytes(IV_LENGTH);
+  const cipher = createCipheriv(ALGORITHM, key, iv);
+
+  let encrypted = cipher.update(data, "utf8", "base64");
+  encrypted += cipher.final("base64");
+  const authTag = cipher.getAuthTag();
+
+  // Format: iv:authTag:encryptedData (all base64)
+  return `${iv.toString("base64")}:${authTag.toString("base64")}:${encrypted}`;
+}
+
+/**
+ * Decrypt data using AES-256-GCM
+ */
+function decrypt(encryptedData: string, key: Buffer): string {
+  const parts = encryptedData.split(":");
+
+  if (parts.length !== 3) {
+    throw new Error("Invalid encrypted data format");
+  }
+
+  const iv = Buffer.from(parts[0], "base64");
+  const authTag = Buffer.from(parts[1], "base64");
+  const data = parts[2];
+
+  const decipher = createDecipheriv(ALGORITHM, key, iv);
+  decipher.setAuthTag(authTag);
+
+  let decrypted = decipher.update(data, "base64", "utf8");
+  decrypted += decipher.final("utf8");
+  return decrypted;
+}
 
 /**
  * Registered OAuth Client (RFC 7591)
@@ -299,9 +366,46 @@ export function cleanupExpiredPendingAuth(): void {
 }
 
 // ============ OAuth Sessions ============
+// Uses plaintext storage by default, encrypted storage when OAUTH_ENCRYPTION_KEY is set
+
+/**
+ * Migrate plaintext sessions to encrypted format when encryption key is added
+ */
+function migrateToEncrypted(key: Buffer): Map<string, StoredOAuthSession> | null {
+  if (!existsSync(SESSIONS_FILE_PLAINTEXT)) {
+    return null;
+  }
+
+  try {
+    const data = JSON.parse(readFileSync(SESSIONS_FILE_PLAINTEXT, "utf-8"));
+    const sessions = new Map<string, StoredOAuthSession>();
+
+    for (const [id, session] of Object.entries(data)) {
+      sessions.set(id, session as StoredOAuthSession);
+    }
+
+    console.log(`Migrating ${sessions.size} OAuth sessions from plaintext to encrypted storage`);
+
+    // Save encrypted version
+    const plaintext = JSON.stringify(data);
+    const encrypted = encrypt(plaintext, key);
+    writeFileSync(SESSIONS_FILE_ENCRYPTED, encrypted, { mode: 0o600 });
+
+    // Remove plaintext file
+    unlinkSync(SESSIONS_FILE_PLAINTEXT);
+    console.log("Migration complete - plaintext sessions file removed");
+
+    return sessions;
+  } catch (error) {
+    console.error("Failed to migrate sessions to encrypted:", error);
+    return null;
+  }
+}
 
 /**
  * Load OAuth sessions from disk
+ * - If OAUTH_ENCRYPTION_KEY is set: uses encrypted storage, migrates plaintext if exists
+ * - Otherwise: uses plaintext storage
  */
 function loadSessions(): Map<string, StoredOAuthSession> {
   if (sessionsCache) return sessionsCache;
@@ -309,15 +413,42 @@ function loadSessions(): Map<string, StoredOAuthSession> {
   ensureStorageDir();
   sessionsCache = new Map();
 
-  if (existsSync(SESSIONS_FILE)) {
-    try {
-      const data = JSON.parse(readFileSync(SESSIONS_FILE, "utf-8"));
-      for (const [id, session] of Object.entries(data)) {
-        sessionsCache.set(id, session as StoredOAuthSession);
+  const encryptionKey = getEncryptionKey();
+
+  if (encryptionKey) {
+    // Encryption enabled - use encrypted storage
+    if (existsSync(SESSIONS_FILE_ENCRYPTED)) {
+      try {
+        const encryptedData = readFileSync(SESSIONS_FILE_ENCRYPTED, "utf-8");
+        const decrypted = decrypt(encryptedData, encryptionKey);
+        const data = JSON.parse(decrypted);
+        for (const [id, session] of Object.entries(data)) {
+          sessionsCache.set(id, session as StoredOAuthSession);
+        }
+        console.log(`Loaded ${sessionsCache.size} OAuth sessions (encrypted)`);
+      } catch (error) {
+        console.error("Failed to load encrypted OAuth sessions (starting fresh):", error);
+        sessionsCache = new Map();
       }
-      console.log(`Loaded ${sessionsCache.size} OAuth sessions`);
-    } catch (error) {
-      console.error("Failed to load OAuth sessions:", error);
+    } else {
+      // Try migrating from plaintext
+      const migrated = migrateToEncrypted(encryptionKey);
+      if (migrated) {
+        sessionsCache = migrated;
+      }
+    }
+  } else {
+    // No encryption - use plaintext storage
+    if (existsSync(SESSIONS_FILE_PLAINTEXT)) {
+      try {
+        const data = JSON.parse(readFileSync(SESSIONS_FILE_PLAINTEXT, "utf-8"));
+        for (const [id, session] of Object.entries(data)) {
+          sessionsCache.set(id, session as StoredOAuthSession);
+        }
+        console.log(`Loaded ${sessionsCache.size} OAuth sessions`);
+      } catch (error) {
+        console.error("Failed to load OAuth sessions:", error);
+      }
     }
   }
 
@@ -326,6 +457,8 @@ function loadSessions(): Map<string, StoredOAuthSession> {
 
 /**
  * Save OAuth sessions to disk
+ * - If OAUTH_ENCRYPTION_KEY is set: saves encrypted
+ * - Otherwise: saves plaintext
  */
 function saveSessions(): void {
   if (!sessionsCache) return;
@@ -336,8 +469,18 @@ function saveSessions(): void {
     data[id] = session;
   }
 
+  const encryptionKey = getEncryptionKey();
+
   try {
-    writeFileSync(SESSIONS_FILE, JSON.stringify(data, null, 2));
+    if (encryptionKey) {
+      // Save encrypted
+      const plaintext = JSON.stringify(data);
+      const encrypted = encrypt(plaintext, encryptionKey);
+      writeFileSync(SESSIONS_FILE_ENCRYPTED, encrypted, { mode: 0o600 });
+    } else {
+      // Save plaintext
+      writeFileSync(SESSIONS_FILE_PLAINTEXT, JSON.stringify(data, null, 2));
+    }
   } catch (error) {
     console.error("Failed to save OAuth sessions:", error);
   }
