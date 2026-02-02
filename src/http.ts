@@ -75,9 +75,12 @@ function escapeHtml(text: string): string {
 const app = express();
 app.use(express.json());
 
-// Serve static files from web directory
+// Serve static files from web directory (index: false so "/" goes to route handler for GTM injection)
 const webDir = path.join(__dirname, "..", "web");
-app.use(express.static(webDir));
+app.use(express.static(webDir, { index: false }));
+
+// Redirect /index.html to / for consistent GTM injection
+app.get("/index.html", (_req, res) => res.redirect("/"));
 
 // Health check
 app.get("/health", (_req, res) => {
