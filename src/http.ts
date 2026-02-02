@@ -47,7 +47,11 @@ import {
   getClient,
   validateRedirectUri,
   type RegisteredClient,
+  getSession,
 } from "./oauth/storage.js";
+import { analytics, type AnalyticsContext } from "./analytics/index.js";
+// Import GA4 to trigger auto-registration
+import "./analytics/ga4.js";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -264,6 +268,7 @@ function getCallbackUrl(req: Request): string {
  *   - code_challenge: PKCE challenge (required by MCP spec)
  *   - code_challenge_method: Must be "S256"
  *   - client_consumer: (optional) Identifier for the MCP client (e.g., "claude-code", "cursor")
+ *   - _ga_client_id: (optional) GA4 client_id for cross-domain analytics
  */
 app.get("/oauth/authorize", (req: Request, res: Response) => {
   const config = getOAuthConfig();
@@ -277,6 +282,10 @@ app.get("/oauth/authorize", (req: Request, res: Response) => {
   const codeChallenge = req.query.code_challenge as string | undefined;
   const codeChallengeMethod = req.query.code_challenge_method as string | undefined;
   const clientConsumer = req.query.client_consumer as string | undefined;
+
+  // GA4 analytics: use provided client_id or generate new one for tracking
+  const gaClientId = (req.query._ga_client_id as string | undefined) ||
+    (analytics.isEnabled() ? analytics.generateClientId() : undefined);
 
   // If this is an MCP client request (has client_id), use full OAuth flow
   if (clientId) {
@@ -352,12 +361,32 @@ app.get("/oauth/authorize", (req: Request, res: Response) => {
         codeChallenge,
         codeChallengeMethod: codeChallengeMethod || "S256",
         clientConsumer: effectiveClientConsumer,
+        gaClientId,
       });
 
       // Override the redirect_uri in the auth URL to use OUR callback
       // (Nestr should redirect back to us, then we redirect to MCP client)
       const authUrlObj = new URL(authUrl);
       authUrlObj.searchParams.set("redirect_uri", ourCallbackUrl);
+
+      // Pass GA4 client_id to Nestr for cross-domain tracking (app.nestr.io will read it)
+      // Also add UTM params for attribution fallback
+      if (gaClientId) {
+        authUrlObj.searchParams.set("_ga_client_id", gaClientId);
+        authUrlObj.searchParams.set("utm_source", "mcp");
+        authUrlObj.searchParams.set("utm_medium", "oauth");
+        authUrlObj.searchParams.set("utm_campaign", effectiveClientConsumer || "nestr-mcp");
+      }
+
+      // Track OAuth flow start (wrapped to never break OAuth)
+      if (gaClientId) {
+        try {
+          analytics.trackOAuthStart(
+            { clientId: gaClientId, transport: "http" },
+            { clientConsumer: effectiveClientConsumer }
+          );
+        } catch (e) { console.error("[Analytics] Error:", e); }
+      }
 
       console.log(`OAuth: MCP client ${clientId} initiating auth flow${effectiveClientConsumer ? ` (consumer: ${effectiveClientConsumer})` : ""}`);
       res.redirect(authUrlObj.toString());
@@ -387,8 +416,24 @@ app.get("/oauth/authorize", (req: Request, res: Response) => {
 
     const { authUrl } = createAuthorizationRequest(callbackUrl, finalRedirect);
 
+    // Add GA4 tracking params to auth URL for browser flow
+    const authUrlObj = new URL(authUrl);
+    if (gaClientId) {
+      authUrlObj.searchParams.set("_ga_client_id", gaClientId);
+      authUrlObj.searchParams.set("utm_source", "mcp");
+      authUrlObj.searchParams.set("utm_medium", "oauth");
+      authUrlObj.searchParams.set("utm_campaign", "browser-flow");
+
+      try {
+        analytics.trackOAuthStart(
+          { clientId: gaClientId, transport: "http" },
+          { clientConsumer: "browser" }
+        );
+      } catch (e) { console.error("[Analytics] Error:", e); }
+    }
+
     console.log(`OAuth: Browser user initiating auth flow`);
-    res.redirect(authUrl);
+    res.redirect(gaClientId ? authUrlObj.toString() : authUrl);
   } catch (error) {
     console.error("OAuth authorize error:", error);
     res.status(500).json({
@@ -486,11 +531,32 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
     const callbackUrl = getCallbackUrl(req);
     const tokens = await exchangeCodeForTokens(code as string, callbackUrl);
 
+    // Try to fetch user_id for analytics (non-blocking)
+    let userId: string | undefined;
+    try {
+      const tempClient = new NestrClient({ apiKey: tokens.access_token });
+      const currentUser = await tempClient.getCurrentUser();
+      userId = currentUser._id;
+    } catch (userError) {
+      // Non-fatal: user_id is optional for analytics
+      console.log("OAuth: Could not fetch user info for analytics:", userError);
+    }
+
     // Generate a session ID for this OAuth session
     const oauthSessionId = randomUUID();
-    storeOAuthSession(oauthSessionId, tokens);
+    storeOAuthSession(oauthSessionId, tokens, userId);
 
-    console.log(`OAuth: Successfully authenticated, session: ${oauthSessionId}`);
+    // Track OAuth completion (wrapped to never break OAuth)
+    if (pending.gaClientId) {
+      try {
+        analytics.trackOAuthComplete(
+          { clientId: pending.gaClientId, userId, transport: "http" },
+          { isNewUser: false } // TODO: Could detect new user by checking account age
+        );
+      } catch (e) { console.error("[Analytics] Error:", e); }
+    }
+
+    console.log(`OAuth: Successfully authenticated, session: ${oauthSessionId}${userId ? ` (user: ${userId})` : ""}`);
 
     // Redirect to landing page with token in hash fragment (not sent to server logs)
     // The landing page JavaScript will detect this and display the token in context
@@ -812,6 +878,9 @@ interface SessionData {
   server: Server;
   authToken: string; // API key or OAuth token
   mcpClient?: string; // MCP client name (e.g., "claude-desktop")
+  analytics?: AnalyticsContext; // GA4 analytics context
+  toolCallCount?: number; // Count of tool calls for session end tracking
+  sessionStartTime?: number; // Session start time for duration tracking
 }
 const sessions: Record<string, SessionData> = {};
 
@@ -899,24 +968,113 @@ app.post("/mcp", async (req: Request, res: Response) => {
       console.log(`MCP client: ${mcpClientName}`);
     }
 
+    // Determine auth method and get user_id if available (for OAuth sessions)
+    const isApiKey = !!req.headers["x-nestr-api-key"];
+    let userId: string | undefined;
+
+    // For OAuth tokens, try to get stored user_id
+    // The token itself is used as the session lookup key
+    if (!isApiKey) {
+      try {
+        // Try to find stored OAuth session with user_id
+        // Note: For returning users, we may not have their session stored locally
+        // In that case, we could fetch /users/me, but that adds latency
+        // For now, we only use userId if we have it cached
+        const storedSession = getSession(authToken);
+        userId = storedSession?.userId;
+      } catch (e) { console.error("[GA4] Analytics lookup error:", e); }
+    }
+
+    // Create analytics context for this MCP session (wrapped to never break MCP)
+    let analyticsCtx: AnalyticsContext | undefined;
+    try {
+      analyticsCtx = analytics.isEnabled() ? {
+        clientId: analytics.generateClientId(),
+        userId,
+        mcpClient: mcpClientName,
+        transport: "http",
+      } : undefined;
+    } catch (e) { console.error("[Analytics] Context creation error:", e); }
+
     // Create new session with the auth token and MCP client info
     const client = new NestrClient({
       apiKey: authToken,
       mcpClient: mcpClientName,
     });
-    const server = createServer({ client });
+
+    // Track tool calls for analytics
+    // We use a mutable ref so the callback can access the session's analytics context
+    // after the session is initialized
+    let sessionRef: SessionData | undefined;
+
+    const server = createServer({
+      client,
+      onToolCall: (toolName, args, success, error) => {
+        try {
+          if (sessionRef?.analytics) {
+            // Increment tool call count
+            if (sessionRef.toolCallCount !== undefined) {
+              sessionRef.toolCallCount++;
+            }
+
+            // Track the tool call
+            analytics.trackToolCall(sessionRef.analytics, {
+              toolName,
+              workspaceId: (args as Record<string, unknown>).workspaceId as string | undefined,
+              success,
+              errorCode: error,
+            });
+          }
+        } catch (e) { console.error("[Analytics] Tool call tracking error:", e); }
+      },
+    });
+
+    const sessionStartTime = Date.now();
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (newSessionId) => {
         console.log(`Session initialized: ${newSessionId}${mcpClientName ? ` (client: ${mcpClientName})` : ""}`);
-        sessions[newSessionId] = { transport, server, authToken, mcpClient: mcpClientName };
+        sessions[newSessionId] = {
+          transport,
+          server,
+          authToken,
+          mcpClient: mcpClientName,
+          analytics: analyticsCtx,
+          toolCallCount: 0,
+          sessionStartTime,
+        };
+
+        // Set ref for tool call tracking callback
+        sessionRef = sessions[newSessionId];
+
+        // Track session start (wrapped to never break MCP)
+        if (analyticsCtx) {
+          try {
+            analytics.trackSessionStart(analyticsCtx, {
+              hasToken: true,
+              authMethod: isApiKey ? "api_key" : "oauth",
+            });
+          } catch (e) { console.error("[Analytics] Session start error:", e); }
+        }
       },
     });
 
     transport.onclose = () => {
       const sid = transport.sessionId;
       if (sid && sessions[sid]) {
+        const session = sessions[sid];
+
+        // Track session end (wrapped to never break MCP)
+        if (session.analytics && session.sessionStartTime) {
+          try {
+            const duration = Math.floor((Date.now() - session.sessionStartTime) / 1000);
+            analytics.trackSessionEnd(session.analytics, {
+              duration,
+              toolCallCount: session.toolCallCount || 0,
+            });
+          } catch (e) { console.error("[Analytics] Session end tracking error:", e); }
+        }
         console.log(`Session closed: ${sid}`);
         delete sessions[sid];
       }

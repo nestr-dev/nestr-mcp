@@ -96,6 +96,8 @@ export interface AuthorizationRequestParams {
   codeChallengeMethod?: string;
   /** Identifier for the MCP client (e.g., "claude-code", "cursor") for token metadata */
   clientConsumer?: string;
+  /** GA4 client_id for cross-domain analytics tracking */
+  gaClientId?: string;
 }
 
 /**
@@ -163,6 +165,7 @@ export function createAuthorizationRequest(
     createdAt: Date.now(),
     scope: params.scope,
     clientConsumer: params.clientConsumer,
+    gaClientId: params.gaClientId,
   });
 
   // Build authorization URL for Nestr (without PKCE - we handle it ourselves)
@@ -301,16 +304,21 @@ export async function refreshAccessToken(
 
 /**
  * Store an OAuth session (persisted to disk)
+ * @param sessionId - The session identifier (used as key for token lookup)
+ * @param tokens - The OAuth token response from Nestr
+ * @param userId - Optional Nestr user ID for analytics (GA4 user_id)
  */
 export function storeOAuthSession(
   sessionId: string,
-  tokens: TokenResponse
+  tokens: TokenResponse,
+  userId?: string
 ): void {
   storeSession(sessionId, {
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token,
     expiresAt: Date.now() + tokens.expires_in * 1000,
     scope: tokens.scope,
+    userId,
   });
 }
 

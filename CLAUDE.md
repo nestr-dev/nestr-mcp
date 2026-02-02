@@ -50,6 +50,9 @@ npm run start:http
 | `MCPCAT_PROJECT_ID` | MCPcat project ID for analytics (from [mcpcat.io](https://mcpcat.io)) | No |
 | `MCPCAT_ENABLE_REPLAY` | Enable session replay in MCPcat (default: `false`, only metadata tracked) | No |
 | `OAUTH_ENCRYPTION_KEY` | 32-byte base64-encoded key for encrypting OAuth sessions at rest. If not set, sessions are stored in plaintext. | No |
+| `GA4_MEASUREMENT_ID` | GA4 Measurement ID (e.g., `G-XXXXXXXXXX`) for server-side analytics | No |
+| `GA4_API_SECRET` | GA4 Measurement Protocol API secret (from GA4 Admin → Data Streams) | No |
+| `GA4_DEBUG` | Set to `true` to use GA4 debug endpoint (validates but doesn't record) | No |
 
 \* Either `NESTR_OAUTH_TOKEN` (recommended) or `NESTR_API_KEY` is required.
 
@@ -64,13 +67,17 @@ src/
 ├── index.ts          # Entry point - stdio transport (npx @nestr/mcp)
 ├── http.ts           # Entry point - HTTP transport (mcp.nestr.io)
 ├── server.ts         # MCP server setup, tool & resource registration
+├── analytics/
+│   ├── index.ts      # Generic event tracking interface and registry
+│   └── ga4.ts        # GA4 Measurement Protocol implementation
 ├── api/
 │   └── client.ts     # Nestr REST API client wrapper
 ├── apps/
 │   └── index.ts      # MCP Apps - interactive UI components (HTML inlined)
 ├── oauth/
 │   ├── config.ts     # OAuth configuration and metadata (RFC 9728)
-│   └── flow.ts       # OAuth authorization code flow with PKCE
+│   ├── flow.ts       # OAuth authorization code flow with PKCE
+│   └── storage.ts    # Persistent storage for OAuth sessions and clients
 └── tools/
     └── index.ts      # Tool definitions and handlers
 
@@ -151,12 +158,70 @@ To enable the OAuth flow, register an OAuth client in Nestr:
    NESTR_OAUTH_CLIENT_SECRET=your-client-secret  # if required
    ```
 
+## Analytics
+
+Server-side event tracking with a pluggable architecture. Trackers register themselves and all receive events.
+
+### Configuration
+
+For GA4 tracking, set both environment variables:
+```bash
+GA4_MEASUREMENT_ID=G-XXXXXXXXXX  # Your GA4 Measurement ID
+GA4_API_SECRET=your-api-secret   # From GA4 Admin → Data Streams → Measurement Protocol API secrets
+```
+
+**Note:** If `GA4_MEASUREMENT_ID` is set without `GA4_API_SECRET`, a warning is logged and GA4 tracking is disabled.
+
+### Events Tracked
+
+| Event | When | Parameters |
+|-------|------|------------|
+| `mcp_session_start` | MCP connection established | `auth_method`, `has_token`, `mcp_client` |
+| `mcp_tool_call` | Tool invocation | `tool_name`, `workspace_id`, `success`, `error_code` |
+| `mcp_oauth_start` | OAuth flow initiated | `client_consumer` |
+| `mcp_oauth_complete` | OAuth flow completed | `is_new_user` |
+| `mcp_session_end` | MCP connection closed | `duration_seconds`, `tool_call_count` |
+| `mcp_error` | Error occurred | `error_type`, `error_message`, `tool_name` |
+
+All events include: `app: "nestr_mcp"`, `mcp_client`, `transport`, and `user_id` (when available).
+
+### Cross-Domain Tracking
+
+The MCP server passes `_ga_client_id` and UTM parameters through OAuth redirects to enable session stitching between mcp.nestr.io and app.nestr.io. This allows tracking user journeys from MCP installation through OAuth to app usage.
+
+### Adding a New Tracker
+
+Implement the `EventTracker` interface and register it:
+
+```typescript
+// src/analytics/mixpanel.ts
+import { analytics, EventTracker, AnalyticsContext } from "./index.js";
+
+class MixpanelTracker implements EventTracker {
+  readonly name = "Mixpanel";
+
+  initialize() {
+    // Validate config, throw if invalid
+  }
+
+  trackSessionStart(context: AnalyticsContext, params) {
+    // Send to Mixpanel
+  }
+  // ... implement other methods
+}
+
+// Auto-register on import
+analytics.register(new MixpanelTracker());
+```
+
 ## Key Files
 
 - **src/server.ts** - Creates the MCP server, registers tools and resources
-- **src/tools/index.ts** - Defines all 32 MCP tools with Zod schemas and handlers
+- **src/tools/index.ts** - Defines all 33 MCP tools with Zod schemas and handlers
 - **src/api/client.ts** - Type-safe wrapper for Nestr REST API
 - **src/apps/index.ts** - MCP Apps with inlined HTML for interactive UI components
+- **src/analytics/index.ts** - Generic event tracking interface with pluggable trackers
+- **src/analytics/ga4.ts** - GA4 Measurement Protocol tracker implementation
 - **src/oauth/config.ts** - OAuth configuration and metadata endpoints (RFC 9728)
 - **src/oauth/flow.ts** - OAuth authorization code flow
 - **web/index.html** - User-facing documentation at mcp.nestr.io
