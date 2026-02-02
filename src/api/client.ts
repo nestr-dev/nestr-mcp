@@ -739,6 +739,17 @@ export class NestrClient {
     );
     return response.data;
   }
+
+  // ============ CURRENT USER ============
+
+  /**
+   * Get the current authenticated user's info.
+   * Requires OAuth token - does not work with workspace API keys.
+   * Used for analytics to get user_id for session stitching.
+   */
+  async getCurrentUser(): Promise<User> {
+    return this.fetch<User>("/users/me");
+  }
 }
 
 /**

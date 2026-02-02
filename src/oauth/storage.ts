@@ -111,6 +111,8 @@ export interface PendingAuthWithPKCE {
   scope?: string;
   /** Identifier for the MCP client (e.g., "claude-code", "cursor") for token metadata */
   clientConsumer?: string;
+  /** GA4 client_id for cross-domain analytics tracking */
+  gaClientId?: string;
 }
 
 /**
@@ -121,6 +123,8 @@ export interface StoredOAuthSession {
   refreshToken?: string;
   expiresAt: number;
   scope?: string;
+  /** Nestr user ID for analytics (GA4 user_id) */
+  userId?: string;
 }
 
 // In-memory cache backed by disk

@@ -17,6 +17,8 @@ import * as mcpcat from "mcpcat";
 
 export interface NestrMcpServerConfig {
   client?: NestrClient;
+  /** Optional callback for analytics tracking of tool calls */
+  onToolCall?: (toolName: string, args: Record<string, unknown>, success: boolean, error?: string) => void;
 }
 
 // Server instructions provide context to AI assistants about what Nestr is and how to use it
@@ -1088,7 +1090,24 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
   // Register tool call handler
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    return handleToolCall(client, name, (args as Record<string, unknown>) || {});
+    const toolArgs = (args as Record<string, unknown>) || {};
+
+    try {
+      const result = await handleToolCall(client, name, toolArgs);
+
+      // Track successful tool call
+      if (config.onToolCall) {
+        config.onToolCall(name, toolArgs, true);
+      }
+
+      return result;
+    } catch (error) {
+      // Track failed tool call
+      if (config.onToolCall) {
+        config.onToolCall(name, toolArgs, false, error instanceof Error ? error.message : "Unknown error");
+      }
+      throw error;
+    }
   });
 
   // Register resource list handler

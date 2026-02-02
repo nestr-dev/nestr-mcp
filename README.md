@@ -71,34 +71,93 @@ Ask your AI assistant things like:
 
 ## Available Tools
 
+### Workspace & Search
+
 | Tool | Description |
 |------|-------------|
 | `nestr_list_workspaces` | List accessible workspaces |
 | `nestr_get_workspace` | Get workspace details |
+| `nestr_create_workspace` | Create a new workspace (OAuth only) |
 | `nestr_search` | Search for nests (tasks, projects, roles) |
+
+### Nests (Tasks, Projects, Roles)
+
+| Tool | Description |
+|------|-------------|
 | `nestr_get_nest` | Get details of a specific nest |
 | `nestr_get_nest_children` | Get child nests |
 | `nestr_create_nest` | Create a new nest |
 | `nestr_update_nest` | Update nest properties |
 | `nestr_delete_nest` | Delete a nest |
+| `nestr_reorder_nest` | Reorder a nest relative to another |
+| `nestr_bulk_reorder` | Bulk reorder multiple nests |
+
+### Comments & Discussion
+
+| Tool | Description |
+|------|-------------|
 | `nestr_add_comment` | Add a comment to a nest |
 | `nestr_get_comments` | Get comments/discussion on a nest |
+
+### Organization Structure
+
+| Tool | Description |
+|------|-------------|
 | `nestr_list_circles` | List organizational circles |
 | `nestr_get_circle` | Get circle details |
 | `nestr_get_circle_roles` | Get roles in a circle |
 | `nestr_list_roles` | List all roles |
 | `nestr_list_users` | List workspace members |
 | `nestr_get_user` | Get user details |
-| `nestr_list_labels` | List available labels |
+
+### Labels & Projects
+
+| Tool | Description |
+|------|-------------|
+| `nestr_list_labels` | List workspace labels |
 | `nestr_get_label` | Get label details |
 | `nestr_get_projects` | List projects with status |
+
+### Insights & Apps
+
+| Tool | Description |
+|------|-------------|
 | `nestr_get_insights` | Get workspace metrics |
 | `nestr_get_insight_history` | Get historical trend data for a metric |
 | `nestr_get_workspace_apps` | List enabled apps/features |
-| `nestr_list_inbox` | List items in user's inbox (OAuth only) |
-| `nestr_create_inbox_item` | Quick capture to inbox (OAuth only) |
-| `nestr_get_inbox_item` | Get inbox item details (OAuth only) |
-| `nestr_update_inbox_item` | Update inbox item (OAuth only) |
+
+### Personal (OAuth only)
+
+| Tool | Description |
+|------|-------------|
+| `nestr_list_inbox` | List items in user's inbox |
+| `nestr_create_inbox_item` | Quick capture to inbox |
+| `nestr_get_inbox_item` | Get inbox item details |
+| `nestr_update_inbox_item` | Update inbox item |
+| `nestr_reorder_inbox` | Reorder inbox items |
+| `nestr_list_personal_labels` | List user's personal labels |
+| `nestr_create_personal_label` | Create a personal label |
+| `nestr_get_daily_plan` | Get items marked for today |
+
+## MCP Apps (Interactive UI)
+
+MCP Apps are interactive UI components that can be embedded in MCP clients that support them (like Claude.ai). They provide rich, visual interfaces for working with Nestr data.
+
+### Completable List
+
+**Resource URI:** `ui://nestr/completable-list`
+
+An interactive list for viewing and completing tasks and projects.
+
+**Features:**
+- Projects show a box icon, todos show a checkbox
+- Check items to mark them complete (strikethrough)
+- Inline editing of titles (auto-saves)
+- Drag-and-drop reordering
+- Shows parent path for context
+- Quick link to open item in Nestr
+
+**Usage:** When an AI assistant returns task or project results, supporting clients can render this interactive UI instead of plain text, allowing you to complete items, edit titles, and reorder directly in the chat.
 
 ## Authentication
 
@@ -116,13 +175,53 @@ API keys provide full workspace access and work with the local npm package. See 
 
 ## Environment Variables
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `NESTR_API_KEY` | Nestr API key (full workspace access) | Yes* |
-| `NESTR_OAUTH_TOKEN` | OAuth token (respects user permissions) | Yes* |
-| `NESTR_API_BASE` | API base URL (default: `https://app.nestr.io/api`) | No |
+### Authentication (Required)
+
+| Variable | Description |
+|----------|-------------|
+| `NESTR_API_KEY` | Nestr API key (full workspace access) |
+| `NESTR_OAUTH_TOKEN` | OAuth token (respects user permissions) |
 
 \* Either `NESTR_API_KEY` or `NESTR_OAUTH_TOKEN` is required for local usage.
+
+### Configuration (Optional)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `NESTR_API_BASE` | API base URL | `https://app.nestr.io/api` |
+
+### Hosting/Server (HTTP transport only)
+
+These are used when running the HTTP server for hosted deployments:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | HTTP server port | `3000` |
+| `NESTR_OAUTH_CLIENT_ID` | OAuth client ID for hosted OAuth flow | - |
+| `NESTR_OAUTH_CLIENT_SECRET` | OAuth client secret | - |
+| `OAUTH_ENCRYPTION_KEY` | 32-byte base64 key for encrypting OAuth sessions at rest | - |
+| `GTM_ID` | Google Tag Manager container ID for landing page | - |
+
+### Analytics (Optional)
+
+Server-side analytics options:
+
+**GA4 Measurement Protocol:**
+
+| Variable | Description |
+|----------|-------------|
+| `GA4_MEASUREMENT_ID` | GA4 Measurement ID (e.g., `G-XXXXXXXXXX`) |
+| `GA4_API_SECRET` | Measurement Protocol API secret |
+| `GA4_DEBUG` | Set to `true` to validate events without recording |
+
+**Note:** Both `GA4_MEASUREMENT_ID` and `GA4_API_SECRET` are required for GA4 tracking. If only the measurement ID is set, a warning is logged and tracking is disabled.
+
+**MCPcat (MCP-specific analytics):**
+
+| Variable | Description |
+|----------|-------------|
+| `MCPCAT_PROJECT_ID` | MCPcat project ID (from [mcpcat.io](https://mcpcat.io)) |
+| `MCPCAT_ENABLE_REPLAY` | Enable session replay (default: `false`) |
 
 ## Development
 
