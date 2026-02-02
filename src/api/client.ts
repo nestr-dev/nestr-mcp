@@ -708,7 +708,6 @@ export class NestrClient {
   /**
    * Bulk reorder nests by providing an array of nest IDs in the desired order.
    * Updates searchOrder for all nests and order for nests sharing the same parent.
-   * Use workspaceId='inbox' to reorder inbox items.
    */
   async bulkReorder(
     workspaceId: string,
@@ -716,6 +715,23 @@ export class NestrClient {
   ): Promise<Array<Nest & { searchOrder?: number; order?: number }>> {
     const response = await this.fetch<{ status: string; data: Array<Nest & { searchOrder?: number; order?: number }> }>(
       `/workspaces/${workspaceId}/reorder`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(nestIds),
+      }
+    );
+    return response.data;
+  }
+
+  /**
+   * Reorder inbox items by providing an array of item IDs in the desired order.
+   * Requires OAuth token.
+   */
+  async reorderInbox(
+    nestIds: string[]
+  ): Promise<Array<Nest & { searchOrder?: number; order?: number }>> {
+    const response = await this.fetch<{ status: string; data: Array<Nest & { searchOrder?: number; order?: number }> }>(
+      "/users/me/inbox/reorder",
       {
         method: "PATCH",
         body: JSON.stringify(nestIds),

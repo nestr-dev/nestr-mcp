@@ -222,6 +222,10 @@ export const schemas = {
     data: z.record(z.unknown()).optional().describe("Custom data storage"),
   }),
 
+  reorderInbox: z.object({
+    nestIds: z.array(z.string()).describe("Array of inbox item IDs in the desired order"),
+  }),
+
   // Personal labels (require OAuth token)
   listPersonalLabels: z.object({}),
 
@@ -240,7 +244,7 @@ export const schemas = {
   }),
 
   bulkReorder: z.object({
-    workspaceId: z.string().describe("Workspace ID, or 'inbox' to reorder inbox items"),
+    workspaceId: z.string().describe("Workspace ID"),
     nestIds: z.array(z.string()).describe("Array of nest IDs in the desired order"),
   }),
 
@@ -285,7 +289,7 @@ A workspace is a container for work - either personal or collaborative:
 
 The creator is the only one with access initially. Others must be explicitly invited. Safe to create and test - no one else will see it.
 
-**Important**: Always ask the user to provide a purpose - why does this workspace exist? What is it trying to achieve? They can always change it later, but starting with a clear purpose is valuable. However, if they don't have a clear "why" yet, don't create the workspace - help them think through the purpose first.
+**Important**: Always ask the user to provide a purpose - why does this workspace exist? What is it trying to achieve? They can always change it later, but starting with a clear purpose is valuable. Probe them for the why, but create the workspace with or without it.
 
 Requires user-scoped authentication (OAuth token or personal API key with user scope).`,
     inputSchema: {
@@ -650,6 +654,21 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       required: ["nestId"],
     },
   },
+  {
+    name: "nestr_reorder_inbox",
+    description: "Reorder inbox items by providing an array of item IDs in the desired order. Requires OAuth token.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Array of inbox item IDs in the desired order",
+        },
+      },
+      required: ["nestIds"],
+    },
+  },
   // Personal labels (require OAuth token - user's own labels, not workspace labels)
   {
     name: "nestr_list_personal_labels",
@@ -689,11 +708,11 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
   },
   {
     name: "nestr_bulk_reorder",
-    description: "Bulk reorder multiple nests by providing an array of nest IDs in the desired order. Updates searchOrder for all nests and order for nests sharing the same parent. Use workspaceId='inbox' to reorder inbox items.",
+    description: "Bulk reorder multiple nests by providing an array of nest IDs in the desired order. Updates searchOrder for all nests and order for nests sharing the same parent.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        workspaceId: { type: "string", description: "Workspace ID, or 'inbox' to reorder inbox items" },
+        workspaceId: { type: "string", description: "Workspace ID" },
         nestIds: {
           type: "array",
           items: { type: "string" },
@@ -980,6 +999,12 @@ export async function handleToolCall(
           data: parsed.data as Record<string, unknown> | undefined,
         });
         return formatResult({ message: "Inbox item updated successfully", item });
+      }
+
+      case "nestr_reorder_inbox": {
+        const parsed = schemas.reorderInbox.parse(args);
+        const result = await client.reorderInbox(parsed.nestIds);
+        return formatResult({ message: "Inbox items reordered successfully", items: result });
       }
 
       // Personal labels (require OAuth token)

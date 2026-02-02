@@ -151,7 +151,7 @@ To enable the OAuth flow, register an OAuth client in Nestr:
 ## Key Files
 
 - **src/server.ts** - Creates the MCP server, registers tools and resources
-- **src/tools/index.ts** - Defines all 31 MCP tools with Zod schemas and handlers
+- **src/tools/index.ts** - Defines all 32 MCP tools with Zod schemas and handlers
 - **src/api/client.ts** - Type-safe wrapper for Nestr REST API
 - **src/apps/index.ts** - MCP Apps with inlined HTML for interactive UI components
 - **src/oauth/config.ts** - OAuth configuration and metadata endpoints (RFC 9728)
@@ -191,6 +191,7 @@ The server exposes these tools to AI assistants:
 | `nestr_create_inbox_item` | `POST /users/me/inbox` (OAuth only) |
 | `nestr_get_inbox_item` | `GET /users/me/inbox/{id}` (OAuth only) |
 | `nestr_update_inbox_item` | `PATCH /users/me/inbox/{id}` (OAuth only) |
+| `nestr_reorder_inbox` | `PATCH /users/me/inbox/reorder` (OAuth only) |
 | `nestr_list_personal_labels` | `GET /users/me/labels` (OAuth only) |
 | `nestr_create_personal_label` | `POST /users/me/labels` (OAuth only) |
 | `nestr_get_daily_plan` | `GET /users/me/today` (OAuth only) |

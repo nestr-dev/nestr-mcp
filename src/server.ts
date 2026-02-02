@@ -869,11 +869,10 @@ This moves the item from inbox to the specified location. The \`parentId\` is ty
 
 ### Reordering Inbox Items
 
-Use \`nestr_bulk_reorder\` with \`workspaceId: "inbox"\` to reorder inbox items:
+Use \`nestr_reorder_inbox\` to reorder inbox items (requires OAuth):
 
 \`\`\`json
 {
-  "workspaceId": "inbox",
   "nestIds": ["item3Id", "item1Id", "item2Id"]
 }
 \`\`\`

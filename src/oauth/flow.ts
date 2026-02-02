@@ -16,7 +16,12 @@ import { getOAuthConfig } from "./config.js";
 import {
   storePendingAuth as storePendingAuthToDisk,
   consumePendingAuth as consumePendingAuthFromDisk,
+  storeSession,
+  getSession,
+  updateSession,
+  removeSession,
   type PendingAuthWithPKCE,
+  type StoredOAuthSession,
 } from "./storage.js";
 
 /**
@@ -44,16 +49,9 @@ export interface TokenResponse {
 
 /**
  * Stored OAuth session after successful authentication
+ * @deprecated Use StoredOAuthSession from storage.ts
  */
-export interface OAuthSession {
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt: number;
-  scope?: string;
-}
-
-// In-memory storage for OAuth sessions (keyed by session ID)
-const oauthSessions = new Map<string, OAuthSession>();
+export type OAuthSession = StoredOAuthSession;
 
 // Buffer time before token expiration to trigger refresh (60 seconds)
 const TOKEN_EXPIRY_BUFFER_MS = 60 * 1000;
@@ -302,13 +300,13 @@ export async function refreshAccessToken(
 }
 
 /**
- * Store an OAuth session
+ * Store an OAuth session (persisted to disk)
  */
 export function storeOAuthSession(
   sessionId: string,
   tokens: TokenResponse
 ): void {
-  oauthSessions.set(sessionId, {
+  storeSession(sessionId, {
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token,
     expiresAt: Date.now() + tokens.expires_in * 1000,
@@ -317,12 +315,12 @@ export function storeOAuthSession(
 }
 
 /**
- * Get an OAuth session, refreshing if needed
+ * Get an OAuth session, refreshing if needed (loaded from disk)
  */
 export async function getOAuthSession(
   sessionId: string
 ): Promise<OAuthSession | undefined> {
-  const session = oauthSessions.get(sessionId);
+  const session = getSession(sessionId);
 
   if (!session) {
     return undefined;
@@ -335,15 +333,15 @@ export async function getOAuthSession(
       try {
         const tokens = await refreshAccessToken(session.refreshToken);
         storeOAuthSession(sessionId, tokens);
-        return oauthSessions.get(sessionId);
+        return getSession(sessionId);
       } catch {
         // Refresh failed, remove session
-        oauthSessions.delete(sessionId);
+        removeSession(sessionId);
         return undefined;
       }
     } else {
       // No refresh token, session expired
-      oauthSessions.delete(sessionId);
+      removeSession(sessionId);
       return undefined;
     }
   }
@@ -352,10 +350,9 @@ export async function getOAuthSession(
 }
 
 /**
- * Remove an OAuth session
+ * Remove an OAuth session (removes from disk)
  */
 export function removeOAuthSession(sessionId: string): void {
-  oauthSessions.delete(sessionId);
+  removeSession(sessionId);
 }
 
-// Cleanup is now handled by storage.ts

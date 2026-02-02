@@ -14,6 +14,7 @@ const STORAGE_DIR = process.env.OAUTH_STORAGE_DIR ||
 
 const CLIENTS_FILE = join(STORAGE_DIR, "oauth-clients.json");
 const PENDING_AUTH_FILE = join(STORAGE_DIR, "pending-auth.json");
+const SESSIONS_FILE = join(STORAGE_DIR, "oauth-sessions.json");
 
 /**
  * Registered OAuth Client (RFC 7591)
@@ -45,9 +46,20 @@ export interface PendingAuthWithPKCE {
   clientConsumer?: string;
 }
 
+/**
+ * Stored OAuth session after successful authentication
+ */
+export interface StoredOAuthSession {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt: number;
+  scope?: string;
+}
+
 // In-memory cache backed by disk
 let clientsCache: Map<string, RegisteredClient> | null = null;
 let pendingAuthCache: Map<string, PendingAuthWithPKCE> | null = null;
+let sessionsCache: Map<string, StoredOAuthSession> | null = null;
 
 /**
  * Ensure storage directory exists
@@ -286,5 +298,116 @@ export function cleanupExpiredPendingAuth(): void {
   }
 }
 
+// ============ OAuth Sessions ============
+
+/**
+ * Load OAuth sessions from disk
+ */
+function loadSessions(): Map<string, StoredOAuthSession> {
+  if (sessionsCache) return sessionsCache;
+
+  ensureStorageDir();
+  sessionsCache = new Map();
+
+  if (existsSync(SESSIONS_FILE)) {
+    try {
+      const data = JSON.parse(readFileSync(SESSIONS_FILE, "utf-8"));
+      for (const [id, session] of Object.entries(data)) {
+        sessionsCache.set(id, session as StoredOAuthSession);
+      }
+      console.log(`Loaded ${sessionsCache.size} OAuth sessions`);
+    } catch (error) {
+      console.error("Failed to load OAuth sessions:", error);
+    }
+  }
+
+  return sessionsCache;
+}
+
+/**
+ * Save OAuth sessions to disk
+ */
+function saveSessions(): void {
+  if (!sessionsCache) return;
+
+  ensureStorageDir();
+  const data: Record<string, StoredOAuthSession> = {};
+  for (const [id, session] of sessionsCache) {
+    data[id] = session;
+  }
+
+  try {
+    writeFileSync(SESSIONS_FILE, JSON.stringify(data, null, 2));
+  } catch (error) {
+    console.error("Failed to save OAuth sessions:", error);
+  }
+}
+
+/**
+ * Store an OAuth session
+ */
+export function storeSession(sessionId: string, session: StoredOAuthSession): void {
+  const cache = loadSessions();
+  cache.set(sessionId, session);
+  saveSessions();
+}
+
+/**
+ * Get an OAuth session by ID
+ */
+export function getSession(sessionId: string): StoredOAuthSession | undefined {
+  const cache = loadSessions();
+  return cache.get(sessionId);
+}
+
+/**
+ * Update an existing OAuth session (e.g., after token refresh)
+ */
+export function updateSession(sessionId: string, session: StoredOAuthSession): void {
+  const cache = loadSessions();
+  if (cache.has(sessionId)) {
+    cache.set(sessionId, session);
+    saveSessions();
+  }
+}
+
+/**
+ * Remove an OAuth session
+ */
+export function removeSession(sessionId: string): void {
+  const cache = loadSessions();
+  if (cache.delete(sessionId)) {
+    saveSessions();
+  }
+}
+
+/**
+ * Cleanup expired OAuth sessions
+ * Sessions are considered expired if their expiresAt time has passed
+ * and they have no refresh token
+ */
+export function cleanupExpiredSessions(): void {
+  const cache = loadSessions();
+  const now = Date.now();
+  let cleaned = 0;
+
+  for (const [sessionId, session] of cache) {
+    // Only remove if expired AND no refresh token
+    // Sessions with refresh tokens can be renewed
+    if (now >= session.expiresAt && !session.refreshToken) {
+      cache.delete(sessionId);
+      cleaned++;
+    }
+  }
+
+  if (cleaned > 0) {
+    saveSessions();
+    console.log(`Cleaned up ${cleaned} expired OAuth sessions`);
+  }
+}
+
 // Run cleanup every minute
-setInterval(cleanupExpiredPendingAuth, 60000);
+setInterval(() => {
+  cleanupExpiredPendingAuth();
+  cleanupExpiredSessions();
+}, 60000);
