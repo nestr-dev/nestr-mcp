@@ -72,6 +72,11 @@ export const schemas = {
     purpose: z.string().optional().describe("Workspace purpose or description"),
     type: z.enum(['personal', 'collaborative']).optional().describe("'personal' for individual use (free forever), 'collaborative' for team use (free trial, then paid). Defaults to 'collaborative'."),
     governance: z.enum(['holacracy', 'sociocracy', 'roles_circles']).optional().describe("Self-organization model. Defaults to 'roles_circles' (generic role-based)."),
+    plan: z.enum(['starter', 'pro']).optional().describe("Subscription plan for collaborative workspaces. Defaults to 'pro' (17-day trial)."),
+    apps: z.array(z.enum(['okr', 'feedback', 'insights'])).optional().describe("Apps to enable (e.g., ['okr', 'feedback']). 'insights' requires pro plan."),
+    layout: z.enum(['board', 'list']).optional().describe("Layout style for personal workspaces. 'board' creates kanban columns (Todo, Doing, Done)."),
+
+
   }),
 
   search: z.object({
@@ -263,6 +268,7 @@ export const toolDefinitions = [
         search: { type: "string", description: "Search query to filter workspaces" },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed) for pagination" },
+        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for bulk/index operations." },
       },
     },
   },
@@ -273,6 +279,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
+        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
       },
       required: ["workspaceId"],
     },
@@ -307,6 +314,23 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
           enum: ["holacracy", "sociocracy", "roles_circles"],
           description: "Self-organization model. Defaults to 'roles_circles' (generic role-based)."
         },
+        plan: {
+          type: "string",
+          enum: ["starter", "pro"],
+          description: "Subscription plan for collaborative workspaces. Defaults to 'pro' (17-day trial)."
+        },
+        apps: {
+          type: "array",
+          items: { type: "string", enum: ["okr", "feedback", "insights"] },
+          description: "Apps to enable (e.g., ['okr', 'feedback']). 'insights' requires pro plan."
+        },
+        layout: {
+          type: "string",
+          enum: ["board", "list"],
+          description: "Layout style for personal workspaces. 'board' creates kanban columns (Todo, Doing, Done)."
+        },
+
+
       },
       required: ["title"],
     },
@@ -321,6 +345,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         query: { type: "string", description: "Search query with optional operators (e.g., 'label:role', 'assignee:me completed:false')" },
         limit: { type: "number", description: "Max results per page. Do NOT set on first call - let API return default with meta.total count showing total matches." },
         page: { type: "number", description: "Page number (1-indexed) for fetching additional pages" },
+        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for bulk/index operations." },
       },
       required: ["workspaceId", "query"],
     },
@@ -333,6 +358,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       properties: {
         nestId: { type: "string", description: "Nest ID" },
         fieldsMetaData: { type: "boolean", description: "Set to true to include field schema metadata (available options, field types)" },
+        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
       },
       required: ["nestId"],
     },
@@ -346,6 +372,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         nestId: { type: "string", description: "Parent nest ID" },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
+        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for bulk/index operations." },
       },
       required: ["nestId"],
     },
@@ -447,6 +474,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         workspaceId: { type: "string", description: "Workspace ID" },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
+        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large workspaces." },
       },
       required: ["workspaceId"],
     },
@@ -461,6 +489,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         circleId: { type: "string", description: "Circle ID" },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
+        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large circles." },
       },
       required: ["workspaceId", "circleId"],
     },
@@ -474,6 +503,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         workspaceId: { type: "string", description: "Workspace ID" },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
+        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large workspaces." },
       },
       required: ["workspaceId"],
     },
@@ -527,6 +557,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         workspaceId: { type: "string", description: "Workspace ID" },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
+        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large workspaces." },
       },
       required: ["workspaceId"],
     },
@@ -551,6 +582,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         circleId: { type: "string", description: "Circle ID" },
+        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
       },
       required: ["workspaceId", "circleId"],
     },
@@ -613,6 +645,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       type: "object" as const,
       properties: {
         completedAfter: { type: "string", description: "Include completed items from this date (ISO format). If omitted, only non-completed items are returned." },
+        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
       },
     },
   },
@@ -635,6 +668,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Inbox item ID" },
+        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
       },
       required: ["nestId"],
     },
@@ -728,7 +762,9 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
     description: "Get the user's daily plan - items marked for 'today'. Returns todos and projects the user has added to their daily focus list by applying the 'now' label. Use this to help users plan their day or review what's on their plate. Note: Only includes items from inbox and in-scope workspaces (token scope may limit results). Requires OAuth token.",
     inputSchema: {
       type: "object" as const,
-      properties: {},
+      properties: {
+        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
+      },
     },
   },
 ];
@@ -739,8 +775,48 @@ export type ToolResult = {
   isError?: boolean;
 };
 
-// Tool handlers
+// Strip description fields from nest objects in response data
+function stripDescriptionFields(data: unknown): unknown {
+  if (Array.isArray(data)) {
+    return data.map(item => stripDescriptionFields(item));
+  }
+  if (data && typeof data === 'object') {
+    const obj = { ...(data as Record<string, unknown>) };
+    if ('_id' in obj) {
+      delete obj.description;
+    }
+    for (const key of ['data', 'nest', 'item', 'items', 'nests']) {
+      if (key in obj && obj[key] != null) {
+        obj[key] = stripDescriptionFields(obj[key]);
+      }
+    }
+    return obj;
+  }
+  return data;
+}
+
+// Tool handler - supports stripDescription to reduce response size
 export async function handleToolCall(
+  client: NestrClient,
+  name: string,
+  args: Record<string, unknown>
+): Promise<ToolResult> {
+  const shouldStripDescription = args.stripDescription === true;
+  const result = await _handleToolCall(client, name, args);
+
+  if (shouldStripDescription && !result.isError) {
+    try {
+      const parsed = JSON.parse(result.content[0].text);
+      result.content[0].text = JSON.stringify(stripDescriptionFields(parsed), null, 2);
+    } catch {
+      // If parsing fails, return as-is
+    }
+  }
+
+  return result;
+}
+
+async function _handleToolCall(
   client: NestrClient,
   name: string,
   args: Record<string, unknown>
@@ -772,6 +848,11 @@ export async function handleToolCall(
           configuration: {
             collaborators: parsed.type === 'personal' ? 'personal' : 'collaborate',
             governance: parsed.governance,
+            plan: parsed.plan,
+            apps: parsed.apps,
+            layout: parsed.layout,
+
+
           },
         });
         return formatResult(workspace);

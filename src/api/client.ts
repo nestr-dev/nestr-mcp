@@ -301,11 +301,13 @@ export class NestrClient {
       /** Self-organization model */
       governance?: 'holacracy' | 'sociocracy' | 'roles_circles';
       /** Subscription plan for collaborative workspaces */
-      plan?: 'plan_starter' | 'plan_pro';
+      plan?: 'starter' | 'pro';
       /** Optional apps to enable */
-      variableApps?: Array<'okr' | 'feedback' | 'insights'>;
+      apps?: Array<'okr' | 'feedback' | 'insights'>;
       /** Layout style (personal workspaces only) */
       layout?: 'board' | 'list';
+
+
     };
   }): Promise<Nest> {
     return this.fetch<Nest>('/workspaces', {
