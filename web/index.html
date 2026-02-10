@@ -265,6 +265,7 @@
               <button class="tab" data-tab="gemini">Gemini CLI</button>
               <button class="tab" data-tab="cursor">Cursor</button>
               <button class="tab" data-tab="copilot">VS Code</button>
+              <button class="tab" data-tab="openclaw">OpenClaw</button>
               <button class="tab" data-tab="manual">Other / Manual</button>
             </div>
 
@@ -338,38 +339,51 @@
             </div>
 
             <div class="tab-content" id="claude-code">
+              <div class="scope-selector">
+                <label for="claude-code-scope"><strong>Scope:</strong></label>
+                <select id="claude-code-scope" onchange="updateClaudeCodeCommands()">
+                  <option value="user" selected>User (Recommended)</option>
+                  <option value="project">Project</option>
+                  <option value="local">Local</option>
+                </select>
+                <span class="scope-hint" id="scope-hint-text">Shared across all projects &mdash; one OAuth token for all sessions</span>
+              </div>
+
               <div class="config-block hosted oauth active">
                 <div class="quickstart-box">
                   <h4>Quickstart (Recommended)</h4>
                   <p><strong>Step 1:</strong> Add the Nestr MCP server:</p>
-                  <pre><code>claude mcp add nestr --transport http https://mcp.nestr.io/mcp</code></pre>
+                  <pre><code class="cc-cmd cc-hosted-oauth">claude mcp add --scope user nestr --transport http https://mcp.nestr.io/mcp</code></pre>
                   <p><strong>Step 2:</strong> In Claude Code, run <code>/mcp</code> and click "Authenticate" next to Nestr. This will open your browser to log in with Nestr.</p>
                   <p class="quickstart-note">That's it! Once authenticated, Claude Code can access your Nestr workspace.</p>
                 </div>
                 <p>Or, if you already have a token, add it manually:</p>
-                <pre><code>claude mcp add nestr --transport http https://mcp.nestr.io/mcp \
+                <pre><code class="cc-cmd cc-hosted-oauth-manual">claude mcp add --scope user nestr --transport http https://mcp.nestr.io/mcp \
   --header "Authorization: Bearer your-oauth-token-here"</code></pre>
               </div>
 
               <div class="config-block hosted apikey">
                 <p>Run this command in your terminal:</p>
-                <pre><code>claude mcp add nestr --transport http https://mcp.nestr.io/mcp \
+                <pre><code class="cc-cmd cc-hosted-apikey">claude mcp add --scope user nestr --transport http https://mcp.nestr.io/mcp \
   --header "X-Nestr-API-Key: your-api-key-here"</code></pre>
               </div>
 
               <div class="config-block local oauth">
                 <p>Run this command in your terminal:</p>
-                <pre><code>claude mcp add nestr -- npx -y @nestr/mcp \
+                <pre><code class="cc-cmd cc-local-oauth">claude mcp add --scope user nestr -- npx -y @nestr/mcp \
   --env NESTR_OAUTH_TOKEN=your-oauth-token-here</code></pre>
               </div>
 
               <div class="config-block local apikey">
                 <p>Run this command in your terminal:</p>
-                <pre><code>claude mcp add nestr -- npx -y @nestr/mcp \
+                <pre><code class="cc-cmd cc-local-apikey">claude mcp add --scope user nestr -- npx -y @nestr/mcp \
   --env NESTR_API_KEY=your-api-key-here</code></pre>
               </div>
 
               <p>Run <code>/mcp</code> anytime to check connection status or re-authenticate.</p>
+              <p class="tip" style="margin-bottom: 0;">Already set up Nestr as a <strong>Claude.ai connector</strong>? You can reuse it in Claude Code by enabling the flag:<br>
+                <code>claude config set --global tengu_claudeai_mcp_connectors true</code><br>
+                This makes all your Claude.ai connectors available in Claude Code &mdash; no separate MCP setup needed.</p>
             </div>
 
             <div class="tab-content" id="cursor">
@@ -739,6 +753,100 @@
 }</code></pre>
               </div>
               <p>Reload VS Code window after saving (<code>Cmd/Ctrl + Shift + P</code> &rarr; "Developer: Reload Window").</p>
+            </div>
+
+            <div class="tab-content" id="openclaw">
+              <p><a href="https://openclaw.ai" target="_blank">OpenClaw</a> (formerly ClawdBot / MoltBot) is an open-source AI assistant gateway. Add Nestr MCP to your <code>~/.openclaw/openclaw.json</code> config:</p>
+
+              <div class="config-block hosted oauth active">
+                <div class="token-section" id="openclaw-hosted-oauth-token">
+                  <a href="/oauth/authorize" class="btn primary token-btn" onclick="saveStateBeforeOAuth('openclaw')">Get Your Token</a>
+                  <span class="token-hint">Login with Nestr to get your OAuth token</span>
+                </div>
+                <div class="token-success" id="openclaw-hosted-oauth-success" style="display: none;">
+                  <div class="token-success-header">Authentication Successful</div>
+                  <p>Copy this token into the configuration below:</p>
+                  <div class="token-display">
+                    <input type="text" class="token-value" readonly>
+                    <button class="btn primary" onclick="copyToken(this)">Copy</button>
+                  </div>
+                  <p class="copy-feedback" style="display: none;">Copied to clipboard!</p>
+                </div>
+                <pre><code>{
+  "provider": {
+    "mcpServers": {
+      "nestr": {
+        "url": "https://mcp.nestr.io/mcp",
+        "headers": {
+          "Authorization": "Bearer <span class="token-placeholder">your-oauth-token-here</span>"
+        }
+      }
+    }
+  }
+}</code></pre>
+              </div>
+
+              <div class="config-block hosted apikey">
+                <pre><code>{
+  "provider": {
+    "mcpServers": {
+      "nestr": {
+        "url": "https://mcp.nestr.io/mcp",
+        "headers": {
+          "X-Nestr-API-Key": "your-api-key-here"
+        }
+      }
+    }
+  }
+}</code></pre>
+              </div>
+
+              <div class="config-block local oauth">
+                <div class="token-section" id="openclaw-local-oauth-token">
+                  <a href="/oauth/authorize" class="btn primary token-btn" onclick="saveStateBeforeOAuth('openclaw')">Get Your Token</a>
+                  <span class="token-hint">Login with Nestr to get your OAuth token</span>
+                </div>
+                <div class="token-success" id="openclaw-local-oauth-success" style="display: none;">
+                  <div class="token-success-header">Authentication Successful</div>
+                  <p>Copy this token into the configuration below:</p>
+                  <div class="token-display">
+                    <input type="text" class="token-value" readonly>
+                    <button class="btn primary" onclick="copyToken(this)">Copy</button>
+                  </div>
+                  <p class="copy-feedback" style="display: none;">Copied to clipboard!</p>
+                </div>
+                <pre><code>{
+  "provider": {
+    "mcpServers": {
+      "nestr": {
+        "command": "npx",
+        "args": ["-y", "@nestr/mcp"],
+        "env": {
+          "NESTR_OAUTH_TOKEN": "<span class="token-placeholder">your-oauth-token-here</span>"
+        }
+      }
+    }
+  }
+}</code></pre>
+              </div>
+
+              <div class="config-block local apikey">
+                <pre><code>{
+  "provider": {
+    "mcpServers": {
+      "nestr": {
+        "command": "npx",
+        "args": ["-y", "@nestr/mcp"],
+        "env": {
+          "NESTR_API_KEY": "your-api-key-here"
+        }
+      }
+    }
+  }
+}</code></pre>
+              </div>
+
+              <p>Restart the OpenClaw gateway after saving: <code>openclaw gateway restart</code></p>
             </div>
 
             <div class="tab-content" id="manual">
@@ -1293,6 +1401,47 @@
           }
         }
       }, 1500);
+    }
+
+    // Claude Code scope selector
+    const scopeCommands = {
+      user: {
+        'cc-hosted-oauth': 'claude mcp add --scope user nestr --transport http https://mcp.nestr.io/mcp',
+        'cc-hosted-oauth-manual': 'claude mcp add --scope user nestr --transport http https://mcp.nestr.io/mcp \\\n  --header "Authorization: Bearer your-oauth-token-here"',
+        'cc-hosted-apikey': 'claude mcp add --scope user nestr --transport http https://mcp.nestr.io/mcp \\\n  --header "X-Nestr-API-Key: your-api-key-here"',
+        'cc-local-oauth': 'claude mcp add --scope user nestr -- npx -y @nestr/mcp \\\n  --env NESTR_OAUTH_TOKEN=your-oauth-token-here',
+        'cc-local-apikey': 'claude mcp add --scope user nestr -- npx -y @nestr/mcp \\\n  --env NESTR_API_KEY=your-api-key-here',
+        hint: 'Shared across all projects \u2014 one OAuth token for all sessions'
+      },
+      project: {
+        'cc-hosted-oauth': 'claude mcp add --scope project nestr --transport http https://mcp.nestr.io/mcp',
+        'cc-hosted-oauth-manual': 'claude mcp add --scope project nestr --transport http https://mcp.nestr.io/mcp \\\n  --header "Authorization: Bearer your-oauth-token-here"',
+        'cc-hosted-apikey': 'claude mcp add --scope project nestr --transport http https://mcp.nestr.io/mcp \\\n  --header "X-Nestr-API-Key: your-api-key-here"',
+        'cc-local-oauth': 'claude mcp add --scope project nestr -- npx -y @nestr/mcp \\\n  --env NESTR_OAUTH_TOKEN=your-oauth-token-here',
+        'cc-local-apikey': 'claude mcp add --scope project nestr -- npx -y @nestr/mcp \\\n  --env NESTR_API_KEY=your-api-key-here',
+        hint: 'Shared with collaborators via .mcp.json \u2014 separate OAuth per project'
+      },
+      local: {
+        'cc-hosted-oauth': 'claude mcp add nestr --transport http https://mcp.nestr.io/mcp',
+        'cc-hosted-oauth-manual': 'claude mcp add nestr --transport http https://mcp.nestr.io/mcp \\\n  --header "Authorization: Bearer your-oauth-token-here"',
+        'cc-hosted-apikey': 'claude mcp add nestr --transport http https://mcp.nestr.io/mcp \\\n  --header "X-Nestr-API-Key: your-api-key-here"',
+        'cc-local-oauth': 'claude mcp add nestr -- npx -y @nestr/mcp \\\n  --env NESTR_OAUTH_TOKEN=your-oauth-token-here',
+        'cc-local-apikey': 'claude mcp add nestr -- npx -y @nestr/mcp \\\n  --env NESTR_API_KEY=your-api-key-here',
+        hint: 'Current directory only \u2014 each project gets its own OAuth token'
+      }
+    };
+
+    function updateClaudeCodeCommands() {
+      const scope = document.getElementById('claude-code-scope').value;
+      const cmds = scopeCommands[scope];
+      document.querySelectorAll('.cc-cmd').forEach(el => {
+        el.classList.forEach(cls => {
+          if (cls !== 'cc-cmd' && cmds[cls]) {
+            el.textContent = cmds[cls];
+          }
+        });
+      });
+      document.getElementById('scope-hint-text').textContent = cmds.hint;
     }
 
     // Show manual configuration fallback

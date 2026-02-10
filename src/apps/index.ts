@@ -237,7 +237,6 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       color: #999;
       margin-top: 1px;
       text-decoration: underline;
-      text-decoration-style: dashed;
       text-decoration-color: #ddd;
       text-underline-offset: 3px;
     }
@@ -1191,8 +1190,8 @@ export const appResources = {
   completableList: {
     uri: "ui://nestr/completable-list",
     name: "Completable List",
-    description: "Interactive list for completing tasks and projects",
-    mimeType: "text/html",
+    description: "Interactive list for completing tasks and projects. Only use for completable items (tasks, projects, todos, inbox items) - not for roles, circles, metrics, or other structural nests.",
+    mimeType: "text/html;profile=mcp-app",
   },
 };
 

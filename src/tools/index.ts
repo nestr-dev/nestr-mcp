@@ -5,6 +5,12 @@
 
 import { z } from "zod";
 import { NestrApiError, type NestrClient, type ToolError, type ErrorCode } from "../api/client.js";
+import { appResources } from "../apps/index.js";
+
+// MCP Apps UI metadata for tools that can render in the completable list app.
+// IMPORTANT: Only use for completable items (tasks, projects, todos, inbox items).
+// Do NOT use for structural nests like roles, circles, metrics, policies, etc.
+const completableListUi = { ui: { resourceUri: appResources.completableList.uri } };
 
 // Fields to keep for compact list responses (reduces token usage)
 const COMPACT_FIELDS = {
@@ -337,7 +343,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
   },
   {
     name: "nestr_search",
-    description: "Search for nests within a workspace. Supports operators: label:, parent-label:, assignee: (me/userId/!userId/none), admin:, createdby:, completed:, type:, has: (due/pastdue/children/incompletechildren), depth:, mindepth:, in:, updated-date:, limit:, template:, data.property:, fieldValues.property:, label->field:value. Use ! prefix for negation. IMPORTANT: Use completed:false when searching for work to exclude old completed items. Response includes meta.total showing total matching count.",
+    description: "Search for nests within a workspace. Supports operators: label:, parent-label:, assignee: (me/userId/!userId/none), admin:, createdby:, completed:, type:, has: (due/pastdue/children/incompletechildren), depth:, mindepth:, in:, updated-date:, limit:, template:, data.property:, fields.{label}.{property}: to search any value in a nest's fields object (supports partial match, e.g., fields.project.status:Current — use nestr_get_nest with fieldsMetaData=true to discover available fields), label->field:value. Use ! prefix for negation. IMPORTANT: Use completed:false when searching for work to exclude old completed items. Response includes meta.total showing total matching count. NOTE: The completable list UI app should ONLY be used when results are completable items (tasks, projects, todos). Do NOT use the app for any other type of nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -349,6 +355,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId", "query"],
     },
+    _meta: completableListUi,
   },
   {
     name: "nestr_get_nest",
@@ -365,7 +372,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
   },
   {
     name: "nestr_get_nest_children",
-    description: "Get child nests (sub-tasks, sub-projects) of a nest. Response includes meta.total showing total matching count.",
+    description: "Get child nests (sub-tasks, sub-projects) of a nest. Response includes meta.total showing total matching count. NOTE: The completable list UI app should ONLY be used when results are completable items (tasks, projects, todos). Do NOT use the app for any other type of nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -376,6 +383,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId"],
     },
+    _meta: completableListUi,
   },
   {
     name: "nestr_create_nest",
@@ -561,6 +569,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId"],
     },
+    _meta: completableListUi,
   },
   {
     name: "nestr_get_comments",
@@ -648,6 +657,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
       },
     },
+    _meta: completableListUi,
   },
   {
     name: "nestr_create_inbox_item",
@@ -690,7 +700,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
   },
   {
     name: "nestr_reorder_inbox",
-    description: "Reorder inbox items by providing an array of item IDs in the desired order. Requires OAuth token.",
+    description: "Reorder inbox items by providing an array of item IDs in the desired order. You can provide a subset of items - they will be placed at the top in the given order, with remaining items unchanged below. Requires OAuth token.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -742,7 +752,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
   },
   {
     name: "nestr_bulk_reorder",
-    description: "Bulk reorder multiple nests by providing an array of nest IDs in the desired order. Updates searchOrder for all nests and order for nests sharing the same parent.",
+    description: "Bulk reorder multiple nests by providing an array of nest IDs in the desired order. You can provide a subset of items - they will be placed at the top in the given order, with remaining items unchanged below. Useful for large containers or search results where you only need to reorder a few items. Updates searchOrder for all nests and order for nests sharing the same parent.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -766,6 +776,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
       },
     },
+    _meta: completableListUi,
   },
 ];
 

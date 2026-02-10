@@ -636,12 +636,24 @@ label:accountability customer
 
 ### Data and Field Property Search
 
-Search by data properties or field values directly:
+Every nest has a \`fields\` object containing label-specific properties (e.g., a "project" label adds \`fields.project.status\`, \`fields.project.priority\`, etc.). You can search on any of these field values. Use \`nestr_get_nest\` with \`fieldsMetaData=true\` to discover available fields and their options for a given label.
 
 - \`data.{property}:value\` - Search by data property (e.g., \`data.externalId:123\`)
-- \`fieldValues.{property}:value\` - Search by field value directly
+- \`fields.{label}.{property}:value\` - Search by field value from the nest's \`fields\` object (supports partial match, e.g., \`fields.project.status:Current\`)
 
 Both support multiple values (comma-separated for OR logic) and \`!\` prefix for negation.
+
+Examples:
+\`\`\`
+fields.project.status:Current
+  -> Projects with status "Current"
+
+fields.project.status:Current,Future
+  -> Projects with status "Current" OR "Future"
+
+fields.project.status:!Done
+  -> Projects NOT marked as "Done"
+\`\`\`
 
 ### Template Operators
 
@@ -1189,7 +1201,7 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
         contents: [
           {
             uri,
-            mimeType: "text/html",
+            mimeType: "text/html;profile=mcp-app",
             text: getCompletableListHtml(),
           },
         ],
@@ -1207,9 +1219,31 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
   const mcpcatProjectId = process.env.MCPCAT_PROJECT_ID;
   if (mcpcatProjectId) {
     const enableReplay = process.env.MCPCAT_ENABLE_REPLAY === 'true';
-    mcpcat.track(server, mcpcatProjectId, enableReplay ? {} : {
-      // Redact all content when replay is disabled - only metadata is tracked
-      redactSensitiveInformation: async () => '[REDACTED]'
+
+    // Cache user identity to avoid repeated API calls per session
+    let cachedIdentity: { userId: string; userName: string } | null = null;
+    let identityFetched = false;
+
+    mcpcat.track(server, mcpcatProjectId, {
+      ...(enableReplay ? {} : {
+        // Redact all content when replay is disabled - only metadata is tracked
+        redactSensitiveInformation: async () => '[REDACTED]'
+      }),
+      identify: async () => {
+        if (identityFetched) return cachedIdentity;
+        identityFetched = true;
+        try {
+          const user = await client.getCurrentUser();
+          cachedIdentity = {
+            userId: user._id,
+            userName: user.profile?.fullName || user.username,
+          };
+          return cachedIdentity;
+        } catch {
+          // getCurrentUser requires OAuth token - silently skip for API key auth
+          return null;
+        }
+      },
     });
   }
 
