@@ -23,6 +23,8 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       color: #1a1a1a;
       background: #fff;
       padding: 16px;
+      max-height: 1000px;
+      overflow-y: auto;
     }
 
     .header {
@@ -690,6 +692,33 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
         });
       }
 
+      sendSizeChanged() {
+        const height = Math.min(document.documentElement.scrollHeight, 1000);
+        const width = document.documentElement.scrollWidth;
+        window.parent.postMessage({
+          jsonrpc: '2.0',
+          method: 'ui/notifications/size-changed',
+          params: { height, width }
+        }, '*');
+      }
+
+      setupAutoResize() {
+        let pending = false;
+        const notify = () => {
+          if (!pending) {
+            pending = true;
+            requestAnimationFrame(() => {
+              this.sendSizeChanged();
+              pending = false;
+            });
+          }
+        };
+        const observer = new ResizeObserver(notify);
+        observer.observe(document.documentElement);
+        observer.observe(document.body);
+        return () => observer.disconnect();
+      }
+
       async updateModelContext(content) {
         const id = ++this.requestId;
 
@@ -1221,7 +1250,9 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
     // Initialize: connect to host via MCP Apps protocol, then listen for tool results
     appEl.innerHTML = '<div class="loading">Loading...</div>';
     app.onToolResult = handleData;
-    app.connect().catch(err => console.error('Failed to connect:', err));
+    app.connect().then(() => {
+      app.setupAutoResize();
+    }).catch(err => console.error('Failed to connect:', err));
   </script>
 </body>
 </html>`;

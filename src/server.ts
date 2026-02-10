@@ -1226,8 +1226,19 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
 
     mcpcat.track(server, mcpcatProjectId, {
       ...(enableReplay ? {} : {
-        // Redact all content when replay is disabled - only metadata is tracked
-        redactSensitiveInformation: async () => '[REDACTED]'
+        // Selectively redact sensitive values - keep metadata visible for debugging
+        redactSensitiveInformation: async (text: string) => {
+          // Redact JWT tokens (authorization header values)
+          if (/^eyJ[A-Za-z0-9_-]+\./.test(text)) return '[REDACTED_TOKEN]';
+          // Redact long random tokens/secrets (API keys, session tokens, etc.)
+          if (text.length > 64 && /^[A-Za-z0-9+/=_-]+$/.test(text)) return '[REDACTED_TOKEN]';
+          // Redact cookie values (key=value; pairs)
+          if (/^[^=]+=.+;/.test(text) && text.length > 30) return '[REDACTED_COOKIE]';
+          // Redact IP addresses
+          if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(,|$)/.test(text)) return '[REDACTED_IP]';
+          // Keep everything else: header metadata, tool names, arguments, errors, responses
+          return text;
+        }
       }),
       identify: async () => {
         if (identityFetched) return cachedIdentity;
