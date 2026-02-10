@@ -935,6 +935,21 @@ app.post("/mcp", async (req: Request, res: Response) => {
       return;
     }
 
+    // Session ID was provided but not found - return 404 per MCP spec
+    // This signals compliant clients to re-initialize automatically
+    if (sessionId) {
+      console.log(`Session not found: ${sessionId} (server may have restarted)`);
+      res.status(404).json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32001,
+          message: "Session not found",
+        },
+        id: req.body?.id ?? null,
+      });
+      return;
+    }
+
     // New session - requires authentication and must be initialization request
     if (!authToken) {
       res.status(401);
@@ -1104,11 +1119,11 @@ app.get("/mcp", async (req: Request, res: Response) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
   if (!sessionId || !sessions[sessionId]) {
-    res.status(400).json({
+    res.status(404).json({
       jsonrpc: "2.0",
       error: {
-        code: -32000,
-        message: "Invalid or missing session ID",
+        code: -32001,
+        message: "Session not found",
       },
       id: null,
     });
@@ -1142,11 +1157,11 @@ app.delete("/mcp", async (req: Request, res: Response) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
   if (!sessionId || !sessions[sessionId]) {
-    res.status(400).json({
+    res.status(404).json({
       jsonrpc: "2.0",
       error: {
-        code: -32000,
-        message: "Invalid or missing session ID",
+        code: -32001,
+        message: "Session not found",
       },
       id: null,
     });
