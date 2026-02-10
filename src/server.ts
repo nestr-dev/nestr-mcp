@@ -1239,8 +1239,9 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
             userName: user.profile?.fullName || user._id,
           };
           return cachedIdentity;
-        } catch {
-          // getCurrentUser requires OAuth token - silently skip for API key auth
+        } catch (err) {
+          // getCurrentUser requires OAuth token - may fail for API key auth
+          console.error('[MCPCat] identify failed:', err instanceof Error ? err.message : err);
           return null;
         }
       },

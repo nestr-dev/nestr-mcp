@@ -10,17 +10,12 @@ import { appResources } from "../apps/index.js";
 // MCP Apps UI metadata for tools that can render in the completable list app.
 // IMPORTANT: Only use for completable items (tasks, projects, todos, inbox items).
 // Do NOT use for structural nests like roles, circles, metrics, policies, etc.
-const completableListUi = {
-  ui: {
-    resourceUri: appResources.completableList.uri,
-    csp: { "img-src": ["https://mcp.nestr.io"] },
-  },
-};
+const completableListUi = { ui: { resourceUri: appResources.completableList.uri } };
 
 // Fields to keep for compact list responses (reduces token usage)
 const COMPACT_FIELDS = {
-  // Common fields for all nests
-  base: ["_id", "title", "purpose"],
+  // Common fields for all nests (includes fields needed by the completable list app)
+  base: ["_id", "title", "purpose", "completed", "labels", "path", "description", "due"],
   // Additional fields for roles
   role: ["accountabilities", "domains"],
   // Additional fields for users

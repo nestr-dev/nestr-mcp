@@ -566,7 +566,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
 <body>
   <div class="header">
     <a href="https://nestr.io" target="_blank" class="header-logo" title="Nestr">
-      <img src="https://mcp.nestr.io/logo.png" alt="Nestr" />
+      <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg"><circle cx="128" cy="128" r="120" fill="#4b44ee"/><circle cx="151" cy="151" r="62" fill="#fff"/></svg>
     </a>
     <h3 id="list-title">Completable Items</h3>
     <button class="refresh-btn" id="refresh-btn" title="Refresh">
@@ -1175,6 +1175,9 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
               nests = inner.items || [];
             } else if (Array.isArray(inner)) {
               nests = inner;
+            } else if (inner.data && Array.isArray(inner.data)) {
+              // Wrapped response: { status, meta, data: [...] }
+              nests = inner.data;
             } else {
               nests = inner.items || [];
             }
