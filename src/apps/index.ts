@@ -582,12 +582,12 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
   </div>
 
   <script type="module">
-    // MCP App SDK - simplified inline version for postMessage communication
+    // MCP App SDK - inline implementation of official MCP Apps protocol (2026-01-26)
     class McpApp {
       constructor() {
         this.pendingRequests = new Map();
         this.requestId = 0;
-        this.data = null;
+        this.hostContext = null;
 
         window.addEventListener('message', (event) => {
           this.handleMessage(event.data);
@@ -595,10 +595,10 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       }
 
       handleMessage(message) {
-        if (message.jsonrpc !== '2.0') return;
+        if (!message || message.jsonrpc !== '2.0') return;
 
         // Handle responses to our requests
-        if (message.id && this.pendingRequests.has(message.id)) {
+        if (message.id !== undefined && this.pendingRequests.has(message.id)) {
           const { resolve, reject } = this.pendingRequests.get(message.id);
           this.pendingRequests.delete(message.id);
 
@@ -610,11 +610,61 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
           return;
         }
 
-        // Handle notifications (like tool results)
-        if (message.method === 'notifications/toolResult') {
-          this.data = message.params?.result;
-          this.onDataReceived?.(this.data);
+        // Handle notifications from host (official MCP Apps protocol)
+        switch (message.method) {
+          case 'ui/notifications/tool-result':
+            // params is CallToolResult: { content: [...], isError?: boolean }
+            this.onToolResult?.(message.params);
+            break;
+          case 'ui/notifications/tool-input':
+            this.onToolInput?.(message.params);
+            break;
+          case 'ui/notifications/host-context-changed':
+            Object.assign(this.hostContext || {}, message.params);
+            break;
         }
+      }
+
+      // Initialize connection with host (required by MCP Apps protocol)
+      async connect() {
+        const id = ++this.requestId;
+
+        return new Promise((resolve) => {
+          this.pendingRequests.set(id, {
+            resolve: (result) => {
+              this.hostContext = result?.hostContext || null;
+
+              // Send initialized notification (required by protocol)
+              window.parent.postMessage({
+                jsonrpc: '2.0',
+                method: 'ui/notifications/initialized',
+                params: {}
+              }, '*');
+
+              resolve(result);
+            },
+            reject: () => resolve(null)
+          });
+
+          window.parent.postMessage({
+            jsonrpc: '2.0',
+            id,
+            method: 'ui/initialize',
+            params: {
+              appInfo: { name: 'Nestr Completable List', version: '1.0.0' },
+              appCapabilities: {},
+              protocolVersion: '2026-01-26'
+            }
+          }, '*');
+
+          // Timeout - don't fail, just continue without host context
+          setTimeout(() => {
+            if (this.pendingRequests.has(id)) {
+              this.pendingRequests.delete(id);
+              resolve(null);
+            }
+          }, 10000);
+        });
       }
 
       async callTool(name, args = {}) {
@@ -640,15 +690,26 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
         });
       }
 
-      async updateContext(content) {
+      async updateModelContext(content) {
         const id = ++this.requestId;
 
-        window.parent.postMessage({
-          jsonrpc: '2.0',
-          id,
-          method: 'context/update',
-          params: { content }
-        }, '*');
+        return new Promise((resolve) => {
+          this.pendingRequests.set(id, { resolve, reject: () => resolve(null) });
+
+          window.parent.postMessage({
+            jsonrpc: '2.0',
+            id,
+            method: 'ui/update-model-context',
+            params: { content }
+          }, '*');
+
+          setTimeout(() => {
+            if (this.pendingRequests.has(id)) {
+              this.pendingRequests.delete(id);
+              resolve(null);
+            }
+          }, 10000);
+        });
       }
     }
 
@@ -1085,31 +1146,11 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
             });
           } catch (err) {
             console.error('Failed to reorder:', err);
-            // Reload to get correct order
-            loadData();
+            // Re-render to revert visual order
+            render();
           }
         });
       });
-    }
-
-    async function loadData() {
-      appEl.innerHTML = '<div class="loading">Loading...</div>';
-
-      try {
-        // Try to get data from tool result notification first
-        // The host should send us the data via notifications/toolResult
-        // If we have initial data, use it
-        if (app.data) {
-          handleData(app.data);
-          return;
-        }
-
-        // Otherwise, we wait for data to be sent
-        app.onDataReceived = handleData;
-      } catch (err) {
-        console.error('Failed to load data:', err);
-        appEl.innerHTML = '<div class="empty-state">Failed to load items</div>';
-      }
     }
 
     function handleData(data) {
@@ -1164,8 +1205,8 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       btn.classList.add('loading');
 
       try {
-        // Request refresh via context update - the host should respond with fresh data
-        await app.updateContext({ action: 'refresh' });
+        // Request refresh via model context update - the host should respond with fresh data
+        await app.updateModelContext({ action: 'refresh' });
       } catch (err) {
         console.error('Failed to refresh:', err);
       } finally {
@@ -1174,8 +1215,10 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       }
     });
 
-    // Initialize
-    loadData();
+    // Initialize: connect to host via MCP Apps protocol, then listen for tool results
+    appEl.innerHTML = '<div class="loading">Loading...</div>';
+    app.onToolResult = handleData;
+    app.connect().catch(err => console.error('Failed to connect:', err));
   </script>
 </body>
 </html>`;

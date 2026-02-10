@@ -1236,7 +1236,7 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
           const user = await client.getCurrentUser();
           cachedIdentity = {
             userId: user._id,
-            userName: user.profile?.fullName || user.username,
+            userName: user.profile?.fullName || user._id,
           };
           return cachedIdentity;
         } catch {
