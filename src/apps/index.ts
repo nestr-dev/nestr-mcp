@@ -1331,7 +1331,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
 
       try {
         // Request refresh via model context update - the host should respond with fresh data
-        await app.updateModelContext({ action: 'refresh' });
+        await app.updateModelContext([{ type: 'text', text: 'User requested a refresh of the data.' }]);
       } catch (err) {
         console.error('Failed to refresh:', err);
       } finally {
