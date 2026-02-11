@@ -988,7 +988,12 @@ An interactive list for displaying and managing completable items (tasks and pro
 The tool response includes \`title\`, \`source\`, and \`items\`. The \`title\` is a descriptive label for the list. The \`source\` tells the app which reorder API to use (inbox items use a different endpoint than regular nests).
 
 **Fields:**
-- \`title\` - Header title for the list. The tool provides a default (e.g., "Inbox", "Projects") but you should provide a more descriptive title when context is available (e.g., "Inbox (32 items)", "Projects under Tech Lead", "Today's focus")
+- \`title\` - Header title for the list. **Always pass \`_listTitle\` when calling these tools** to set a short, descriptive title (2-5 words) that tells the user what they're looking at. Examples by context:
+  - **Children**: "Tasks for [parent name]" (e.g., "Tasks for Website Redesign")
+  - **Search**: Describe WHAT is shown, not the query (e.g., "Marketing projects", "Overdue tasks", "Urgent work")
+  - **Projects**: "[Context] projects" (e.g., "Engineering projects", "All active projects")
+  - **Inbox**: "Inbox" or "Inbox (N items)"
+  - **Daily plan**: "Today's focus" or "Daily plan"
 - \`source\` - Context identifier: \`inbox\`, \`daily-plan\`, \`children\`, \`projects\`, or \`search\`. Used by the app to route reorder actions correctly
 - \`items\` - Array of nests to display
   - \`_id\` - Required for all interactions

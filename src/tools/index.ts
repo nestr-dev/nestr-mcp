@@ -111,6 +111,7 @@ export const schemas = {
     query: z.string().describe("Search query"),
     limit: z.number().optional().describe("Max results per page. Omit on first call to see meta.total count."),
     page: z.number().optional().describe("Page number (1-indexed) for pagination"),
+    _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Marketing projects\", \"Overdue tasks\"). Omit for default."),
   }),
 
   getNest: z.object({
@@ -122,6 +123,7 @@ export const schemas = {
     nestId: z.string().describe("Parent nest ID"),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
+    _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Tasks for Website Redesign\"). Omit for default."),
   }),
 
   createNest: z.object({
@@ -198,6 +200,7 @@ export const schemas = {
     workspaceId: z.string().describe("Workspace ID"),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
+    _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Engineering projects\"). Omit for default."),
   }),
 
   getComments: z.object({
@@ -379,6 +382,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         limit: { type: "number", description: "Max results per page. Do NOT set on first call - let API return default with meta.total count showing total matches." },
         page: { type: "number", description: "Page number (1-indexed) for fetching additional pages" },
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for bulk/index operations." },
+        _listTitle: { type: "string", description: "Short descriptive title for the list UI header (2-4 words, e.g., \"Marketing projects\", \"Overdue tasks\", \"Urgent work\"). Describe WHAT is being shown, not the query syntax." },
       },
       required: ["workspaceId", "query"],
     },
@@ -407,6 +411,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for bulk/index operations." },
+        _listTitle: { type: "string", description: "Short descriptive title for the list UI header (e.g., \"Tasks for Website Redesign\", \"API project sub-tasks\"). Include the parent name for context." },
       },
       required: ["nestId"],
     },
@@ -593,6 +598,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large workspaces." },
+        _listTitle: { type: "string", description: "Short descriptive title for the list UI header (e.g., \"Engineering projects\", \"All projects\"). Omit for default." },
       },
       required: ["workspaceId"],
     },
@@ -916,7 +922,7 @@ async function _handleToolCall(
           parsed.query,
           { limit: parsed.limit, page: parsed.page, cleanText: true }
         );
-        return formatResult(completableResponse(compactResponse(results), "search", `Search: ${parsed.query}`));
+        return formatResult(completableResponse(compactResponse(results), "search", parsed._listTitle || `Search: ${parsed.query}`));
       }
 
       case "nestr_get_nest": {
@@ -935,7 +941,7 @@ async function _handleToolCall(
           page: parsed.page,
           cleanText: true,
         });
-        return formatResult(completableResponse(compactResponse(children), "children", "Sub-items"));
+        return formatResult(completableResponse(compactResponse(children), "children", parsed._listTitle || "Sub-items"));
       }
 
       case "nestr_create_nest": {
@@ -1045,7 +1051,7 @@ async function _handleToolCall(
           page: parsed.page,
           cleanText: true,
         });
-        return formatResult(completableResponse(compactResponse(projects), "projects", "Projects"));
+        return formatResult(completableResponse(compactResponse(projects), "projects", parsed._listTitle || "Projects"));
       }
 
       case "nestr_get_comments": {

@@ -68,6 +68,10 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       color: #333;
       margin: 0;
       flex: 1;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .refresh-btn {
@@ -597,6 +601,76 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       color: #999;
       padding: 32px;
     }
+
+    /* URL copy toast */
+    .url-toast {
+      position: fixed;
+      bottom: 16px;
+      left: 16px;
+      right: 16px;
+      background: #333;
+      color: #fff;
+      border-radius: 8px;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      z-index: 1000;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+      animation: slideUp 0.2s ease-out;
+      font-size: 13px;
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(100%); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .url-toast-text {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #adf;
+    }
+
+    .url-toast-btn {
+      flex-shrink: 0;
+      padding: 6px 12px;
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      background: #4b44ee;
+      color: white;
+      white-space: nowrap;
+    }
+
+    .url-toast-btn:hover {
+      background: #3d37c9;
+    }
+
+    .url-toast-close {
+      flex-shrink: 0;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      background: none;
+      color: #999;
+      cursor: pointer;
+      border-radius: 50%;
+      font-size: 16px;
+      line-height: 1;
+    }
+
+    .url-toast-close:hover {
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+    }
   </style>
 </head>
 <body>
@@ -760,7 +834,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
         const id = ++this.requestId;
 
         return new Promise((resolve) => {
-          this.pendingRequests.set(id, { resolve, reject: (err) => { console.error('McpApp openLink rejected:', err); resolve(null); } });
+          this.pendingRequests.set(id, { resolve, reject: (err) => { console.error('McpApp openLink rejected:', err); resolve({ isError: true }); } });
 
           window.parent.postMessage({
             jsonrpc: '2.0',
@@ -769,12 +843,13 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
             params: { url }
           }, '*');
 
+          // Short timeout - show copy fallback quickly if host doesn't support open-link
           setTimeout(() => {
             if (this.pendingRequests.has(id)) {
               this.pendingRequests.delete(id);
-              resolve(null);
+              resolve({ isError: true });
             }
-          }, 10000);
+          }, 2000);
         });
       }
 
@@ -864,8 +939,8 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       // No parent = no path
       if (!nest.parentId || !nest.path) return '';
       const parts = nest.path.split(' / ');
-      // Return just the last part (the role/circle name)
-      return parts[parts.length - 1] || '';
+      // path includes self as last element, so parent is second-to-last
+      return parts.length >= 2 ? parts[parts.length - 2] : '';
     }
 
     function getParentUrl(nest) {
@@ -1340,12 +1415,55 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       }
     });
 
-    // Open links via host (sandbox doesn't allow popups)
-    document.addEventListener('click', (e) => {
+    // URL copy toast fallback
+    function showUrlToast(url) {
+      // Remove any existing toast
+      document.querySelector('.url-toast')?.remove();
+
+      const toast = document.createElement('div');
+      toast.className = 'url-toast';
+      toast.innerHTML = \`
+        <span class="url-toast-text">\${escapeHtml(url)}</span>
+        <button class="url-toast-btn" data-copy-url>Copy link</button>
+        <button class="url-toast-close" data-close-toast>&times;</button>
+      \`;
+
+      toast.querySelector('[data-copy-url]').addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(url);
+          toast.querySelector('[data-copy-url]').textContent = 'Copied!';
+          setTimeout(() => toast.remove(), 1500);
+        } catch {
+          // Clipboard API may also be blocked in sandbox - select the text instead
+          const range = document.createRange();
+          range.selectNodeContents(toast.querySelector('.url-toast-text'));
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      });
+
+      toast.querySelector('[data-close-toast]').addEventListener('click', () => toast.remove());
+
+      document.body.appendChild(toast);
+      // Auto-dismiss after 8 seconds
+      setTimeout(() => toast.remove(), 8000);
+    }
+
+    // Open links via host, with copy fallback
+    document.addEventListener('click', async (e) => {
       const el = e.target.closest('[data-href]');
       if (el) {
         e.preventDefault();
-        app.openLink(el.dataset.href).catch(err => console.error('Failed to open link:', err));
+        const url = el.dataset.href;
+        try {
+          const result = await app.openLink(url);
+          if (result && result.isError) {
+            showUrlToast(url);
+          }
+        } catch {
+          showUrlToast(url);
+        }
       }
     });
 
