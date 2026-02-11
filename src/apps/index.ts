@@ -76,18 +76,18 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       color: #666;
     }
 
-    .refresh-btn.loading {
+    .refresh-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .refresh-btn.loading svg {
       animation: spin 1s linear infinite;
     }
 
     @keyframes spin {
       from { transform: rotate(0deg); }
       to { transform: rotate(360deg); }
-    }
-
-    .refresh-btn svg {
-      width: 16px;
-      height: 16px;
     }
 
     .nest-list {
@@ -102,6 +102,8 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       gap: 10px;
       cursor: grab;
       transition: background 0.15s;
+      -webkit-user-select: none;
+      user-select: none;
     }
 
     .nest-item:hover {
@@ -232,15 +234,26 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
     .nest-title:focus {
       text-decoration: none;
       border-color: #4b44ee;
+      -webkit-user-select: text;
+      user-select: text;
     }
 
     .nest-path {
       font-size: 13px;
       color: #999;
       margin-top: 1px;
+      min-height: 1.2em;
+    }
+
+    a.nest-path {
       text-decoration: underline;
       text-decoration-color: #ddd;
       text-underline-offset: 3px;
+    }
+
+    a.nest-path:hover {
+      color: #666;
+      text-decoration-color: #999;
     }
 
     /* Due date button */
@@ -508,6 +521,8 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       font-size: 13px;
       line-height: 1.5;
       outline: none;
+      -webkit-user-select: text;
+      user-select: text;
     }
 
     .desc-content:empty::before {
@@ -570,7 +585,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
     <a href="https://nestr.io" target="_blank" class="header-logo" title="Nestr">
       <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg"><circle cx="128" cy="128" r="120" fill="#4b44ee"/><circle cx="151" cy="151" r="62" fill="#fff"/></svg>
     </a>
-    <h3 id="list-title">Completable Items</h3>
+    <h3 id="list-title">Nestr work</h3>
     <button class="refresh-btn" id="refresh-btn" title="Refresh">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M23 4v6h-6"></path>
@@ -605,6 +620,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
           this.pendingRequests.delete(message.id);
 
           if (message.error) {
+            console.error('McpApp error response:', message.method || message.id, message.error);
             reject(new Error(message.error.message));
           } else {
             resolve(message.result);
@@ -645,7 +661,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
 
               resolve(result);
             },
-            reject: () => resolve(null)
+            reject: (err) => { console.error('McpApp connect rejected:', err); resolve(null); }
           });
 
           window.parent.postMessage({
@@ -723,7 +739,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
         const id = ++this.requestId;
 
         return new Promise((resolve) => {
-          this.pendingRequests.set(id, { resolve, reject: () => resolve(null) });
+          this.pendingRequests.set(id, { resolve, reject: (err) => { console.error('McpApp updateModelContext rejected:', err); resolve(null); } });
 
           window.parent.postMessage({
             jsonrpc: '2.0',
@@ -747,6 +763,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
     const titleEl = document.getElementById('list-title');
 
     let nests = [];
+    let source = null; // tracks which context we're in (inbox, daily-plan, children, projects, search)
     let draggedItem = null;
 
     // System labels that define structure (not categorization)
@@ -798,11 +815,22 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       return date.toISOString().slice(0, 16);
     }
 
-    function getParentTitle(path) {
-      if (!path) return '';
-      const parts = path.split(' / ');
+    function getParentTitle(nest) {
+      // Show "Inbox" for inbox items (parentId is case-insensitive 'inbox')
+      if (nest.parentId && nest.parentId.toLowerCase() === 'inbox') return 'Inbox';
+      // No parent = no path
+      if (!nest.parentId || !nest.path) return '';
+      const parts = nest.path.split(' / ');
       // Return just the last part (the role/circle name)
       return parts[parts.length - 1] || '';
+    }
+
+    function getParentUrl(nest) {
+      if (!nest.ancestors || nest.ancestors.length < 2) return null;
+      // Link to the parent nest in context of its parent: /n/{grandparent}/{parent}
+      const grandparent = nest.ancestors[nest.ancestors.length - 2];
+      const parent = nest.ancestors[nest.ancestors.length - 1];
+      return \`https://app.nestr.io/n/\${grandparent}/\${parent}\`;
     }
 
     function isProject(nest) {
@@ -845,7 +873,9 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
                      contenteditable="true"
                      data-id="\${nest._id}"
                      data-original="\${escapeHtml(nest.title)}">\${escapeHtml(nest.title)}</div>
-                <div class="nest-path">\${escapeHtml(getParentTitle(nest.path))}</div>
+                \${getParentUrl(nest)
+                  ? \`<a href="\${getParentUrl(nest)}" target="_blank" class="nest-path">\${escapeHtml(getParentTitle(nest))}</a>\`
+                  : \`<div class="nest-path">\${escapeHtml(getParentTitle(nest))}</div>\`}
                 <div class="desc-editor" data-id="\${nest._id}">
                   <div class="desc-editor-wrap">
                     <div class="desc-toolbar">
@@ -1121,11 +1151,22 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
         });
       });
 
-      // Drag and drop
+      // Drag and drop - clear selection on mousedown to prevent text selection blocking drag
       document.querySelectorAll('.nest-item').forEach(el => {
+        el.addEventListener('mousedown', (e) => {
+          // Don't interfere if clicking into an already-focused editable field
+          const editable = e.target.closest('.nest-title') || e.target.closest('.desc-content');
+          if (editable && document.activeElement === editable) return;
+          window.getSelection().removeAllRanges();
+        });
+
         el.addEventListener('dragstart', (e) => {
-          draggedItem = e.target;
-          e.target.classList.add('dragging');
+          window.getSelection().removeAllRanges();
+          // Blur any focused title so it doesn't block drag
+          const focused = document.querySelector('.nest-title:focus');
+          if (focused) focused.blur();
+          draggedItem = e.target.closest('.nest-item');
+          draggedItem.classList.add('dragging');
           e.dataTransfer.effectAllowed = 'move';
         });
 
@@ -1167,8 +1208,11 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
           render();
 
           try {
-            // API position: 'before' since visual shows line at top of target
-            await app.callTool('nestr_reorder_nest', {
+            // Use inbox-specific reorder for inbox/daily-plan sources, generic for others
+            const reorderTool = source === 'inbox'
+              ? 'nestr_reorder_inbox_item'
+              : 'nestr_reorder_nest';
+            await app.callTool(reorderTool, {
               nestId: draggedId,
               position: 'before',
               relatedNestId: targetId
@@ -1198,6 +1242,10 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
           const textContent = parsed.content.find(c => c.type === 'text');
           if (textContent) {
             const inner = JSON.parse(textContent.text);
+            // Extract source context for reorder routing
+            if (inner.source) {
+              source = inner.source;
+            }
             // Check if it has title and items
             if (inner.title) {
               titleEl.textContent = inner.title;
@@ -1213,6 +1261,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
           }
         } else if (parsed.title !== undefined || parsed.items !== undefined) {
           // Object with optional title and items
+          if (parsed.source) source = parsed.source;
           if (parsed.title) {
             titleEl.textContent = parsed.title;
           }

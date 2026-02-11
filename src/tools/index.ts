@@ -12,10 +12,31 @@ import { appResources } from "../apps/index.js";
 // Do NOT use for structural nests like roles, circles, metrics, policies, etc.
 const completableListUi = { ui: { resourceUri: appResources.completableList.uri } };
 
+// Sources for the completable list app - tells the UI which reorder API to use
+type CompletableSource = "inbox" | "daily-plan" | "children" | "projects" | "search";
+
+// Wrap a compacted response with title and source for the completable list app
+function completableResponse(
+  data: unknown,
+  source: CompletableSource,
+  title: string,
+): { title: string; source: CompletableSource; items: unknown[] } {
+  // Extract items array from different response shapes
+  let items: unknown[];
+  if (Array.isArray(data)) {
+    items = data;
+  } else if (data && typeof data === "object" && "data" in data && Array.isArray((data as { data: unknown[] }).data)) {
+    items = (data as { data: unknown[] }).data;
+  } else {
+    items = [];
+  }
+  return { title, source, items };
+}
+
 // Fields to keep for compact list responses (reduces token usage)
 const COMPACT_FIELDS = {
   // Common fields for all nests (includes fields needed by the completable list app)
-  base: ["_id", "title", "purpose", "completed", "labels", "path", "description", "due"],
+  base: ["_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description", "due"],
   // Additional fields for roles
   role: ["accountabilities", "domains"],
   // Additional fields for users
@@ -235,6 +256,12 @@ export const schemas = {
 
   reorderInbox: z.object({
     nestIds: z.array(z.string()).describe("Array of inbox item IDs in the desired order"),
+  }),
+
+  reorderInboxItem: z.object({
+    nestId: z.string().describe("ID of the inbox item to reorder"),
+    position: z.enum(["before", "after"]).describe("Position relative to the reference item"),
+    relatedNestId: z.string().describe("ID of the reference inbox item to position relative to"),
   }),
 
   // Personal labels (require OAuth token)
@@ -713,6 +740,19 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       required: ["nestIds"],
     },
   },
+  {
+    name: "nestr_reorder_inbox_item",
+    description: "Reorder a single inbox item by positioning it before or after another inbox item. Requires OAuth token.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the inbox item to reorder" },
+        position: { type: "string", enum: ["before", "after"], description: "Position relative to the reference item" },
+        relatedNestId: { type: "string", description: "ID of the reference inbox item to position relative to" },
+      },
+      required: ["nestId", "position", "relatedNestId"],
+    },
+  },
   // Personal labels (require OAuth token - user's own labels, not workspace labels)
   {
     name: "nestr_list_personal_labels",
@@ -876,7 +916,7 @@ async function _handleToolCall(
           parsed.query,
           { limit: parsed.limit, page: parsed.page, cleanText: true }
         );
-        return formatResult(compactResponse(results));
+        return formatResult(completableResponse(compactResponse(results), "search", `Search: ${parsed.query}`));
       }
 
       case "nestr_get_nest": {
@@ -895,7 +935,7 @@ async function _handleToolCall(
           page: parsed.page,
           cleanText: true,
         });
-        return formatResult(compactResponse(children));
+        return formatResult(completableResponse(compactResponse(children), "children", "Sub-items"));
       }
 
       case "nestr_create_nest": {
@@ -1005,7 +1045,7 @@ async function _handleToolCall(
           page: parsed.page,
           cleanText: true,
         });
-        return formatResult(compactResponse(projects));
+        return formatResult(completableResponse(compactResponse(projects), "projects", "Projects"));
       }
 
       case "nestr_get_comments": {
@@ -1064,7 +1104,7 @@ async function _handleToolCall(
         const items = await client.listInbox({
           completedAfter: parsed.completedAfter,
         });
-        return formatResult(compactResponse(items));
+        return formatResult(completableResponse(compactResponse(items), "inbox", "Inbox"));
       }
 
       case "nestr_create_inbox_item": {
@@ -1097,6 +1137,16 @@ async function _handleToolCall(
         const parsed = schemas.reorderInbox.parse(args);
         const result = await client.reorderInbox(parsed.nestIds);
         return formatResult({ message: "Inbox items reordered successfully", items: result });
+      }
+
+      case "nestr_reorder_inbox_item": {
+        const parsed = schemas.reorderInboxItem.parse(args);
+        const result = await client.reorderInboxItem(
+          parsed.nestId,
+          parsed.position,
+          parsed.relatedNestId
+        );
+        return formatResult({ message: "Inbox item reordered successfully", nest: result });
       }
 
       // Personal labels (require OAuth token)
@@ -1138,7 +1188,7 @@ async function _handleToolCall(
       case "nestr_get_daily_plan": {
         schemas.getDailyPlan.parse(args);
         const items = await client.getDailyPlan();
-        return formatResult(compactResponse(items));
+        return formatResult(completableResponse(compactResponse(items), "daily-plan", "Daily Plan"));
       }
 
       default:

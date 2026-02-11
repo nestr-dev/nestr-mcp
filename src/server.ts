@@ -983,25 +983,11 @@ An interactive list for displaying and managing completable items (tasks and pro
 
 #### Data Format
 
-Send data in this format:
-\`\`\`json
-{
-  "title": "Daily Plan",
-  "items": [
-    {
-      "_id": "nestId",
-      "title": "Task title",
-      "description": "<p>HTML description</p>",
-      "path": "Workspace / Circle / Role",
-      "labels": ["project"],
-      "completed": false
-    }
-  ]
-}
-\`\`\`
+The tool response includes \`title\`, \`source\`, and \`items\`. The \`title\` is a descriptive label for the list. The \`source\` tells the app which reorder API to use (inbox items use a different endpoint than regular nests).
 
 **Fields:**
-- \`title\` - Header title for the list (e.g., "Daily Plan", "Inbox", "Projects under Developer")
+- \`title\` - Header title for the list. The tool provides a default (e.g., "Inbox", "Projects") but you should provide a more descriptive title when context is available (e.g., "Inbox (32 items)", "Projects under Tech Lead", "Today's focus")
+- \`source\` - Context identifier: \`inbox\`, \`daily-plan\`, \`children\`, \`projects\`, or \`search\`. Used by the app to route reorder actions correctly
 - \`items\` - Array of nests to display
   - \`_id\` - Required for all interactions
   - \`title\` - Display text (editable in UI)
@@ -1017,7 +1003,7 @@ The app provides:
 - **Title editing**: Click title to edit inline (calls \`nestr_update_nest\`)
 - **Description editing**: Click document icon to open rich text editor with bold, italic, lists (calls \`nestr_update_nest\`)
 - **Due date**: Click calendar icon to set/change due date (calls \`nestr_update_nest\`)
-- **Drag-drop reordering**: Drag items to reorder (calls \`nestr_reorder_nest\`)
+- **Drag-drop reordering**: Drag items to reorder (calls \`nestr_reorder_nest\` for regular nests, \`nestr_reorder_inbox_item\` for inbox items)
 - **Quick link**: Opens item in Nestr web app
 - **Refresh button**: User can request fresh data
 

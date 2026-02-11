@@ -726,6 +726,22 @@ export class NestrClient {
   }
 
   /**
+   * Reorder a single inbox item by positioning it before or after another inbox item.
+   * Requires OAuth token.
+   */
+  async reorderInboxItem(
+    nestId: string,
+    position: "before" | "after",
+    relatedNestId: string
+  ): Promise<Nest & { searchOrder?: number; order?: number }> {
+    const response = await this.fetch<{ status: string; data: Nest & { searchOrder?: number; order?: number } }>(
+      `/users/me/inbox/${nestId}/reorder/${position}/${relatedNestId}`,
+      { method: "POST" }
+    );
+    return response.data;
+  }
+
+  /**
    * Reorder inbox items by providing an array of item IDs in the desired order.
    * Requires OAuth token.
    */
