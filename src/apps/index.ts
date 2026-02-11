@@ -55,6 +55,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       text-decoration: none;
       width: 28px;
       flex-shrink: 0;
+      cursor: pointer;
     }
 
     .header-logo img {
@@ -266,6 +267,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       text-decoration: underline;
       text-decoration-color: #ddd;
       text-underline-offset: 3px;
+      cursor: pointer;
     }
 
     a.nest-path:hover {
@@ -600,9 +602,9 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
 <body>
 <div class="scroll-container">
   <div class="header">
-    <a href="https://nestr.io" target="_blank" class="header-logo" title="Nestr">
+    <div class="header-logo" data-href="https://nestr.io" title="Nestr">
       <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg"><circle cx="128" cy="128" r="120" fill="#4b44ee"/><circle cx="151" cy="151" r="62" fill="#fff"/></svg>
-    </a>
+    </div>
     <h3 id="list-title">Nestr work</h3>
     <button class="refresh-btn" id="refresh-btn" title="Refresh">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -754,6 +756,28 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
         return () => observer.disconnect();
       }
 
+      async openLink(url) {
+        const id = ++this.requestId;
+
+        return new Promise((resolve) => {
+          this.pendingRequests.set(id, { resolve, reject: (err) => { console.error('McpApp openLink rejected:', err); resolve(null); } });
+
+          window.parent.postMessage({
+            jsonrpc: '2.0',
+            id,
+            method: 'ui/open-link',
+            params: { url }
+          }, '*');
+
+          setTimeout(() => {
+            if (this.pendingRequests.has(id)) {
+              this.pendingRequests.delete(id);
+              resolve(null);
+            }
+          }, 10000);
+        });
+      }
+
       async updateModelContext(content) {
         const id = ++this.requestId;
 
@@ -895,7 +919,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
                      data-id="\${nest._id}"
                      data-original="\${escapeHtml(nest.title)}">\${nest.title}</div>
                 \${getParentUrl(nest)
-                  ? \`<a href="\${getParentUrl(nest)}" target="_blank" class="nest-path">\${escapeHtml(getParentTitle(nest))}</a>\`
+                  ? \`<a data-href="\${getParentUrl(nest)}" class="nest-path">\${escapeHtml(getParentTitle(nest))}</a>\`
                   : \`<div class="nest-path">\${escapeHtml(getParentTitle(nest))}</div>\`}
                 <div class="desc-editor" data-id="\${nest._id}">
                   <div class="desc-editor-wrap">
@@ -936,8 +960,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
                 \${docIcon}
                 <span class="desc-tooltip"><span class="desc-tooltip-text">\${nest.description ? escapeHtml(nest.description) : 'Add description'}</span></span>
               </button>
-              <a href="https://app.nestr.io/n/\${nest._id}"
-                 target="_blank"
+              <a data-href="https://app.nestr.io/n/\${nest._id}"
                  class="nest-link"
                  title="Open in Nestr">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1314,6 +1337,15 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       } finally {
         // Remove loading state after a short delay (host should send new data)
         setTimeout(() => btn.classList.remove('loading'), 2000);
+      }
+    });
+
+    // Open links via host (sandbox doesn't allow popups)
+    document.addEventListener('click', (e) => {
+      const el = e.target.closest('[data-href]');
+      if (el) {
+        e.preventDefault();
+        app.openLink(el.dataset.href).catch(err => console.error('Failed to open link:', err));
       }
     });
 
