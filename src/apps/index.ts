@@ -22,18 +22,30 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       font-size: 16px;
       color: #1a1a1a;
       background: #fff;
-      padding: 16px;
-      max-height: 1000px;
+      margin: 0;
+      padding: 0;
+    }
+
+    .scroll-container {
+      max-height: 750px;
       overflow-y: auto;
+      overscroll-behavior: none;
     }
 
     .header {
       display: flex;
       align-items: center;
       gap: 10px;
-      margin-bottom: 12px;
-      padding-bottom: 8px;
-      padding-left: 8px;
+      padding: 16px 26px;
+      position: sticky;
+      top: 0;
+      background: #fff;
+      z-index: 10;
+      transition: box-shadow 0.2s;
+    }
+
+    .header.scrolled {
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     }
 
     .header-logo {
@@ -88,6 +100,10 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
     @keyframes spin {
       from { transform: rotate(0deg); }
       to { transform: rotate(360deg); }
+    }
+
+    #app {
+      padding: 0 16px 16px 16px;
     }
 
     .nest-list {
@@ -229,6 +245,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       text-decoration-style: dashed;
       text-decoration-color: #ccc;
       text-underline-offset: 3px;
+      cursor: text;
     }
 
     .nest-title:focus {
@@ -581,6 +598,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
   </style>
 </head>
 <body>
+<div class="scroll-container">
   <div class="header">
     <a href="https://nestr.io" target="_blank" class="header-logo" title="Nestr">
       <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg"><circle cx="128" cy="128" r="120" fill="#4b44ee"/><circle cx="151" cy="151" r="62" fill="#fff"/></svg>
@@ -597,6 +615,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
   <div id="app">
     <div class="loading">Loading...</div>
   </div>
+</div>
 
   <script type="module">
     // MCP App SDK - inline implementation of official MCP Apps protocol (2026-01-26)
@@ -709,7 +728,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
       }
 
       sendSizeChanged() {
-        const height = Math.min(document.documentElement.scrollHeight, 1000);
+        const height = Math.min(document.documentElement.scrollHeight, 750);
         const width = document.documentElement.scrollWidth;
         window.parent.postMessage({
           jsonrpc: '2.0',
@@ -826,11 +845,13 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
     }
 
     function getParentUrl(nest) {
+      // No link for inbox items
+      if (nest.parentId && nest.parentId.toLowerCase() === 'inbox') return null;
+      // ancestors order: [self, parent, grandparent, ...] - need at least 2 for context link
       if (!nest.ancestors || nest.ancestors.length < 2) return null;
-      // Link to the parent nest in context of its parent: /n/{grandparent}/{parent}
-      const grandparent = nest.ancestors[nest.ancestors.length - 2];
-      const parent = nest.ancestors[nest.ancestors.length - 1];
-      return \`https://app.nestr.io/n/\${grandparent}/\${parent}\`;
+      const self = nest.ancestors[0];
+      const parent = nest.ancestors[1];
+      return \`https://app.nestr.io/n/\${parent}/\${self}\`;
     }
 
     function isProject(nest) {
@@ -872,7 +893,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
                 <div class="nest-title"
                      contenteditable="true"
                      data-id="\${nest._id}"
-                     data-original="\${escapeHtml(nest.title)}">\${escapeHtml(nest.title)}</div>
+                     data-original="\${escapeHtml(nest.title)}">\${nest.title}</div>
                 \${getParentUrl(nest)
                   ? \`<a href="\${getParentUrl(nest)}" target="_blank" class="nest-path">\${escapeHtml(getParentTitle(nest))}</a>\`
                   : \`<div class="nest-path">\${escapeHtml(getParentTitle(nest))}</div>\`}
@@ -964,10 +985,10 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
         el.addEventListener('blur', async (e) => {
           const id = e.target.dataset.id;
           const original = e.target.dataset.original;
-          const newTitle = e.target.textContent.trim();
+          const newTitle = e.target.innerHTML.trim();
 
-          if (newTitle === original || !newTitle) {
-            e.target.textContent = original;
+          if (newTitle === original || !e.target.textContent.trim()) {
+            e.target.innerHTML = original;
             return;
           }
 
@@ -983,7 +1004,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
           } catch (err) {
             console.error('Failed to update title:', err);
             if (nest) nest.title = original;
-            e.target.textContent = original;
+            e.target.innerHTML = original;
             e.target.dataset.original = original;
           }
         });
@@ -994,7 +1015,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
             e.target.blur();
           }
           if (e.key === 'Escape') {
-            e.target.textContent = e.target.dataset.original;
+            e.target.innerHTML = e.target.dataset.original;
             e.target.blur();
           }
         });
@@ -1294,6 +1315,12 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
         // Remove loading state after a short delay (host should send new data)
         setTimeout(() => btn.classList.remove('loading'), 2000);
       }
+    });
+
+    // Sticky header shadow on scroll
+    const scrollContainer = document.querySelector('.scroll-container');
+    scrollContainer.addEventListener('scroll', () => {
+      document.querySelector('.header').classList.toggle('scrolled', scrollContainer.scrollTop > 0);
     });
 
     // Initialize: connect to host via MCP Apps protocol, then listen for tool results

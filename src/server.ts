@@ -972,7 +972,7 @@ Nestr provides interactive UI components that can be embedded in MCP clients tha
 
 **Resource URI:** \`ui://nestr/completable-list\`
 
-An interactive list for displaying and managing completable items (tasks and projects). Use this when you want to give users a rich, interactive experience for managing their work.
+An interactive list for displaying and managing completable items (tasks and projects). **Prefer using the app over listing items in text.** The app lets users check off, edit, reorder, and manage items directly — no need to also repeat items in text unless the user specifically asks for a text summary.
 
 #### When to Use
 
@@ -980,6 +980,8 @@ An interactive list for displaying and managing completable items (tasks and pro
 - Displaying search results for completable items
 - Listing projects under a role or circle
 - Any time users might want to check off, edit, or reorder items
+
+**Important:** When the tool result feeds the app, do NOT also list the items as text in your response. Simply confirm the action (e.g., "Here's your inbox" or "Here's your daily plan") and let the app handle the display. Users can ask to see items as text if they prefer.
 
 #### Data Format
 
@@ -1214,10 +1216,13 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
       ...(enableReplay ? {} : {
         // Selectively redact sensitive values - keep metadata visible for debugging
         redactSensitiveInformation: async (text: string) => {
+          // Redact Bearer token headers
+          if (/^Bearer\s+/i.test(text)) return '[REDACTED_BEARER]';
           // Redact JWT tokens (authorization header values)
           if (/^eyJ[A-Za-z0-9_-]+\./.test(text)) return '[REDACTED_TOKEN]';
-          // Redact long random tokens/secrets (API keys, session tokens, etc.)
-          if (text.length > 64 && /^[A-Za-z0-9+/=_-]+$/.test(text)) return '[REDACTED_TOKEN]';
+          // Redact long random tokens/secrets (API keys, session tokens, hex tokens, etc.)
+          if (text.length >= 32 && /^[A-Fa-f0-9]+$/.test(text)) return '[REDACTED_TOKEN]';
+          if (text.length >= 32 && /^[A-Za-z0-9+/=_-]+$/.test(text)) return '[REDACTED_TOKEN]';
           // Redact cookie values (key=value; pairs)
           if (/^[^=]+=.+;/.test(text) && text.length > 30) return '[REDACTED_COOKIE]';
           // Redact IP addresses
@@ -1226,15 +1231,17 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
           return text;
         }
       }),
-      identify: async () => {
+      identify: async (request: any, extra: any) => {
         if (identityFetched) return cachedIdentity;
         identityFetched = true;
         try {
+          console.log('[MCPCat] identify called, fetching user...');
           const user = await client.getCurrentUser();
           cachedIdentity = {
             userId: user._id,
             userName: user.profile?.fullName || user._id,
           };
+          console.log('[MCPCat] identify success:', cachedIdentity.userName);
           return cachedIdentity;
         } catch (err) {
           // getCurrentUser requires OAuth token - may fail for API key auth
