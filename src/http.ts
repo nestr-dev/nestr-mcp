@@ -927,6 +927,12 @@ app.post("/mcp", async (req: Request, res: Response) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   const authToken = getAuthToken(req);
 
+  // Strip sensitive headers so they don't leak into MCP SDK's extra.requestInfo
+  // (which MCPCat and other middleware can capture)
+  delete req.headers.authorization;
+  delete req.headers["x-nestr-api-key"];
+  delete req.headers.cookie;
+
   try {
     // Check for existing session
     if (sessionId && sessions[sessionId]) {
@@ -1117,6 +1123,9 @@ app.post("/mcp", async (req: Request, res: Response) => {
  */
 app.get("/mcp", async (req: Request, res: Response) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
+  delete req.headers.authorization;
+  delete req.headers["x-nestr-api-key"];
+  delete req.headers.cookie;
 
   if (!sessionId || !sessions[sessionId]) {
     res.status(404).json({
@@ -1155,6 +1164,9 @@ app.get("/mcp", async (req: Request, res: Response) => {
  */
 app.delete("/mcp", async (req: Request, res: Response) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
+  delete req.headers.authorization;
+  delete req.headers["x-nestr-api-key"];
+  delete req.headers.cookie;
 
   if (!sessionId || !sessions[sessionId]) {
     res.status(404).json({
