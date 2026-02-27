@@ -265,6 +265,18 @@ The server exposes these tools to AI assistants:
 | `nestr_get_daily_plan` | `GET /users/me/today` (OAuth only) |
 | `nestr_reorder_nest` | `POST /nests/{id}/reorder/{position}/{relatedId}` |
 | `nestr_bulk_reorder` | `PATCH /workspaces/{id}/reorder` |
+| `nestr_create_tension` | `POST /nests/{id}/tensions` |
+| `nestr_get_tension` | `GET /nests/{id}/tensions/{tid}` |
+| `nestr_list_tensions` | `GET /nests/{id}/tensions` |
+| `nestr_update_tension` | `PATCH /nests/{id}/tensions/{tid}` |
+| `nestr_delete_tension` | `DELETE /nests/{id}/tensions/{tid}` |
+| `nestr_get_tension_parts` | `GET /nests/{id}/tensions/{tid}/parts` |
+| `nestr_add_tension_part` | `POST/PATCH/DELETE /nests/{id}/tensions/{tid}/parts` |
+| `nestr_modify_tension_part` | `PATCH /nests/{id}/tensions/{tid}/parts/{pid}` |
+| `nestr_remove_tension_part` | `DELETE /nests/{id}/tensions/{tid}/parts/{pid}` |
+| `nestr_get_tension_changes` | `GET /nests/{id}/tensions/{tid}/parts/{pid}/changes` |
+| `nestr_get_tension_status` | `GET /nests/{id}/tensions/{tid}/status` |
+| `nestr_update_tension_status` | `PATCH /nests/{id}/tensions/{tid}/status` |
 
 ## Adding a New Tool
 
@@ -347,6 +359,26 @@ An interactive list for completing tasks and projects. Features:
 - Users authenticate via:
   - `X-Nestr-API-Key` header (API key)
   - `Authorization: Bearer <token>` header (OAuth token)
+
+### JSON Response Mode (non-streaming)
+
+By default, the MCP endpoint returns responses as SSE streams (`text/event-stream`). For integrations that prefer plain JSON (e.g., curl-based scripts, shell-based AI agents), send `Accept: application/json` **without** `text/event-stream` on the initialization request:
+
+```bash
+# SSE streaming (default)
+curl -X POST https://mcp.nestr.io/mcp \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"initialize",...}'
+
+# Plain JSON responses (no SSE parsing needed)
+curl -X POST https://mcp.nestr.io/mcp \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"initialize",...}'
+```
+
+The response mode is determined at session initialization and applies for the lifetime of the session. In JSON mode, responses are plain JSON-RPC objects instead of SSE-wrapped `event: message\ndata: {...}` format.
 
 ## Testing
 

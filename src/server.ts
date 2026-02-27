@@ -231,9 +231,20 @@ When in doubt with \`custom\`, explain concepts in plain language rather than as
 Nestr uses different formats for different fields:
 
 - **\`title\`**: Plain text only. HTML tags are stripped. Keep titles concise.
-- **\`purpose\`, \`description\`**: HTML supported. Use basic tags: \`<b>\`, \`<i>\`, \`<code>\`, \`<ul>\`, \`<ol>\`, \`<li>\`, \`<a href="...">\`, \`<br>\`, \`<img src="...">\` (including base64 data URIs). Markdown is NOT supported (will display as literal text).
+- **\`purpose\`, \`description\`**: HTML supported. Use basic tags: \`<b>\`, \`<i>\`, \`<code>\`, \`<ul>\`, \`<ol>\`, \`<li>\`, \`<a href="...">\`, \`<br>\`, \`<img src="...">\` (including base64 data URIs). **Markdown is NOT supported** — it will display as literal text (e.g., \`**bold**\` renders as the string \`**bold**\`, not bold text).
 - **Comment \`body\`**: HTML supported (same as above, including base64 images). Use \`@username\` for mentions.
 - **\`data.botContext\`**: Plain text. Stored as-is for AI context persistence, not rendered in UI.
+
+**Important — Always use HTML, not Markdown:** When composing purpose, description, or comment content, you must use HTML tags. This is a common mistake for AI agents that default to Markdown syntax.
+
+| Instead of (Markdown) | Use (HTML) |
+|----------------------|------------|
+| \`**bold text**\` | \`<b>bold text</b>\` |
+| \`*italic text*\` | \`<i>italic text</i>\` |
+| \`- list item\` | \`<ul><li>list item</li></ul>\` |
+| \`1. numbered item\` | \`<ol><li>numbered item</li></ol>\` |
+| \`[link text](url)\` | \`<a href="url">link text</a>\` |
+| \`\\n\\n\` (double newline) | \`<br>\` |
 
 **Example HTML in purpose:**
 \`\`\`html
@@ -468,6 +479,121 @@ User: "Can you refactor our authentication module to use JWT?"
 6. Post final summary to project when all done
 \`\`\`
 
+## Tensions & Governance Proposals
+
+Tensions are the fuel for organisational change. The tensions API enables structured governance proposals, elections, and other decisions to be created, reviewed, and processed asynchronously.
+
+### When to Use Tensions vs Regular Nest Tools
+
+Use **tension tools** (\`nestr_create_tension\`, \`nestr_add_tension_part\`, etc.) when:
+- Proposing governance changes: new roles, circles, accountabilities, domains, or policies
+- Processing elections (assigning someone to a role via a formal proposal)
+- Any change that should go through the consent/voting process
+
+Use **regular nest tools** (\`nestr_create_nest\`, \`nestr_update_nest\`) for:
+- Operational work: tasks, projects, actions
+- Direct updates that don't require consent (e.g., updating your own role's projects)
+
+### Tension Workflow
+
+1. **Create a tension** on the relevant circle: \`nestr_create_tension\` with a title describing the gap between current reality and desired state.
+
+2. **Add proposal parts** using \`nestr_add_tension_part\`:
+   - **New governance item**: Provide title and labels (e.g., \`["role"]\`, \`["policy"]\`). For roles, include accountabilities and/or domains.
+   - **Change existing item**: Provide the \`_id\` of the existing governance item plus fields to change.
+   - **Remove existing item**: Provide the \`_id\` and set \`removeNest: true\`.
+
+3. **Review changes** with \`nestr_get_tension_changes\` to see the namespaced diff (what will actually change if accepted).
+
+4. **Submit for voting** with \`nestr_update_tension_status\` set to \`"proposed"\`. This triggers the async consent process — circle members are notified and can accept or object.
+
+5. **Monitor status** with \`nestr_get_tension_status\` to see per-user voting responses.
+
+### Elections
+
+Elections (assigning or re-assigning someone to a role) are processed as governance proposals:
+
+1. Create a tension on the circle (e.g., "Elect Alice as Facilitator")
+2. Add a part with the role's \`_id\` and \`users: ["newUserId"]\` to propose the assignment
+3. Optionally set a \`due\` date for the re-election date
+4. Submit for consent like any other governance proposal
+
+### Questions and Reactions
+
+Tensions support discussion through the standard comments API. Use \`nestr_add_comment\` with the **tension's nest ID** to post questions, reactions, or clarifications. Use \`nestr_get_comments\` to read the discussion. Comments on tensions are visible to all circle members.
+
+### Examples
+
+**Proposing a new role with accountabilities:**
+\`\`\`
+1. nestr_create_tension(circleId, "Need a dedicated role for customer onboarding")
+2. nestr_add_tension_part(circleId, tensionId, {
+     title: "Customer Onboarding Guide",
+     labels: ["role"],
+     purpose: "Ensure new customers are set up for success",
+     accountabilities: ["Guiding new customers through onboarding", "Maintaining onboarding documentation"]
+   })
+3. nestr_update_tension_status(circleId, tensionId, "proposed")
+\`\`\`
+
+**Proposing changes to an existing role:**
+\`\`\`
+1. nestr_create_tension(circleId, "Developer role needs infrastructure accountability")
+2. nestr_add_tension_part(circleId, tensionId, {
+     _id: "existingRoleId",
+     accountabilities: ["Developing new features", "Managing infrastructure and deployments"]
+   })
+3. nestr_get_tension_changes(circleId, tensionId, partId) // Review the diff
+4. nestr_update_tension_status(circleId, tensionId, "proposed")
+\`\`\`
+
+### Status Lifecycle
+
+\`draft\` → \`proposed\` → \`accepted\` or \`objected\`
+
+- **draft**: Initial state. Parts can be added, modified, or removed.
+- **proposed**: Submitted for consent. Circle members vote. Can be retracted back to \`draft\`.
+- **accepted**: All members consented. Changes are applied to governance.
+- **objected**: One or more members objected. Requires integration and resubmission.
+
+### Auto-Detection
+
+Tensions with governance labels (role, circle, policy, accountability, domain) in their parts automatically become governance proposals. Tensions without governance labels become output tensions (e.g., meeting outputs, operational decisions).
+
+## Checking Role Authority
+
+Before creating work or proposing changes, verify which role has the accountability or domain for the work. Use these tools:
+
+### Finding the Right Role
+
+1. **\`nestr_get_circle_roles\`** — Returns all roles in a circle with their accountabilities and domains. This is the fastest way to see the full governance structure.
+
+2. **\`nestr_search\`** with \`label:accountability\` or \`label:domain\` — Search across the workspace for specific accountabilities or domains by keyword.
+
+3. **\`nestr_get_nest_children\`** on a specific role — Returns the role's accountabilities, domains, policies, and work items.
+
+### Checking Before Acting
+
+When assigning work to a role, verify the role actually has accountability for it:
+
+\`\`\`
+1. nestr_get_circle_roles(workspaceId, circleId)
+   → Review accountabilities of each role
+2. Find the role whose accountability matches the work
+3. Create the project/task under that role
+\`\`\`
+
+When proposing governance changes, check for domain conflicts:
+
+\`\`\`
+1. nestr_search(workspaceId, "label:domain [keyword]")
+   → Check if another role already controls this area
+2. If a domain exists, coordinate with the domain holder
+3. Propose the change via nestr_create_tension on the circle
+\`\`\`
+
+**Tip:** Use \`nestr_search\` with \`in:circleId label:role\` to find all roles (including in sub-circles), or add \`depth:1\` to limit to direct roles only.
+
 ## Label Architecture
 
 Labels give nests meaning and define their behavior. There are three types of labels:
@@ -556,7 +682,7 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 \`circle\`, \`anchor-circle\`, \`role\`, \`policy\`, \`domain\`, \`accountability\`, \`project\`, \`prepared-tension\`, \`goal\`, \`result\`, \`contact\`, \`deal\`, \`organisation\`, \`metric\`, \`checklist\`, \`meeting\`, \`feedback\`
 - \`note\` - A simple note
 - \`meeting\` - A calendar meeting
-- \`prepared-tension\` - A tension (gap between current and desired state). Used for meeting agenda items, async governance proposals, and general tension processing. Central to Holacracy practice.
+- \`prepared-tension\` - A tension (gap between current and desired state). Used for meeting agenda items, async governance proposals, and general tension processing. Central to Holacracy practice. Use the dedicated tension tools (\`nestr_create_tension\`, \`nestr_add_tension_part\`, etc.) to create and manage structured governance proposals.
 
 ## Search Query Syntax
 
@@ -1067,6 +1193,89 @@ User: "Show me the tasks in the Website Redesign project"
 - **Finding Accountabilities/Domains**: Use \`nestr_get_circle_roles\` for a circle's roles with their accountabilities, or \`nestr_get_nest_children\` on a specific role
 - **Search & Discovery**: Use search with operators like \`label:role\` or \`assignee:me completed:false\`
 - **Quick Capture**: Use inbox tools to capture thoughts without organizing, then process later
+
+## Authentication
+
+There are three ways to authenticate with the Nestr MCP server at \`https://mcp.nestr.io/mcp\`:
+
+### 1. Workspace API Key (workspace-scoped)
+
+Use the \`X-Nestr-API-Key\` header with a key from workspace settings (Settings > Integrations > Workspace API access). Workspace API keys have full workspace access regardless of user permissions. All actions are attributed to the API key, not to a specific user — there is no user identity in audit trails.
+
+### 2. Personal API Key (user-scoped)
+
+Users can create a personal API key from their account page at \`https://app.nestr.io/profile#security\`. Pass it as \`Authorization: Bearer <token>\` on all MCP requests. Personal API keys are scoped to the user — actions appear under that user's name in audit trails, and access respects the user's permissions. This is the simplest way for agents to authenticate as a specific user without implementing OAuth flows.
+
+### 3. OAuth (user-scoped, auto-discovery)
+
+OAuth tokens also identify a specific user. This is the standard approach for MCP clients that support auto-discovery.
+
+**How MCP clients authenticate via OAuth:**
+
+MCP-compliant clients (Claude, Cursor, VS Code, etc.) handle OAuth automatically. On first connection to \`https://mcp.nestr.io/mcp\`, the server returns a 401 with OAuth metadata. The client discovers endpoints via:
+
+1. \`GET /.well-known/oauth-protected-resource\` — returns the authorization server URL
+2. \`GET /.well-known/oauth-authorization-server\` — returns available endpoints and capabilities
+
+The server supports three OAuth grant types:
+
+**Authorization Code Flow with PKCE** (browser-based clients):
+1. Client registers dynamically via \`POST /oauth/register\` (RFC 7591)
+2. Client redirects user to \`GET /oauth/authorize\` with PKCE code_challenge
+3. User authenticates on Nestr's login page and authorises access
+4. Server redirects back with an authorization code
+5. Client exchanges code for tokens via \`POST /oauth/token\` with code_verifier
+
+**Device Authorization Flow** (headless/CLI agents, RFC 8628):
+1. Client registers dynamically via \`POST /oauth/register\`
+2. Client requests device code via \`POST /oauth/device\` with \`client_id\` and optional \`scope\`
+3. Server returns \`device_code\`, \`user_code\`, and \`verification_uri\`
+4. User visits the verification URI in a browser and enters the user code to authorise
+5. Client polls \`POST /oauth/token\` with \`grant_type=urn:ietf:params:oauth:grant-type:device_code\` until authorised
+
+**Refresh Tokens:**
+Tokens expire. Use \`POST /oauth/token\` with \`grant_type=refresh_token\` to get a new access token without re-authenticating.
+
+**Using OAuth tokens:**
+Once obtained, pass the access token as \`Authorization: Bearer <token>\` on all MCP requests.
+
+**Scopes:** The server requests \`user\` and \`nest\` scopes, which provide access to user profile data and workspace/nest operations.
+
+### Which method to choose?
+
+- **OAuth (recommended)**: The preferred method. Standard MCP auto-discovery with user-scoped access and full audit trail attribution. Most MCP clients (Claude, Cursor, VS Code) handle this automatically — just connect and authenticate. No manual key management needed, and tokens refresh automatically.
+- **Personal API key**: A simpler alternative when your client doesn't support OAuth. User-scoped with the same audit trail benefits. Generate one at \`https://app.nestr.io/profile#security\` and pass as \`Authorization: Bearer <token>\`. Best for custom agents or curl-based integrations that need user identity without implementing OAuth flows.
+- **Workspace API key**: Quick setup, full workspace access, but no user attribution. Actions appear as anonymous API calls in audit trails. Best for testing or workspace-wide automation where individual identity doesn't matter.
+
+## HTTP Transport: JSON Response Mode
+
+When connecting to \`https://mcp.nestr.io/mcp\` via HTTP, responses are returned as SSE streams by default. For simpler integrations (e.g., curl-based scripts or shell-based agents), you can request plain JSON responses instead:
+
+- Send \`Accept: application/json\` (without \`text/event-stream\`) on the initialization request
+- The entire session will return plain JSON-RPC responses instead of SSE-wrapped \`event: message\\ndata: {...}\` format
+- This eliminates the need to parse SSE formatting for simple request-response interactions
+
+**SSE (default):**
+\`\`\`
+Accept: application/json, text/event-stream
+\`\`\`
+
+**Plain JSON (opt-in):**
+\`\`\`
+Accept: application/json
+\`\`\`
+
+The mode is determined at session initialization and applies for the lifetime of the session.
+
+## HTTP Sessions
+
+When using the HTTP transport (\`https://mcp.nestr.io/mcp\`), each MCP session is identified by a \`mcp-session-id\` header returned on initialization. Key behaviors:
+
+- **Session reuse**: Include the \`mcp-session-id\` header on subsequent requests to reuse the same session. This avoids re-initialization overhead.
+- **No explicit TTL**: MCP transport sessions remain available as long as the server process is running. There is no idle timeout.
+- **Session cleanup**: Send \`DELETE /mcp\` with the session ID to explicitly end a session.
+- **Server restarts**: MCP transport sessions are in-memory and do not survive server restarts. However, **OAuth authentication is persisted to disk** — your OAuth token remains valid across restarts. If you get a session-not-found error, simply re-initialize the MCP session with the same bearer token. No re-authentication is needed.
+- **One session per connection**: Each initialized session has its own transport and authentication context. Do not share session IDs across different authentication contexts.
 `.trim();
 
 export function createServer(config: NestrMcpServerConfig = {}): Server {

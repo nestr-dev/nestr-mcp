@@ -291,6 +291,97 @@ export const schemas = {
 
   // Daily plan (requires OAuth token)
   getDailyPlan: z.object({}),
+
+  // Tension tools
+  createTension: z.object({
+    nestId: z.string().describe("ID of the circle or role to create the tension on"),
+    title: z.string().describe("Title describing the tension (plain text)"),
+    description: z.string().optional().describe("Detailed description of the tension (supports HTML)"),
+  }),
+
+  getTension: z.object({
+    nestId: z.string().describe("ID of the circle or role the tension belongs to"),
+    tensionId: z.string().describe("Tension ID"),
+  }),
+
+  listTensions: z.object({
+    nestId: z.string().describe("ID of the circle or role to list tensions for"),
+    search: z.string().optional().describe("Search query to filter tensions"),
+    limit: z.number().optional().describe("Max results to return"),
+    order: z.string().optional().describe("Sort order (e.g., 'createdAt', '-createdAt')"),
+  }),
+
+  updateTension: z.object({
+    nestId: z.string().describe("ID of the circle or role the tension belongs to"),
+    tensionId: z.string().describe("Tension ID"),
+    title: z.string().optional().describe("Updated title (plain text)"),
+    description: z.string().optional().describe("Updated description (supports HTML)"),
+  }),
+
+  deleteTension: z.object({
+    nestId: z.string().describe("ID of the circle or role the tension belongs to"),
+    tensionId: z.string().describe("Tension ID to delete"),
+  }),
+
+  getTensionParts: z.object({
+    nestId: z.string().describe("ID of the circle or role the tension belongs to"),
+    tensionId: z.string().describe("Tension ID"),
+  }),
+
+  addTensionPart: z.object({
+    nestId: z.string().describe("ID of the circle or role the tension belongs to"),
+    tensionId: z.string().describe("Tension ID"),
+    _id: z.string().optional().describe("ID of an existing governance item to change or remove. Omit to propose a new item."),
+    title: z.string().optional().describe("Title for the governance item"),
+    labels: z.array(z.string()).optional().describe("Labels defining the item type (e.g., ['role'], ['circle'], ['policy'], ['accountability'], ['domain'])"),
+    purpose: z.string().optional().describe("Purpose of the item (supports HTML)"),
+    description: z.string().optional().describe("Description (supports HTML)"),
+    parentId: z.string().optional().describe("Parent ID — use to move/restructure items (e.g., move role to different circle)"),
+    users: z.array(z.string()).optional().describe("User IDs to assign (e.g., for role elections: assign the elected user to the role)"),
+    due: z.string().optional().describe("Due date / re-election date (ISO format)"),
+    accountabilities: z.array(z.string()).optional().describe("Accountability titles to set on a role (replaces existing)"),
+    domains: z.array(z.string()).optional().describe("Domain titles to set on a role (replaces existing)"),
+    removeNest: z.boolean().optional().describe("Set to true with _id to propose removal of the existing governance item"),
+  }),
+
+  modifyTensionPart: z.object({
+    nestId: z.string().describe("ID of the circle or role the tension belongs to"),
+    tensionId: z.string().describe("Tension ID"),
+    partId: z.string().describe("Part ID to modify"),
+    title: z.string().optional().describe("Updated title"),
+    purpose: z.string().optional().describe("Updated purpose (supports HTML)"),
+    description: z.string().optional().describe("Updated description (supports HTML)"),
+    labels: z.array(z.string()).optional().describe("Updated labels"),
+    parentId: z.string().optional().describe("Updated parent ID"),
+    users: z.array(z.string()).optional().describe("Updated user assignments"),
+    due: z.string().optional().describe("Updated due date (ISO format)"),
+    removeNest: z.boolean().optional().describe("Change removal flag"),
+    accountabilities: z.array(z.string()).optional().describe("Updated accountabilities"),
+    domains: z.array(z.string()).optional().describe("Updated domains"),
+  }),
+
+  removeTensionPart: z.object({
+    nestId: z.string().describe("ID of the circle or role the tension belongs to"),
+    tensionId: z.string().describe("Tension ID"),
+    partId: z.string().describe("Part ID to remove from the proposal"),
+  }),
+
+  getTensionChanges: z.object({
+    nestId: z.string().describe("ID of the circle or role the tension belongs to"),
+    tensionId: z.string().describe("Tension ID"),
+    partId: z.string().describe("Part ID to get changes for"),
+  }),
+
+  getTensionStatus: z.object({
+    nestId: z.string().describe("ID of the circle or role the tension belongs to"),
+    tensionId: z.string().describe("Tension ID"),
+  }),
+
+  updateTensionStatus: z.object({
+    nestId: z.string().describe("ID of the circle or role the tension belongs to"),
+    tensionId: z.string().describe("Tension ID"),
+    status: z.enum(["proposed", "draft"]).describe("'proposed' to submit for voting, 'draft' to retract back to draft"),
+  }),
 };
 
 // Tool definitions for MCP
@@ -824,6 +915,187 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
     },
     _meta: completableListUi,
   },
+  // Tension tools
+  {
+    name: "nestr_create_tension",
+    description: "Create a new tension on a circle or role. Tensions are the mechanism for proposing governance changes (new roles, accountabilities, domains, policies), capturing meeting outputs, processing elections, and other organisational decisions. The parent nest must be a role, circle, or anchor-circle.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role to create the tension on" },
+        title: { type: "string", description: "Title describing the tension (plain text)" },
+        description: { type: "string", description: "Detailed description of the tension (supports HTML)" },
+      },
+      required: ["nestId", "title"],
+    },
+  },
+  {
+    name: "nestr_get_tension",
+    description: "Get a single tension including its current status (draft/proposed/accepted/objected). Use nestr_get_tension_status for detailed per-user voting responses.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
+        tensionId: { type: "string", description: "Tension ID" },
+      },
+      required: ["nestId", "tensionId"],
+    },
+  },
+  {
+    name: "nestr_list_tensions",
+    description: "List tensions for a circle or role. Supports search query filtering. Use to find existing governance proposals or pending decisions.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role to list tensions for" },
+        search: { type: "string", description: "Search query to filter tensions" },
+        limit: { type: "number", description: "Max results to return" },
+        order: { type: "string", description: "Sort order (e.g., 'createdAt', '-createdAt')" },
+      },
+      required: ["nestId"],
+    },
+  },
+  {
+    name: "nestr_update_tension",
+    description: "Update a tension's title or description. Use this to refine the tension statement before adding proposal parts.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
+        tensionId: { type: "string", description: "Tension ID" },
+        title: { type: "string", description: "Updated title (plain text)" },
+        description: { type: "string", description: "Updated description (supports HTML)" },
+      },
+      required: ["nestId", "tensionId"],
+    },
+  },
+  {
+    name: "nestr_delete_tension",
+    description: "Delete a tension (soft delete). Use when a tension is no longer relevant or was created in error.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
+        tensionId: { type: "string", description: "Tension ID to delete" },
+      },
+      required: ["nestId", "tensionId"],
+    },
+  },
+  {
+    name: "nestr_get_tension_parts",
+    description: "Get all parts of a tension. Each part contains items representing proposed governance changes (with action: create/update/delete/role2circle/circle2role). Review parts to understand what a tension proposes before submitting.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
+        tensionId: { type: "string", description: "Tension ID" },
+      },
+      required: ["nestId", "tensionId"],
+    },
+  },
+  {
+    name: "nestr_add_tension_part",
+    description: `Add a governance change to a tension. Three modes based on input:
+
+**New item** (no _id): Propose creating a new governance item. Provide title and labels (e.g., ["role"], ["circle"], ["policy"], ["accountability"], ["domain"]). For roles, include accountabilities and/or domains.
+
+**Change existing item** (_id provided, no removeNest): Propose changes to an existing governance item. Provide the _id of the item plus fields to change. Supports title/purpose changes, restructuring (parentId to move between circles), conversions (labels to convert role↔circle), user assignment changes (for elections), and accountability/domain changes.
+
+**Remove existing item** (_id + removeNest: true): Propose removal of an existing governance item.`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
+        tensionId: { type: "string", description: "Tension ID" },
+        _id: { type: "string", description: "ID of an existing governance item to change or remove. Omit to propose a new item." },
+        title: { type: "string", description: "Title for the governance item" },
+        labels: { type: "array", items: { type: "string" }, description: "Labels defining the item type (e.g., ['role'], ['circle'], ['policy'], ['accountability'], ['domain'])" },
+        purpose: { type: "string", description: "Purpose of the item (supports HTML)" },
+        description: { type: "string", description: "Description (supports HTML)" },
+        parentId: { type: "string", description: "Parent ID — use to move/restructure items (e.g., move role to different circle)" },
+        users: { type: "array", items: { type: "string" }, description: "User IDs to assign (e.g., for elections: assign elected user to the role)" },
+        due: { type: "string", description: "Due date / re-election date (ISO format)" },
+        accountabilities: { type: "array", items: { type: "string" }, description: "Accountability titles to set on a role (replaces existing)" },
+        domains: { type: "array", items: { type: "string" }, description: "Domain titles to set on a role (replaces existing)" },
+        removeNest: { type: "boolean", description: "Set to true with _id to propose removal of the existing governance item" },
+      },
+      required: ["nestId", "tensionId"],
+    },
+  },
+  {
+    name: "nestr_modify_tension_part",
+    description: "Modify an existing proposal part. Use to refine proposed values after initial creation — e.g., adjust a role's title or add accountabilities to a proposed role.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
+        tensionId: { type: "string", description: "Tension ID" },
+        partId: { type: "string", description: "Part ID to modify" },
+        title: { type: "string", description: "Updated title" },
+        purpose: { type: "string", description: "Updated purpose (supports HTML)" },
+        description: { type: "string", description: "Updated description (supports HTML)" },
+        labels: { type: "array", items: { type: "string" }, description: "Updated labels" },
+        parentId: { type: "string", description: "Updated parent ID" },
+        users: { type: "array", items: { type: "string" }, description: "Updated user assignments" },
+        due: { type: "string", description: "Updated due date (ISO format)" },
+        removeNest: { type: "boolean", description: "Change removal flag" },
+        accountabilities: { type: "array", items: { type: "string" }, description: "Updated accountabilities" },
+        domains: { type: "array", items: { type: "string" }, description: "Updated domains" },
+      },
+      required: ["nestId", "tensionId", "partId"],
+    },
+  },
+  {
+    name: "nestr_remove_tension_part",
+    description: "Remove a part from the proposal entirely. This does NOT propose deletion of a governance item — it removes the proposal part itself. Use nestr_add_tension_part with removeNest:true to propose deleting a governance item.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
+        tensionId: { type: "string", description: "Tension ID" },
+        partId: { type: "string", description: "Part ID to remove from the proposal" },
+      },
+      required: ["nestId", "tensionId", "partId"],
+    },
+  },
+  {
+    name: "nestr_get_tension_changes",
+    description: "Get the namespaced diff for a proposal part. Returns { nestId, variable, newValue, oldValue } entries showing exactly what will change. Variables are namespaced: role.title, accountability.title, domain.title, policy.title, etc. For creates: oldValue is null. For deletes: newValue is null.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
+        tensionId: { type: "string", description: "Tension ID" },
+        partId: { type: "string", description: "Part ID to get changes for" },
+      },
+      required: ["nestId", "tensionId", "partId"],
+    },
+  },
+  {
+    name: "nestr_get_tension_status",
+    description: "Get detailed status of a tension including per-user voting responses. Returns status (draft/proposed/accepted/objected), individual responses with timestamps, and auto-approval date if set. Use this to check who has voted and the current decision state.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
+        tensionId: { type: "string", description: "Tension ID" },
+      },
+      required: ["nestId", "tensionId"],
+    },
+  },
+  {
+    name: "nestr_update_tension_status",
+    description: "Submit a tension for voting (set to 'proposed') or retract it back to draft. Submitting triggers the async consent/voting process — circle members are notified and can accept or object. Retracting returns it to draft for further editing.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
+        tensionId: { type: "string", description: "Tension ID" },
+        status: { type: "string", enum: ["proposed", "draft"], description: "'proposed' to submit for voting, 'draft' to retract back to draft" },
+      },
+      required: ["nestId", "tensionId", "status"],
+    },
+  },
 ];
 
 // Tool handler type
@@ -1195,6 +1467,123 @@ async function _handleToolCall(
         schemas.getDailyPlan.parse(args);
         const items = await client.getDailyPlan();
         return formatResult(completableResponse(compactResponse(items), "daily-plan", "Daily Plan"));
+      }
+
+      // Tension tools
+      case "nestr_create_tension": {
+        const parsed = schemas.createTension.parse(args);
+        const tension = await client.createTension(parsed.nestId, {
+          title: parsed.title,
+          description: parsed.description,
+        });
+        return formatResult({ message: "Tension created successfully", tension });
+      }
+
+      case "nestr_get_tension": {
+        const parsed = schemas.getTension.parse(args);
+        const tension = await client.getTension(
+          parsed.nestId,
+          parsed.tensionId,
+          { cleanText: true }
+        );
+        return formatResult(tension);
+      }
+
+      case "nestr_list_tensions": {
+        const parsed = schemas.listTensions.parse(args);
+        const tensions = await client.listTensions(
+          parsed.nestId,
+          parsed.search,
+          { limit: parsed.limit, order: parsed.order, cleanText: true }
+        );
+        return formatResult(compactResponse(tensions));
+      }
+
+      case "nestr_update_tension": {
+        const parsed = schemas.updateTension.parse(args);
+        const tension = await client.updateTension(
+          parsed.nestId,
+          parsed.tensionId,
+          {
+            title: parsed.title,
+            description: parsed.description,
+          }
+        );
+        return formatResult({ message: "Tension updated successfully", tension });
+      }
+
+      case "nestr_delete_tension": {
+        const parsed = schemas.deleteTension.parse(args);
+        await client.deleteTension(parsed.nestId, parsed.tensionId);
+        return formatResult({ message: `Tension ${parsed.tensionId} deleted successfully` });
+      }
+
+      case "nestr_get_tension_parts": {
+        const parsed = schemas.getTensionParts.parse(args);
+        const parts = await client.getTensionParts(
+          parsed.nestId,
+          parsed.tensionId,
+          { cleanText: true }
+        );
+        return formatResult(parts);
+      }
+
+      case "nestr_add_tension_part": {
+        const parsed = schemas.addTensionPart.parse(args);
+        const { nestId, tensionId, removeNest, ...body } = parsed;
+
+        if (body._id && removeNest) {
+          // Propose removal of existing item
+          const part = await client.proposeTensionRemoval(nestId, tensionId, { _id: body._id });
+          return formatResult({ message: "Removal proposal added successfully", part });
+        } else if (body._id) {
+          // Propose change to existing item
+          const part = await client.proposeTensionChange(nestId, tensionId, body);
+          return formatResult({ message: "Change proposal added successfully", part });
+        } else {
+          // Propose new item
+          const part = await client.createTensionPart(nestId, tensionId, body);
+          return formatResult({ message: "New item proposal added successfully", part });
+        }
+      }
+
+      case "nestr_modify_tension_part": {
+        const parsed = schemas.modifyTensionPart.parse(args);
+        const { nestId, tensionId, partId, ...data } = parsed;
+        const part = await client.modifyTensionPart(nestId, tensionId, partId, data);
+        return formatResult({ message: "Tension part modified successfully", part });
+      }
+
+      case "nestr_remove_tension_part": {
+        const parsed = schemas.removeTensionPart.parse(args);
+        await client.removeTensionPart(parsed.nestId, parsed.tensionId, parsed.partId);
+        return formatResult({ message: `Tension part ${parsed.partId} removed successfully` });
+      }
+
+      case "nestr_get_tension_changes": {
+        const parsed = schemas.getTensionChanges.parse(args);
+        const changes = await client.getTensionPartChanges(
+          parsed.nestId,
+          parsed.tensionId,
+          parsed.partId
+        );
+        return formatResult(changes);
+      }
+
+      case "nestr_get_tension_status": {
+        const parsed = schemas.getTensionStatus.parse(args);
+        const status = await client.getTensionStatus(parsed.nestId, parsed.tensionId);
+        return formatResult(status);
+      }
+
+      case "nestr_update_tension_status": {
+        const parsed = schemas.updateTensionStatus.parse(args);
+        const status = await client.updateTensionStatus(
+          parsed.nestId,
+          parsed.tensionId,
+          parsed.status
+        );
+        return formatResult({ message: `Tension status updated to '${parsed.status}'`, status });
       }
 
       default:

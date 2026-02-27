@@ -21,6 +21,11 @@
  * Authentication:
  *   - API Key: X-Nestr-API-Key header
  *   - OAuth:   Authorization: Bearer <token> header
+ *
+ * Response format:
+ *   By default, POST /mcp returns SSE streams (text/event-stream).
+ *   Send Accept: application/json (without text/event-stream) on the
+ *   initialization request to get plain JSON responses for the entire session.
  */
 
 import express, { Request, Response } from "express";
@@ -934,6 +939,16 @@ app.post("/mcp", async (req: Request, res: Response) => {
   delete req.headers.cookie;
 
   try {
+    // Support Accept: application/json for non-streaming JSON responses.
+    // The MCP SDK requires both application/json and text/event-stream in Accept,
+    // but clients wanting plain JSON can send just application/json.
+    // We detect this and amend the header so SDK validation passes.
+    const acceptHeader = req.headers.accept || "";
+    const wantsJsonOnly = acceptHeader.includes("application/json") && !acceptHeader.includes("text/event-stream");
+    if (wantsJsonOnly) {
+      req.headers.accept = `${acceptHeader}, text/event-stream`;
+    }
+
     // Check for existing session
     if (sessionId && sessions[sessionId]) {
       const session = sessions[sessionId];
@@ -1054,6 +1069,7 @@ app.post("/mcp", async (req: Request, res: Response) => {
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
+      enableJsonResponse: wantsJsonOnly,
       onsessioninitialized: (newSessionId) => {
         console.log(`Session initialized: ${newSessionId}${mcpClientName ? ` (client: ${mcpClientName})` : ""}`);
         sessions[newSessionId] = {

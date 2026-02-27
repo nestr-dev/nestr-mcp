@@ -85,6 +85,33 @@ export interface WorkspaceApp {
   enabled: boolean;
 }
 
+export interface Tension extends Nest {
+  status?: "draft" | "proposed" | "accepted" | "objected";
+}
+
+export interface TensionPart {
+  _id: string;
+  title?: string;
+  items?: Array<Record<string, unknown>>;
+}
+
+export interface TensionChange {
+  nestId: string | null;
+  variable: string;
+  newValue: unknown;
+  oldValue: unknown;
+}
+
+export interface TensionStatus {
+  status: "draft" | "proposed" | "accepted" | "objected";
+  responses?: Array<{
+    userId: string;
+    response: "none" | "accepted" | "objected";
+    votedAt?: string;
+  }>;
+  autoapprove?: string;
+}
+
 /** Error codes for structured error handling */
 export type ErrorCode =
   | "AUTH_FAILED"      // 401 - Invalid or missing credentials
@@ -756,6 +783,180 @@ export class NestrClient {
       }
     );
     return response.data;
+  }
+
+  // ============ TENSIONS ============
+
+  async createTension(
+    nestId: string,
+    data: { title: string; description?: string }
+  ): Promise<Tension> {
+    return this.fetch<Tension>(`/nests/${nestId}/tensions`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getTension(
+    nestId: string,
+    tensionId: string,
+    options?: { cleanText?: boolean }
+  ): Promise<Tension> {
+    const params = new URLSearchParams();
+    if (options?.cleanText) params.set("cleanText", "true");
+    const query = params.toString();
+    return this.fetch<Tension>(
+      `/nests/${nestId}/tensions/${tensionId}${query ? `?${query}` : ""}`
+    );
+  }
+
+  async listTensions(
+    nestId: string,
+    search?: string,
+    options?: { limit?: number; order?: string; cleanText?: boolean }
+  ): Promise<Tension[]> {
+    const params = new URLSearchParams();
+    if (search) params.set("search", search);
+    if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.order) params.set("order", options.order);
+    if (options?.cleanText) params.set("cleanText", "true");
+    const query = params.toString();
+    return this.fetch<Tension[]>(
+      `/nests/${nestId}/tensions${query ? `?${query}` : ""}`
+    );
+  }
+
+  async updateTension(
+    nestId: string,
+    tensionId: string,
+    data: { title?: string; description?: string }
+  ): Promise<Tension> {
+    return this.fetch<Tension>(`/nests/${nestId}/tensions/${tensionId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteTension(nestId: string, tensionId: string): Promise<void> {
+    await this.fetch<void>(`/nests/${nestId}/tensions/${tensionId}`, {
+      method: "DELETE",
+    });
+  }
+
+  async getTensionParts(
+    nestId: string,
+    tensionId: string,
+    options?: { cleanText?: boolean }
+  ): Promise<TensionPart[]> {
+    const params = new URLSearchParams();
+    if (options?.cleanText) params.set("cleanText", "true");
+    const query = params.toString();
+    return this.fetch<TensionPart[]>(
+      `/nests/${nestId}/tensions/${tensionId}/parts${query ? `?${query}` : ""}`
+    );
+  }
+
+  async createTensionPart(
+    nestId: string,
+    tensionId: string,
+    data: Record<string, unknown>
+  ): Promise<TensionPart> {
+    return this.fetch<TensionPart>(
+      `/nests/${nestId}/tensions/${tensionId}/parts`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      }
+    );
+  }
+
+  async proposeTensionChange(
+    nestId: string,
+    tensionId: string,
+    data: Record<string, unknown>
+  ): Promise<TensionPart> {
+    return this.fetch<TensionPart>(
+      `/nests/${nestId}/tensions/${tensionId}/parts`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }
+    );
+  }
+
+  async proposeTensionRemoval(
+    nestId: string,
+    tensionId: string,
+    data: { _id: string }
+  ): Promise<TensionPart> {
+    return this.fetch<TensionPart>(
+      `/nests/${nestId}/tensions/${tensionId}/parts`,
+      {
+        method: "DELETE",
+        body: JSON.stringify(data),
+      }
+    );
+  }
+
+  async modifyTensionPart(
+    nestId: string,
+    tensionId: string,
+    partId: string,
+    data: Record<string, unknown>
+  ): Promise<TensionPart> {
+    return this.fetch<TensionPart>(
+      `/nests/${nestId}/tensions/${tensionId}/parts/${partId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }
+    );
+  }
+
+  async removeTensionPart(
+    nestId: string,
+    tensionId: string,
+    partId: string
+  ): Promise<void> {
+    await this.fetch<void>(
+      `/nests/${nestId}/tensions/${tensionId}/parts/${partId}`,
+      {
+        method: "DELETE",
+      }
+    );
+  }
+
+  async getTensionPartChanges(
+    nestId: string,
+    tensionId: string,
+    partId: string
+  ): Promise<TensionChange[]> {
+    return this.fetch<TensionChange[]>(
+      `/nests/${nestId}/tensions/${tensionId}/parts/${partId}/changes`
+    );
+  }
+
+  async getTensionStatus(
+    nestId: string,
+    tensionId: string
+  ): Promise<TensionStatus> {
+    return this.fetch<TensionStatus>(
+      `/nests/${nestId}/tensions/${tensionId}/status`
+    );
+  }
+
+  async updateTensionStatus(
+    nestId: string,
+    tensionId: string,
+    status: "proposed" | "draft"
+  ): Promise<TensionStatus> {
+    return this.fetch<TensionStatus>(
+      `/nests/${nestId}/tensions/${tensionId}/status`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      }
+    );
   }
 
   // ============ CURRENT USER ============
