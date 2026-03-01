@@ -249,6 +249,7 @@ The server exposes these tools to AI assistants:
 | `nestr_list_roles` | `GET /workspaces/{id}/roles` |
 | `nestr_list_users` | `GET /workspaces/{id}/users` |
 | `nestr_get_user` | `GET /workspaces/{id}/users/{uid}` |
+| `nestr_add_workspace_user` | `POST /workspaces/{id}/users` |
 | `nestr_list_labels` | `GET /workspaces/{id}/labels` |
 | `nestr_get_label` | `GET /workspaces/{id}/labels/{lid}` |
 | `nestr_get_projects` | `GET /workspaces/{id}/projects` |

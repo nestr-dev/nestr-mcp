@@ -34,7 +34,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createServer } from "./server.js";
-import { NestrClient } from "./api/client.js";
+import { NestrClient, NestrApiError } from "./api/client.js";
 import {
   getProtectedResourceMetadata,
   getAuthorizationServerMetadata,
@@ -46,6 +46,7 @@ import {
   exchangeCodeForTokens,
   storeOAuthSession,
   verifyPKCE,
+  getOAuthSession,
 } from "./oauth/flow.js";
 import {
   registerClient,
@@ -1036,6 +1037,16 @@ app.post("/mcp", async (req: Request, res: Response) => {
     const client = new NestrClient({
       apiKey: authToken,
       mcpClient: mcpClientName,
+      tokenProvider: isApiKey ? undefined : async () => {
+        const session = await getOAuthSession(authToken);
+        if (!session) {
+          throw new NestrApiError("OAuth session expired", 401, "/", {
+            code: "AUTH_FAILED",
+            hint: "Re-authenticate to get a new token.",
+          });
+        }
+        return session.accessToken;
+      },
     });
 
     // Track tool calls for analytics

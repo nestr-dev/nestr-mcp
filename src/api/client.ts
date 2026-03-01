@@ -8,6 +8,8 @@ export interface NestrClientConfig {
   baseUrl?: string;
   /** MCP client name (e.g., "claude-desktop", "cursor") for tracking */
   mcpClient?: string;
+  /** Optional async function to resolve a fresh token before each request (e.g., for OAuth refresh) */
+  tokenProvider?: () => Promise<string>;
 }
 
 export interface Nest {
@@ -197,16 +199,19 @@ export class NestrClient {
   private apiKey: string;
   private baseUrl: string;
   private mcpClient?: string;
+  private tokenProvider?: () => Promise<string>;
 
   constructor(config: NestrClientConfig) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl || "https://app.nestr.io/api";
     this.mcpClient = config.mcpClient;
+    this.tokenProvider = config.tokenProvider;
   }
 
   private async fetch<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    isRetry = false
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
 
@@ -229,6 +234,13 @@ export class NestrClient {
     });
 
     if (!response.ok) {
+      // On 401 with a tokenProvider, try refreshing the token and retry once
+      if (response.status === 401 && this.tokenProvider && !isRetry) {
+        const newToken = await this.tokenProvider();
+        this.apiKey = newToken;
+        return this.fetch<T>(endpoint, options, true);
+      }
+
       const errorText = await response.text().catch(() => "Unknown error");
 
       // Try to parse JSON error response for clearer error messages
@@ -557,6 +569,26 @@ export class NestrClient {
 
   async getUser(workspaceId: string, userId: string): Promise<User> {
     return this.fetch<User>(`/workspaces/${workspaceId}/users/${userId}`);
+  }
+
+  async addWorkspaceUser(
+    workspaceId: string,
+    options: { username: string; fullName?: string; language?: string }
+  ): Promise<User> {
+    return this.fetch<User>(`/workspaces/${workspaceId}/users`, {
+      method: "POST",
+      body: JSON.stringify({
+        username: options.username,
+        ...(options.fullName || options.language
+          ? {
+              profile: {
+                ...(options.fullName ? { fullName: options.fullName } : {}),
+                ...(options.language ? { language: options.language } : {}),
+              },
+            }
+          : {}),
+      }),
+    });
   }
 
   // ============ LABELS ============

@@ -218,6 +218,13 @@ export const schemas = {
     userId: z.string().describe("User ID"),
   }),
 
+  addWorkspaceUser: z.object({
+    workspaceId: z.string().describe("Workspace ID"),
+    username: z.string().describe("Email address of the user to add"),
+    fullName: z.string().optional().describe("Full name of the user (used when creating a new account)"),
+    language: z.string().optional().describe("Language preference (e.g., 'en', 'nl', 'de')"),
+  }),
+
   getLabel: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     labelId: z.string().describe("Label ID"),
@@ -730,6 +737,25 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         userId: { type: "string", description: "User ID" },
       },
       required: ["workspaceId", "userId"],
+    },
+  },
+  {
+    name: "nestr_add_workspace_user",
+    description: `Add a user to a workspace by email address. If the user already has a Nestr account, they are added to the workspace. If not, a new account is created and they receive an invitation email.
+
+**Requirements:**
+- Caller must be a workspace admin (user-scoped key) or use a workspace API key
+- If the user does not yet have a Nestr account, the email domain must be associated with and verified for the workspace — otherwise provisioning will fail with a 405 error
+- If the user already exists in Nestr, they can be added regardless of domain`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        username: { type: "string", description: "Email address of the user to add" },
+        fullName: { type: "string", description: "Full name (for new accounts)" },
+        language: { type: "string", description: "Language preference (e.g., 'en', 'nl')" },
+      },
+      required: ["workspaceId", "username"],
     },
   },
   {
@@ -1348,6 +1374,16 @@ async function _handleToolCall(
         const parsed = schemas.getUser.parse(args);
         const user = await client.getUser(parsed.workspaceId, parsed.userId);
         return formatResult(user);
+      }
+
+      case "nestr_add_workspace_user": {
+        const parsed = schemas.addWorkspaceUser.parse(args);
+        const user = await client.addWorkspaceUser(parsed.workspaceId, {
+          username: parsed.username,
+          fullName: parsed.fullName,
+          language: parsed.language,
+        });
+        return formatResult({ message: "User added to workspace successfully", user });
       }
 
       case "nestr_get_label": {
