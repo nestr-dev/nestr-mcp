@@ -847,7 +847,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
   // Inbox tools (require OAuth token - won't work with workspace API keys)
   {
     name: "nestr_list_inbox",
-    description: "List items in the user's inbox. The inbox is a collection point for 'stuff' that needs processing - ideas, tasks, notes captured quickly without organizing. Requires OAuth token (won't work with workspace API keys).",
+    description: "List items in the user's personal inbox. The inbox holds unprocessed 'stuff' — sensed tensions, ideas, and captured items that haven't yet been differentiated into role work or personal projects. Spans all workspaces in scope. Requires OAuth token.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -859,7 +859,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
   },
   {
     name: "nestr_create_inbox_item",
-    description: "Quick capture: add an item to the user's inbox for later processing. Use for capturing thoughts, ideas, or tasks without worrying about where they belong. Requires OAuth token.",
+    description: "Quick capture: add an item to the user's personal inbox for later processing. Use for capturing sensed tensions, thoughts, or ideas before deciding which workspace, role, or personal context they belong to. Requires OAuth token.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -980,7 +980,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
   // Daily plan (requires OAuth token)
   {
     name: "nestr_get_daily_plan",
-    description: "Get the user's daily plan - items marked for 'today'. Returns todos and projects the user has added to their daily focus list by applying the 'now' label. Use this to help users plan their day or review what's on their plate. Note: Only includes items from inbox and in-scope workspaces (token scope may limit results). Requires OAuth token.",
+    description: "Get the user's personal daily plan - items marked for 'today'. Returns todos and projects across all contexts: role work from any workspace, personal projects, errands, or anything else the user has chosen to focus on today. Spans all workspaces in scope. Note: Token scope may limit which workspaces are included. Requires OAuth token.",
     inputSchema: {
       type: "object" as const,
       properties: {
