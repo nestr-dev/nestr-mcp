@@ -158,6 +158,15 @@ export const schemas = {
     body: z.string().describe("Comment text (supports HTML and @mentions)"),
   }),
 
+  updateComment: z.object({
+    commentId: z.string().describe("Comment ID to update"),
+    body: z.string().describe("Updated comment text (supports HTML and @mentions)"),
+  }),
+
+  deleteComment: z.object({
+    commentId: z.string().describe("Comment ID to delete"),
+  }),
+
   listCircles: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
@@ -299,11 +308,25 @@ export const schemas = {
   // Daily plan (requires OAuth token)
   getDailyPlan: z.object({}),
 
+  // Current user identity (requires OAuth token)
+  getMe: z.object({}),
+
+  // User tension tools (requires OAuth token)
+  listMyTensions: z.object({
+    context: z.string().optional().describe("Optional context filter (e.g., workspace ID or circle ID)"),
+  }),
+
+  listTensionsAwaitingConsent: z.object({
+    context: z.string().optional().describe("Optional context filter (e.g., workspace ID or circle ID)"),
+  }),
+
   // Tension tools
   createTension: z.object({
     nestId: z.string().describe("ID of the circle or role to create the tension on"),
-    title: z.string().describe("Title describing the tension (plain text)"),
-    description: z.string().optional().describe("Detailed description of the tension (supports HTML)"),
+    title: z.string().describe("The gap you're sensing — what is the difference between current reality and desired state (plain text)"),
+    description: z.string().optional().describe("The observable facts — what you see/hear/experience that creates this tension (supports HTML)"),
+    feeling: z.string().optional().describe("The feeling this tension evokes in you — separated from the facts to keep the organizational response clean (plain text)"),
+    needs: z.string().optional().describe("The personal or organizational need that is alive — what need is not being met (plain text)"),
   }),
 
   getTension: z.object({
@@ -321,8 +344,10 @@ export const schemas = {
   updateTension: z.object({
     nestId: z.string().describe("ID of the circle or role the tension belongs to"),
     tensionId: z.string().describe("Tension ID"),
-    title: z.string().optional().describe("Updated title (plain text)"),
-    description: z.string().optional().describe("Updated description (supports HTML)"),
+    title: z.string().optional().describe("Updated title — the gap being sensed (plain text)"),
+    description: z.string().optional().describe("Updated description — the observable facts (supports HTML)"),
+    feeling: z.string().optional().describe("Updated feeling this tension evokes (plain text)"),
+    needs: z.string().optional().describe("Updated need that is alive (plain text)"),
   }),
 
   deleteTension: z.object({
@@ -601,6 +626,29 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         body: { type: "string", description: "Comment text (supports HTML and @mentions)" },
       },
       required: ["nestId", "body"],
+    },
+  },
+  {
+    name: "nestr_update_comment",
+    description: "Update an existing comment's text.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        commentId: { type: "string", description: "Comment ID to update" },
+        body: { type: "string", description: "Updated comment text (supports HTML and @mentions)" },
+      },
+      required: ["commentId", "body"],
+    },
+  },
+  {
+    name: "nestr_delete_comment",
+    description: "Delete a comment (soft delete).",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        commentId: { type: "string", description: "Comment ID to delete" },
+      },
+      required: ["commentId"],
     },
   },
   {
@@ -941,16 +989,48 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
     },
     _meta: completableListUi,
   },
+  // Current user identity
+  {
+    name: "nestr_get_me",
+    description: "Get the current authenticated identity and operating mode. Returns user info including `bot: true` if the agent energizes roles directly (role-filler mode) or absent/false if assisting a human who energizes roles. Returns `authMode: 'api-key'` when using a workspace API key (no user identity, no user-scoped features). Call at session start to determine how to behave. Requires OAuth token for full user info; gracefully handles API key auth.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
+  // User tension tools (requires OAuth token)
+  {
+    name: "nestr_list_my_tensions",
+    description: "List tensions created by or assigned to the current user. Tensions are the primary communication mechanism between roles — check at natural breakpoints: session start, after completing work, when user asks what to do next. Returns both authored and assigned tensions across all workspaces. Requires OAuth token.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        context: { type: "string", description: "Optional context filter (e.g., workspace ID or circle ID)" },
+      },
+    },
+  },
+  {
+    name: "nestr_list_tensions_awaiting_consent",
+    description: "List tensions awaiting the current user's consent vote. Returns governance proposals and other tensions that need the user's input. Check proactively — unprocessed tensions block organizational progress. Requires OAuth token.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        context: { type: "string", description: "Optional context filter (e.g., workspace ID or circle ID)" },
+      },
+    },
+  },
   // Tension tools
   {
     name: "nestr_create_tension",
-    description: "Create a new tension on a circle or role. Tensions are the mechanism for proposing governance changes (new roles, accountabilities, domains, policies), capturing meeting outputs, processing elections, and other organisational decisions. The parent nest must be a role, circle, or anchor-circle.",
+    description: "Create a new tension — the fundamental unit of inter-role communication. Tensions represent a gap between current reality and potential. Use for ALL cross-role communication: requesting information, sharing information, requesting outcomes/projects, requesting actions/tasks, or setting expectations (governance). The parent nest must be a role, circle, or anchor-circle.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "ID of the circle or role to create the tension on" },
-        title: { type: "string", description: "Title describing the tension (plain text)" },
-        description: { type: "string", description: "Detailed description of the tension (supports HTML)" },
+        title: { type: "string", description: "The gap — what is the difference between current reality and desired state (plain text)" },
+        description: { type: "string", description: "The observable facts — what you see/hear/experience (supports HTML)" },
+        feeling: { type: "string", description: "The feeling this tension evokes — separated to keep the organizational response clean (plain text)" },
+        needs: { type: "string", description: "The need that is alive — what personal or organizational need is not being met (plain text)" },
       },
       required: ["nestId", "title"],
     },
@@ -983,14 +1063,16 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
   },
   {
     name: "nestr_update_tension",
-    description: "Update a tension's title or description. Use this to refine the tension statement before adding proposal parts.",
+    description: "Update a tension's title, description, feeling, or needs. Use to refine the tension statement or add personal context before adding proposal parts.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
         tensionId: { type: "string", description: "Tension ID" },
-        title: { type: "string", description: "Updated title (plain text)" },
-        description: { type: "string", description: "Updated description (supports HTML)" },
+        title: { type: "string", description: "Updated title — the gap being sensed (plain text)" },
+        description: { type: "string", description: "Updated description — the observable facts (supports HTML)" },
+        feeling: { type: "string", description: "Updated feeling this tension evokes (plain text)" },
+        needs: { type: "string", description: "Updated need that is alive (plain text)" },
       },
       required: ["nestId", "tensionId"],
     },
@@ -1284,6 +1366,20 @@ async function _handleToolCall(
         return formatResult({ message: "Comment added successfully", post });
       }
 
+      case "nestr_update_comment": {
+        const parsed = schemas.updateComment.parse(args);
+        const updated = await client.updateNest(parsed.commentId, {
+          title: parsed.body,
+        });
+        return formatResult({ message: "Comment updated successfully", comment: updated });
+      }
+
+      case "nestr_delete_comment": {
+        const parsed = schemas.deleteComment.parse(args);
+        await client.deleteNest(parsed.commentId);
+        return formatResult({ message: `Comment ${parsed.commentId} deleted successfully` });
+      }
+
       case "nestr_list_circles": {
         const parsed = schemas.listCircles.parse(args);
         const circles = await client.listCircles(parsed.workspaceId, {
@@ -1505,12 +1601,53 @@ async function _handleToolCall(
         return formatResult(completableResponse(compactResponse(items), "daily-plan", "Daily Plan"));
       }
 
+      // Current user identity
+      case "nestr_get_me": {
+        schemas.getMe.parse(args);
+        try {
+          const user = await client.getCurrentUser();
+          return formatResult({
+            authMode: "oauth",
+            user,
+            mode: user.bot ? "role-filler" : "assistant",
+            hint: user.bot
+              ? "You are a bot energizing roles. You have no authority as an agent — only through the roles you fill. Act autonomously within your roles' accountabilities. Process tensions proactively."
+              : "You are assisting a human who energizes roles. Defer to them for decisions. Help them articulate tensions and navigate governance.",
+          });
+        } catch {
+          // getCurrentUser fails for workspace API keys — no user identity
+          return formatResult({
+            authMode: "api-key",
+            user: null,
+            mode: "workspace",
+            hint: "Using a workspace API key. No user identity — user-scoped features (inbox, daily plan, personal labels, my tensions) are unavailable. You are managing the workspace directly.",
+          });
+        }
+      }
+
+      // User tension tools (requires OAuth token)
+      case "nestr_list_my_tensions": {
+        const parsed = schemas.listMyTensions.parse(args);
+        const tensions = await client.listMyTensions({ context: parsed.context });
+        return formatResult(compactResponse(tensions));
+      }
+
+      case "nestr_list_tensions_awaiting_consent": {
+        const parsed = schemas.listTensionsAwaitingConsent.parse(args);
+        const tensions = await client.listTensionsAwaitingConsent({ context: parsed.context });
+        return formatResult(compactResponse(tensions));
+      }
+
       // Tension tools
       case "nestr_create_tension": {
         const parsed = schemas.createTension.parse(args);
+        const fields: Record<string, unknown> = {};
+        if (parsed.feeling) fields["tension.feeling"] = parsed.feeling;
+        if (parsed.needs) fields["tension.needs"] = parsed.needs;
         const tension = await client.createTension(parsed.nestId, {
           title: parsed.title,
           description: parsed.description,
+          ...(Object.keys(fields).length > 0 ? { fields } : {}),
         });
         return formatResult({ message: "Tension created successfully", tension });
       }
@@ -1537,12 +1674,16 @@ async function _handleToolCall(
 
       case "nestr_update_tension": {
         const parsed = schemas.updateTension.parse(args);
+        const fields: Record<string, unknown> = {};
+        if (parsed.feeling !== undefined) fields["tension.feeling"] = parsed.feeling;
+        if (parsed.needs !== undefined) fields["tension.needs"] = parsed.needs;
         const tension = await client.updateTension(
           parsed.nestId,
           parsed.tensionId,
           {
             title: parsed.title,
             description: parsed.description,
+            ...(Object.keys(fields).length > 0 ? { fields } : {}),
           }
         );
         return formatResult({ message: "Tension updated successfully", tension });

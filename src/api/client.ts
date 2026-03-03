@@ -50,6 +50,8 @@ export interface Post {
 export interface User {
   _id: string;
   username: string;
+  /** True when the authenticated user is a bot (agent acting as role filler) */
+  bot?: boolean;
   profile?: {
     email?: string;
     fullName?: string;
@@ -821,7 +823,7 @@ export class NestrClient {
 
   async createTension(
     nestId: string,
-    data: { title: string; description?: string }
+    data: { title: string; description?: string; fields?: Record<string, unknown> }
   ): Promise<Tension> {
     return this.fetch<Tension>(`/nests/${nestId}/tensions`, {
       method: "POST",
@@ -861,7 +863,7 @@ export class NestrClient {
   async updateTension(
     nestId: string,
     tensionId: string,
-    data: { title?: string; description?: string }
+    data: { title?: string; description?: string; fields?: Record<string, unknown> }
   ): Promise<Tension> {
     return this.fetch<Tension>(`/nests/${nestId}/tensions/${tensionId}`, {
       method: "PATCH",
@@ -989,6 +991,36 @@ export class NestrClient {
         body: JSON.stringify({ status }),
       }
     );
+  }
+
+  // ============ USER TENSIONS (requires OAuth token) ============
+
+  /**
+   * List tensions created by or assigned to the current user.
+   * Requires OAuth token (user-scoped) - does not work with workspace API keys.
+   */
+  async listMyTensions(options?: {
+    context?: string;
+  }): Promise<Tension[]> {
+    const params = new URLSearchParams();
+    if (options?.context) params.set("context", options.context);
+
+    const query = params.toString();
+    return this.fetch<Tension[]>(`/users/me/tensions${query ? `?${query}` : ""}`);
+  }
+
+  /**
+   * List tensions awaiting the current user's consent vote.
+   * Requires OAuth token (user-scoped) - does not work with workspace API keys.
+   */
+  async listTensionsAwaitingConsent(options?: {
+    context?: string;
+  }): Promise<Tension[]> {
+    const params = new URLSearchParams();
+    if (options?.context) params.set("context", options.context);
+
+    const query = params.toString();
+    return this.fetch<Tension[]>(`/users/me/tensions/awaiting-my-consent${query ? `?${query}` : ""}`);
   }
 
   // ============ CURRENT USER ============

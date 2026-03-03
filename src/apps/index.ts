@@ -885,7 +885,7 @@ const COMPLETABLE_LIST_HTML = `<!DOCTYPE html>
     let draggedItem = null;
 
     // System labels that define structure (not categorization)
-    const SYSTEM_LABELS = ['circle', 'anchor-circle', 'role', 'policy', 'domain', 'accountability', 'project', 'prepared-tension', 'goal', 'result', 'contact', 'deal', 'organisation', 'metric', 'checklist', 'meeting', 'feedback'];
+    const SYSTEM_LABELS = ['circle', 'anchor-circle', 'role', 'policy', 'domain', 'accountability', 'project', 'tension', 'goal', 'result', 'contact', 'deal', 'organisation', 'metric', 'checklist', 'meeting', 'feedback'];
 
     // Project box icon (isometric 3D cube with white edges)
     const cubeIcon = \`<svg viewBox="0 0 1024 1024" fill="currentColor">

@@ -242,6 +242,8 @@ The server exposes these tools to AI assistants:
 | `nestr_update_nest` | `PATCH /nests/{id}` |
 | `nestr_delete_nest` | `DELETE /nests/{id}` |
 | `nestr_add_comment` | `POST /nests/{id}/posts` |
+| `nestr_update_comment` | `PATCH /nests/{id}` (comment body) |
+| `nestr_delete_comment` | `DELETE /nests/{id}` (comment) |
 | `nestr_get_comments` | `GET /nests/{id}/posts` |
 | `nestr_list_circles` | `GET /workspaces/{id}/circles` |
 | `nestr_get_circle` | `GET /workspaces/{id}/circles/{cid}` |
@@ -264,6 +266,9 @@ The server exposes these tools to AI assistants:
 | `nestr_list_personal_labels` | `GET /users/me/labels` (OAuth only) |
 | `nestr_create_personal_label` | `POST /users/me/labels` (OAuth only) |
 | `nestr_get_daily_plan` | `GET /users/me/today` (OAuth only) |
+| `nestr_get_me` | `GET /users/me` (OAuth for full info; graceful fallback for API key) |
+| `nestr_list_my_tensions` | `GET /users/me/tensions` (OAuth only) |
+| `nestr_list_tensions_awaiting_consent` | `GET /users/me/tensions/awaiting-my-consent` (OAuth only) |
 | `nestr_reorder_nest` | `POST /nests/{id}/reorder/{position}/{relatedId}` |
 | `nestr_bulk_reorder` | `PATCH /workspaces/{id}/reorder` |
 | `nestr_create_tension` | `POST /nests/{id}/tensions` |
