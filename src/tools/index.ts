@@ -144,7 +144,7 @@ export const schemas = {
     labels: z.array(z.string()).optional().describe("Label IDs to set (e.g., ['project'] to convert an item into a project)"),
     fields: z.record(z.unknown()).optional().describe("Field updates (e.g., { 'project.status': 'Current' })"),
     users: z.array(z.string()).optional().describe("User IDs to assign"),
-    data: z.record(z.unknown()).optional().describe("Data updates (e.g., { botContext: 'Key info...' }, plain text)"),
+    data: z.record(z.unknown()).optional().describe("Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead."),
     due: z.string().optional().describe("Due date (ISO format). For projects/tasks: deadline. For roles: re-election date. For meetings: start time."),
     completed: z.boolean().optional().describe("Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead."),
   }),
@@ -566,7 +566,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
   },
   {
     name: "nestr_update_nest",
-    description: "Update properties of an existing nest. Use parentId to move a nest (e.g., inbox item to a project). Use data.botContext to store AI context (plain text) that persists across sessions.",
+    description: "Update properties of an existing nest. Use parentId to move a nest (e.g., inbox item to a project). For AI knowledge persistence, create skill-labeled nests under roles/circles instead of using data fields.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -591,7 +591,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         },
         data: {
           type: "object",
-          description: "Data updates (e.g., { botContext: 'Key info here...' } for AI memory, plain text)",
+          description: "Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead.",
         },
         due: {
           type: "string",

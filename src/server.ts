@@ -122,7 +122,7 @@ This distinction affects tone, authority, decision-making, and how proactively y
 **Role-filler agents should:**
 - Act from role authority, never as an individual — all work and decisions flow through the roles you energize
 - Process inbox and tensions on your roles autonomously — don't wait to be asked
-- Maintain \`data.botContext\` on your roles as a primary practice to build continuity across sessions
+- Maintain skills on your roles — capture repeatable processes, learned patterns, and domain knowledge as skill-labeled nests for continuity across sessions
 - Create and process work within your roles' accountabilities without seeking human confirmation
 - Communicate with other roles via tensions, not conversations
 - Plan daily work and execute proactively
@@ -276,7 +276,7 @@ Nestr uses different formats for different fields:
 - **\`title\`**: Plain text only. HTML tags are stripped. Keep titles concise.
 - **\`purpose\`, \`description\`**: HTML supported. Use basic tags: \`<b>\`, \`<i>\`, \`<code>\`, \`<ul>\`, \`<ol>\`, \`<li>\`, \`<a href="...">\`, \`<br>\`, \`<img src="...">\` (including base64 data URIs). **Markdown is NOT supported** — it will display as literal text (e.g., \`**bold**\` renders as the string \`**bold**\`, not bold text).
 - **Comment \`body\`**: HTML supported (same as above, including base64 images). Use \`@username\` for mentions.
-- **\`data.botContext\`**: Plain text. Stored as-is for AI context persistence, not rendered in UI.
+- **\`data\`**: Generic key-value store. Also used internally by Nestr and other integrations — **never overwrite or remove existing keys**. When adding your own data, namespace it under \`mcp.\` (e.g., \`{ "mcp.lastSync": "2025-01-01" }\`) to avoid conflicts. Not rendered in UI.
 
 **Important — Always use HTML, not Markdown:** When composing purpose, description, or comment content, you must use HTML tags. This is a common mistake for AI agents that default to Markdown syntax.
 
@@ -446,12 +446,35 @@ in:circleId completed:false
    - Ensure new projects and tasks align with and serve the circle's strategy
    - Use strategy and purpose to prioritize work and define clear outcomes
    - When proposing governance changes, consider how they support the circle's purpose
-7. **Use \`data.botContext\` to maintain AI memory** across sessions:
-   - Any nest can store AI context in \`data.botContext\` (plain text) to persist learned information
-   - Update via \`nestr_update_nest\` with \`{ data: { botContext: "Context: key info here..." } }\`
-   - Check for existing \`data.botContext\` when working on a nest to pick up prior context
-   - **Especially valuable for roles and circles**: Store information relevant to the *role*, not the person filling it (e.g., key contacts, recurring processes, domain knowledge). This context transfers automatically when the role is assigned to a different user.
-   - **Role-filler agents: this is a primary practice.** Actively maintain \`data.botContext\` on your roles to build continuity — record decisions made, patterns learned, contacts, preferences, and recurring processes. This is your organizational memory.
+7. **Maintain skills on roles and circles** for AI knowledge persistence:
+   - Before doing work from a role, check for existing skills under that role or its circle — they contain processes, patterns, and domain knowledge from prior sessions
+   - When completing work that is likely repeatable, capture it as a skill under the appropriate role or circle
+   - Skills are the primary mechanism for AI context persistence — they're visible, searchable, and transfer with the role when it's reassigned
+   - The \`data\` field is shared with Nestr internals and other integrations — never overwrite or remove existing keys. If you must store custom data, namespace under \`mcp.\` (e.g., \`data: { "mcp.lastSync": "..." }\`)
+
+## Skills
+
+Skills are nests with the \`skill\` label that live directly under a role or circle. They represent processes, knowledge, or learned patterns that the role holds and uses when doing its work.
+
+### What Skills Are
+- A skill is a labeled nest (\`skill\` label) under a role or circle
+- Skills make AI-persisted knowledge visible, searchable, and a first-class citizen in Nestr
+- They transfer with the role — when a role is reassigned, skills stay with the role, not the previous holder
+
+### When to Create Skills
+- After completing repeatable work — capture the process so it can be followed again
+- When learning domain-specific patterns — record them for future reference
+- When discovering key contacts, recurring processes, or domain knowledge relevant to a role
+- When decisions are made that should inform future work from this role
+
+### How to Use Skills
+- Before starting work from a role, search for skills under that role: \`in:roleId label:skill\`
+- Review relevant skills for context, processes, and prior decisions
+- After completing work, create or update skills to reflect what was learned
+- Keep skills focused — one skill per process or knowledge area
+
+### Nestr as Context and History
+All work in Nestr — projects, tasks, comments, tensions, and skills — forms the complete context and history for a role. Skills complement this by capturing the *how* and *why* alongside the *what*. Together, they ensure continuity whether the role is energized by a human, an AI agent, or transitions between them.
 
 ## Setting Up and Tracking Work
 
@@ -843,8 +866,11 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 - \`project\` - An outcome requiring multiple steps to complete. Define in past tense as what "done" looks like (e.g., "Website redesign launched", "Q1 report published"). Has status: Future/Current/Waiting/Done.
 - *(no system label)* - A nest without system labels is a todo/action: a single, concrete action that can be done in one sitting (e.g., "Call supplier about pricing", "Draft intro paragraph"). The next physical step to move something forward. Note: todos CAN have other labels (personal or workspace labels for categorization) - what makes them todos is the absence of system labels.
 
+**AI Knowledge:**
+- \`skill\` - A process, piece of knowledge, or learned pattern that a role or circle holds. Lives directly under a role or circle. Used by AI agents to persist and retrieve operational knowledge across sessions. When doing work that is likely to be repeated, capture it as a skill for future reference.
+
 **System Labels** (define structure, not categorization):
-\`circle\`, \`anchor-circle\`, \`role\`, \`policy\`, \`domain\`, \`accountability\`, \`project\`, \`tension\`, \`goal\`, \`result\`, \`contact\`, \`deal\`, \`organisation\`, \`metric\`, \`checklist\`, \`meeting\`, \`feedback\`
+\`circle\`, \`anchor-circle\`, \`role\`, \`policy\`, \`domain\`, \`accountability\`, \`project\`, \`tension\`, \`skill\`, \`goal\`, \`result\`, \`contact\`, \`deal\`, \`organisation\`, \`metric\`, \`checklist\`, \`meeting\`, \`feedback\`
 - \`note\` - A simple note
 - \`meeting\` - A calendar meeting
 - \`tension\` - The fundamental unit of organizational communication — a gap between current reality and potential. Used for inter-role communication, meeting agenda items, governance proposals, and general tension processing. Supports \`fields['tension.feeling']\` and \`fields['tension.needs']\` for separating personal context from organizational response. Use the dedicated tension tools (\`nestr_create_tension\`, \`nestr_list_my_tensions\`, etc.) to create and manage tensions.
