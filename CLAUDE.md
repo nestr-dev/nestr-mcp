@@ -242,6 +242,8 @@ The server exposes these tools to AI assistants:
 | `nestr_update_nest` | `PATCH /nests/{id}` |
 | `nestr_delete_nest` | `DELETE /nests/{id}` |
 | `nestr_add_comment` | `POST /nests/{id}/posts` |
+| `nestr_update_comment` | `PATCH /nests/{id}` (comment body) |
+| `nestr_delete_comment` | `DELETE /nests/{id}` (comment) |
 | `nestr_get_comments` | `GET /nests/{id}/posts` |
 | `nestr_list_circles` | `GET /workspaces/{id}/circles` |
 | `nestr_get_circle` | `GET /workspaces/{id}/circles/{cid}` |
@@ -249,6 +251,7 @@ The server exposes these tools to AI assistants:
 | `nestr_list_roles` | `GET /workspaces/{id}/roles` |
 | `nestr_list_users` | `GET /workspaces/{id}/users` |
 | `nestr_get_user` | `GET /workspaces/{id}/users/{uid}` |
+| `nestr_add_workspace_user` | `POST /workspaces/{id}/users` |
 | `nestr_list_labels` | `GET /workspaces/{id}/labels` |
 | `nestr_get_label` | `GET /workspaces/{id}/labels/{lid}` |
 | `nestr_get_projects` | `GET /workspaces/{id}/projects` |
@@ -263,8 +266,23 @@ The server exposes these tools to AI assistants:
 | `nestr_list_personal_labels` | `GET /users/me/labels` (OAuth only) |
 | `nestr_create_personal_label` | `POST /users/me/labels` (OAuth only) |
 | `nestr_get_daily_plan` | `GET /users/me/today` (OAuth only) |
+| `nestr_get_me` | `GET /users/me` (OAuth for full info; graceful fallback for API key) |
+| `nestr_list_my_tensions` | `GET /users/me/tensions` (OAuth only) |
+| `nestr_list_tensions_awaiting_consent` | `GET /users/me/tensions/awaiting-my-consent` (OAuth only) |
 | `nestr_reorder_nest` | `POST /nests/{id}/reorder/{position}/{relatedId}` |
 | `nestr_bulk_reorder` | `PATCH /workspaces/{id}/reorder` |
+| `nestr_create_tension` | `POST /nests/{id}/tensions` |
+| `nestr_get_tension` | `GET /nests/{id}/tensions/{tid}` |
+| `nestr_list_tensions` | `GET /nests/{id}/tensions` |
+| `nestr_update_tension` | `PATCH /nests/{id}/tensions/{tid}` |
+| `nestr_delete_tension` | `DELETE /nests/{id}/tensions/{tid}` |
+| `nestr_get_tension_parts` | `GET /nests/{id}/tensions/{tid}/parts` |
+| `nestr_add_tension_part` | `POST/PATCH/DELETE /nests/{id}/tensions/{tid}/parts` |
+| `nestr_modify_tension_part` | `PATCH /nests/{id}/tensions/{tid}/parts/{pid}` |
+| `nestr_remove_tension_part` | `DELETE /nests/{id}/tensions/{tid}/parts/{pid}` |
+| `nestr_get_tension_changes` | `GET /nests/{id}/tensions/{tid}/parts/{pid}/changes` |
+| `nestr_get_tension_status` | `GET /nests/{id}/tensions/{tid}/status` |
+| `nestr_update_tension_status` | `PATCH /nests/{id}/tensions/{tid}/status` |
 
 ## Adding a New Tool
 
@@ -347,6 +365,26 @@ An interactive list for completing tasks and projects. Features:
 - Users authenticate via:
   - `X-Nestr-API-Key` header (API key)
   - `Authorization: Bearer <token>` header (OAuth token)
+
+### JSON Response Mode (non-streaming)
+
+By default, the MCP endpoint returns responses as SSE streams (`text/event-stream`). For integrations that prefer plain JSON (e.g., curl-based scripts, shell-based AI agents), send `Accept: application/json` **without** `text/event-stream` on the initialization request:
+
+```bash
+# SSE streaming (default)
+curl -X POST https://mcp.nestr.io/mcp \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"initialize",...}'
+
+# Plain JSON responses (no SSE parsing needed)
+curl -X POST https://mcp.nestr.io/mcp \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"initialize",...}'
+```
+
+The response mode is determined at session initialization and applies for the lifetime of the session. In JSON mode, responses are plain JSON-RPC objects instead of SSE-wrapped `event: message\ndata: {...}` format.
 
 ## Testing
 

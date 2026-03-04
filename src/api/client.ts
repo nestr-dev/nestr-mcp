@@ -8,6 +8,8 @@ export interface NestrClientConfig {
   baseUrl?: string;
   /** MCP client name (e.g., "claude-desktop", "cursor") for tracking */
   mcpClient?: string;
+  /** Optional async function to resolve a fresh token before each request (e.g., for OAuth refresh) */
+  tokenProvider?: () => Promise<string>;
 }
 
 export interface Nest {
@@ -48,6 +50,8 @@ export interface Post {
 export interface User {
   _id: string;
   username: string;
+  /** True when the authenticated user is a bot (agent acting as role filler) */
+  bot?: boolean;
   profile?: {
     email?: string;
     fullName?: string;
@@ -83,6 +87,33 @@ export interface WorkspaceApp {
   title: string;
   description?: string;
   enabled: boolean;
+}
+
+export interface Tension extends Nest {
+  status?: "draft" | "proposed" | "accepted" | "objected";
+}
+
+export interface TensionPart {
+  _id: string;
+  title?: string;
+  items?: Array<Record<string, unknown>>;
+}
+
+export interface TensionChange {
+  nestId: string | null;
+  variable: string;
+  newValue: unknown;
+  oldValue: unknown;
+}
+
+export interface TensionStatus {
+  status: "draft" | "proposed" | "accepted" | "objected";
+  responses?: Array<{
+    userId: string;
+    response: "none" | "accepted" | "objected";
+    votedAt?: string;
+  }>;
+  autoapprove?: string;
 }
 
 /** Error codes for structured error handling */
@@ -170,16 +201,19 @@ export class NestrClient {
   private apiKey: string;
   private baseUrl: string;
   private mcpClient?: string;
+  private tokenProvider?: () => Promise<string>;
 
   constructor(config: NestrClientConfig) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl || "https://app.nestr.io/api";
     this.mcpClient = config.mcpClient;
+    this.tokenProvider = config.tokenProvider;
   }
 
   private async fetch<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    isRetry = false
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
 
@@ -202,6 +236,13 @@ export class NestrClient {
     });
 
     if (!response.ok) {
+      // On 401 with a tokenProvider, try refreshing the token and retry once
+      if (response.status === 401 && this.tokenProvider && !isRetry) {
+        const newToken = await this.tokenProvider();
+        this.apiKey = newToken;
+        return this.fetch<T>(endpoint, options, true);
+      }
+
       const errorText = await response.text().catch(() => "Unknown error");
 
       // Try to parse JSON error response for clearer error messages
@@ -532,6 +573,26 @@ export class NestrClient {
     return this.fetch<User>(`/workspaces/${workspaceId}/users/${userId}`);
   }
 
+  async addWorkspaceUser(
+    workspaceId: string,
+    options: { username: string; fullName?: string; language?: string }
+  ): Promise<User> {
+    return this.fetch<User>(`/workspaces/${workspaceId}/users`, {
+      method: "POST",
+      body: JSON.stringify({
+        username: options.username,
+        ...(options.fullName || options.language
+          ? {
+              profile: {
+                ...(options.fullName ? { fullName: options.fullName } : {}),
+                ...(options.language ? { language: options.language } : {}),
+              },
+            }
+          : {}),
+      }),
+    });
+  }
+
   // ============ LABELS ============
 
   async listLabels(
@@ -756,6 +817,210 @@ export class NestrClient {
       }
     );
     return response.data;
+  }
+
+  // ============ TENSIONS ============
+
+  async createTension(
+    nestId: string,
+    data: { title: string; description?: string; fields?: Record<string, unknown> }
+  ): Promise<Tension> {
+    return this.fetch<Tension>(`/nests/${nestId}/tensions`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getTension(
+    nestId: string,
+    tensionId: string,
+    options?: { cleanText?: boolean }
+  ): Promise<Tension> {
+    const params = new URLSearchParams();
+    if (options?.cleanText) params.set("cleanText", "true");
+    const query = params.toString();
+    return this.fetch<Tension>(
+      `/nests/${nestId}/tensions/${tensionId}${query ? `?${query}` : ""}`
+    );
+  }
+
+  async listTensions(
+    nestId: string,
+    search?: string,
+    options?: { limit?: number; order?: string; cleanText?: boolean }
+  ): Promise<Tension[]> {
+    const params = new URLSearchParams();
+    if (search) params.set("search", search);
+    if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.order) params.set("order", options.order);
+    if (options?.cleanText) params.set("cleanText", "true");
+    const query = params.toString();
+    return this.fetch<Tension[]>(
+      `/nests/${nestId}/tensions${query ? `?${query}` : ""}`
+    );
+  }
+
+  async updateTension(
+    nestId: string,
+    tensionId: string,
+    data: { title?: string; description?: string; fields?: Record<string, unknown> }
+  ): Promise<Tension> {
+    return this.fetch<Tension>(`/nests/${nestId}/tensions/${tensionId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteTension(nestId: string, tensionId: string): Promise<void> {
+    await this.fetch<void>(`/nests/${nestId}/tensions/${tensionId}`, {
+      method: "DELETE",
+    });
+  }
+
+  async getTensionParts(
+    nestId: string,
+    tensionId: string,
+    options?: { cleanText?: boolean }
+  ): Promise<TensionPart[]> {
+    const params = new URLSearchParams();
+    if (options?.cleanText) params.set("cleanText", "true");
+    const query = params.toString();
+    return this.fetch<TensionPart[]>(
+      `/nests/${nestId}/tensions/${tensionId}/parts${query ? `?${query}` : ""}`
+    );
+  }
+
+  async createTensionPart(
+    nestId: string,
+    tensionId: string,
+    data: Record<string, unknown>
+  ): Promise<TensionPart> {
+    return this.fetch<TensionPart>(
+      `/nests/${nestId}/tensions/${tensionId}/parts`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      }
+    );
+  }
+
+  async proposeTensionChange(
+    nestId: string,
+    tensionId: string,
+    data: Record<string, unknown>
+  ): Promise<TensionPart> {
+    return this.fetch<TensionPart>(
+      `/nests/${nestId}/tensions/${tensionId}/parts`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }
+    );
+  }
+
+  async proposeTensionRemoval(
+    nestId: string,
+    tensionId: string,
+    data: { _id: string }
+  ): Promise<TensionPart> {
+    return this.fetch<TensionPart>(
+      `/nests/${nestId}/tensions/${tensionId}/parts`,
+      {
+        method: "DELETE",
+        body: JSON.stringify(data),
+      }
+    );
+  }
+
+  async modifyTensionPart(
+    nestId: string,
+    tensionId: string,
+    partId: string,
+    data: Record<string, unknown>
+  ): Promise<TensionPart> {
+    return this.fetch<TensionPart>(
+      `/nests/${nestId}/tensions/${tensionId}/parts/${partId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }
+    );
+  }
+
+  async removeTensionPart(
+    nestId: string,
+    tensionId: string,
+    partId: string
+  ): Promise<void> {
+    await this.fetch<void>(
+      `/nests/${nestId}/tensions/${tensionId}/parts/${partId}`,
+      {
+        method: "DELETE",
+      }
+    );
+  }
+
+  async getTensionPartChanges(
+    nestId: string,
+    tensionId: string,
+    partId: string
+  ): Promise<TensionChange[]> {
+    return this.fetch<TensionChange[]>(
+      `/nests/${nestId}/tensions/${tensionId}/parts/${partId}/changes`
+    );
+  }
+
+  async getTensionStatus(
+    nestId: string,
+    tensionId: string
+  ): Promise<TensionStatus> {
+    return this.fetch<TensionStatus>(
+      `/nests/${nestId}/tensions/${tensionId}/status`
+    );
+  }
+
+  async updateTensionStatus(
+    nestId: string,
+    tensionId: string,
+    status: "proposed" | "draft"
+  ): Promise<TensionStatus> {
+    return this.fetch<TensionStatus>(
+      `/nests/${nestId}/tensions/${tensionId}/status`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      }
+    );
+  }
+
+  // ============ USER TENSIONS (requires OAuth token) ============
+
+  /**
+   * List tensions created by or assigned to the current user.
+   * Requires OAuth token (user-scoped) - does not work with workspace API keys.
+   */
+  async listMyTensions(options?: {
+    context?: string;
+  }): Promise<Tension[]> {
+    const params = new URLSearchParams();
+    if (options?.context) params.set("context", options.context);
+
+    const query = params.toString();
+    return this.fetch<Tension[]>(`/users/me/tensions${query ? `?${query}` : ""}`);
+  }
+
+  /**
+   * List tensions awaiting the current user's consent vote.
+   * Requires OAuth token (user-scoped) - does not work with workspace API keys.
+   */
+  async listTensionsAwaitingConsent(options?: {
+    context?: string;
+  }): Promise<Tension[]> {
+    const params = new URLSearchParams();
+    if (options?.context) params.set("context", options.context);
+
+    const query = params.toString();
+    return this.fetch<Tension[]>(`/users/me/tensions/awaiting-my-consent${query ? `?${query}` : ""}`);
   }
 
   // ============ CURRENT USER ============
