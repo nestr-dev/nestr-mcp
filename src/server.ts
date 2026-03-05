@@ -1228,17 +1228,14 @@ For single-item repositioning, use \`nestr_reorder_nest\` to place an item befor
 
 The daily plan is **personal** — it is the user's plan for the day across all their contexts. It can include role work from any workspace, personal projects, family errands, or anything else they want to focus on today. It pulls items from across all workspaces in scope (if the token has cross-workspace scope) and is not tied to any single organizational context.
 
-Items are added to the daily plan by applying the \`now\` label.
+Items are added to the daily plan using \`nestr_add_to_daily_plan\` and removed using \`nestr_remove_from_daily_plan\`.
 
 **Note:** Daily plan tools require OAuth authentication (user-scoped token). They won't work with workspace API keys.
 
 ### How the Daily Plan Works
 
-- **Adding items**: Apply the \`now\` label to any nest to add it to the daily plan
-  \`\`\`json
-  { "nestId": "taskId", "labels": ["now"] }
-  \`\`\`
-- **Removing items**: Remove the \`now\` label to take something off the daily plan
+- **Adding items**: Use \`nestr_add_to_daily_plan\` with an array of nest IDs
+- **Removing items**: Use \`nestr_remove_from_daily_plan\` with an array of nest IDs
 - **Viewing**: Use \`nestr_get_daily_plan\` to see all items marked for today
 - **Completed items included**: The daily plan includes items completed today, so users can see what they accomplished at the end of the day
 
@@ -1261,7 +1258,7 @@ The daily plan only includes items from:
 2. **Building the plan**: Help select items for today
    - Review active projects and tasks (\`assignee:me completed:false\`)
    - Suggest high-priority or overdue items
-   - Add selected items by applying the \`now\` label
+   - Add selected items using \`nestr_add_to_daily_plan\`
 
 3. **During the day**: Check in on progress and adjust as priorities change
 

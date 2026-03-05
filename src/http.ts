@@ -932,6 +932,7 @@ function buildWwwAuthenticateHeader(req: Request): string {
 app.post("/mcp", async (req: Request, res: Response) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   const authToken = getAuthToken(req);
+  const isApiKey = !!req.headers["x-nestr-api-key"];
 
   // Strip sensitive headers so they don't leak into MCP SDK's extra.requestInfo
   // (which MCPCat and other middleware can capture)
@@ -1005,20 +1006,30 @@ app.post("/mcp", async (req: Request, res: Response) => {
       console.log(`MCP client: ${mcpClientName}`);
     }
 
-    // Determine auth method and get user_id if available (for OAuth sessions)
-    const isApiKey = !!req.headers["x-nestr-api-key"];
     let userId: string | undefined;
 
-    // For OAuth tokens, try to get stored user_id
-    // The token itself is used as the session lookup key
+    // For OAuth tokens, validate the session exists before creating an MCP session.
+    // Without this check, an expired OAuth token creates a session that immediately
+    // fails on every tool call, and the client loops re-initializing with the same dead token.
     if (!isApiKey) {
       try {
-        // Try to find stored OAuth session with user_id
-        // Note: For returning users, we may not have their session stored locally
-        // In that case, we could fetch /users/me, but that adds latency
-        // For now, we only use userId if we have it cached
         const storedSession = getSession(authToken);
-        userId = storedSession?.userId;
+        if (!storedSession) {
+          // No OAuth session found — return 401 to trigger full re-authentication
+          console.log("OAuth session not found during initialization, requesting re-auth");
+          res.status(401);
+          res.setHeader("WWW-Authenticate", buildWwwAuthenticateHeader(req));
+          res.json({
+            jsonrpc: "2.0",
+            error: {
+              code: -32001,
+              message: "OAuth session expired. Re-authenticate to continue.",
+            },
+            id: (req.body as Record<string, unknown>)?.id ?? null,
+          });
+          return;
+        }
+        userId = storedSession.userId;
       } catch (e) { console.error("[GA4] Analytics lookup error:", e); }
     }
 
@@ -1033,6 +1044,11 @@ app.post("/mcp", async (req: Request, res: Response) => {
       } : undefined;
     } catch (e) { console.error("[Analytics] Context creation error:", e); }
 
+    // Track tool calls for analytics
+    // We use a mutable ref so the callback can access the session's analytics context
+    // after the session is initialized, and to allow tokenProvider to invalidate the session
+    let sessionRef: SessionData | undefined;
+
     // Create new session with the auth token and MCP client info
     const client = new NestrClient({
       apiKey: authToken,
@@ -1040,19 +1056,22 @@ app.post("/mcp", async (req: Request, res: Response) => {
       tokenProvider: isApiKey ? undefined : async () => {
         const session = await getOAuthSession(authToken);
         if (!session) {
+          // Remove the MCP session from the lookup map so the next request
+          // won't find it. The init-time OAuth validation will then return 401,
+          // triggering a full re-authentication flow.
+          const sid = sessionRef?.transport?.sessionId;
+          if (sid && sessions[sid]) {
+            console.log(`OAuth session expired mid-session, removing MCP session: ${sid}`);
+            delete sessions[sid];
+          }
           throw new NestrApiError("OAuth session expired", 401, "/", {
             code: "AUTH_FAILED",
-            hint: "Re-authenticate to get a new token.",
+            hint: "Your OAuth session has expired or the server was restarted. Reconnect to the MCP server to re-authenticate.",
           });
         }
         return session.accessToken;
       },
     });
-
-    // Track tool calls for analytics
-    // We use a mutable ref so the callback can access the session's analytics context
-    // after the session is initialized
-    let sessionRef: SessionData | undefined;
 
     const server = createServer({
       client,

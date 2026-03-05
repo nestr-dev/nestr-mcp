@@ -283,6 +283,25 @@ export const schemas = {
     relatedNestId: z.string().describe("ID of the reference inbox item to position relative to"),
   }),
 
+  // Label management
+  addLabel: z.object({
+    nestId: z.string().describe("Nest ID"),
+    labelId: z.string().describe("Label ID to add"),
+  }),
+
+  removeLabel: z.object({
+    nestId: z.string().describe("Nest ID"),
+    labelId: z.string().describe("Label ID to remove"),
+  }),
+
+  addToDailyPlan: z.object({
+    nestIds: z.array(z.string()).describe("Array of nest IDs to add to the daily plan"),
+  }),
+
+  removeFromDailyPlan: z.object({
+    nestIds: z.array(z.string()).describe("Array of nest IDs to remove from the daily plan"),
+  }),
+
   // Personal labels (require OAuth token)
   listPersonalLabels: z.object({}),
 
@@ -989,6 +1008,61 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
     },
     _meta: completableListUi,
   },
+  // Label management
+  {
+    name: "nestr_add_label",
+    description: "Add a label to a nest. Personal labels (like 'now') are automatically scoped to the authenticated user by the API.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest ID" },
+        labelId: { type: "string", description: "Label ID to add (e.g., 'project', 'now', or a custom label ID)" },
+      },
+      required: ["nestId", "labelId"],
+    },
+  },
+  {
+    name: "nestr_remove_label",
+    description: "Remove a label from a nest. Personal labels (like 'now') are automatically scoped to the authenticated user by the API.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest ID" },
+        labelId: { type: "string", description: "Label ID to remove" },
+      },
+      required: ["nestId", "labelId"],
+    },
+  },
+  {
+    name: "nestr_add_to_daily_plan",
+    description: "Add one or more items to the daily plan by applying the 'now' label. Requires OAuth token.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Array of nest IDs to add to the daily plan",
+        },
+      },
+      required: ["nestIds"],
+    },
+  },
+  {
+    name: "nestr_remove_from_daily_plan",
+    description: "Remove one or more items from the daily plan by removing the 'now' label. Requires OAuth token.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Array of nest IDs to remove from the daily plan",
+        },
+      },
+      required: ["nestIds"],
+    },
+  },
   // Current user identity
   {
     name: "nestr_get_me",
@@ -1594,6 +1668,41 @@ async function _handleToolCall(
         return formatResult({ message: "Nests reordered successfully", nests: result });
       }
 
+      // Label management
+      case "nestr_add_label": {
+        const parsed = schemas.addLabel.parse(args);
+        const nest = await client.addLabel(parsed.nestId, parsed.labelId);
+        return formatResult({ message: `Label '${parsed.labelId}' added successfully`, nest: compactResponse(nest) });
+      }
+
+      case "nestr_remove_label": {
+        const parsed = schemas.removeLabel.parse(args);
+        const nest = await client.removeLabel(parsed.nestId, parsed.labelId);
+        return formatResult({ message: `Label '${parsed.labelId}' removed successfully`, nest: compactResponse(nest) });
+      }
+
+      case "nestr_add_to_daily_plan": {
+        const parsed = schemas.addToDailyPlan.parse(args);
+        const results = await Promise.all(
+          parsed.nestIds.map(id => client.addLabel(id, "now"))
+        );
+        return formatResult({
+          message: `${results.length} item(s) added to daily plan`,
+          nests: compactResponse(results),
+        });
+      }
+
+      case "nestr_remove_from_daily_plan": {
+        const parsed = schemas.removeFromDailyPlan.parse(args);
+        const results = await Promise.all(
+          parsed.nestIds.map(id => client.removeLabel(id, "now"))
+        );
+        return formatResult({
+          message: `${results.length} item(s) removed from daily plan`,
+          nests: compactResponse(results),
+        });
+      }
+
       // Daily plan (requires OAuth token)
       case "nestr_get_daily_plan": {
         schemas.getDailyPlan.parse(args);
@@ -1614,7 +1723,13 @@ async function _handleToolCall(
               ? "You are a bot energizing roles. You have no authority as an agent — only through the roles you fill. Act autonomously within your roles' accountabilities. Process tensions proactively."
               : "You are assisting a human who energizes roles. Defer to them for decisions. Help them articulate tensions and navigate governance.",
           });
-        } catch {
+        } catch (err) {
+          // If the error is from the tokenProvider (expired OAuth session),
+          // surface it instead of silently falling back to workspace mode.
+          // This prevents get_me from masking expired sessions as "api-key" mode.
+          if (err instanceof NestrApiError && err.message === "OAuth session expired") {
+            throw err;
+          }
           // getCurrentUser fails for workspace API keys — no user identity
           return formatResult({
             authMode: "api-key",

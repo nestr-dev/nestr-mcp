@@ -266,6 +266,10 @@ The server exposes these tools to AI assistants:
 | `nestr_list_personal_labels` | `GET /users/me/labels` (OAuth only) |
 | `nestr_create_personal_label` | `POST /users/me/labels` (OAuth only) |
 | `nestr_get_daily_plan` | `GET /users/me/today` (OAuth only) |
+| `nestr_add_to_daily_plan` | `PATCH /nests/{id}/add_label/now` (OAuth only) |
+| `nestr_remove_from_daily_plan` | `PATCH /nests/{id}/remove_label/now` (OAuth only) |
+| `nestr_add_label` | `PATCH /nests/{id}/add_label/{labelId}` |
+| `nestr_remove_label` | `PATCH /nests/{id}/remove_label/{labelId}` |
 | `nestr_get_me` | `GET /users/me` (OAuth for full info; graceful fallback for API key) |
 | `nestr_list_my_tensions` | `GET /users/me/tensions` (OAuth only) |
 | `nestr_list_tensions_awaiting_consent` | `GET /users/me/tensions/awaiting-my-consent` (OAuth only) |

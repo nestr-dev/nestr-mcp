@@ -740,6 +740,28 @@ export class NestrClient {
     });
   }
 
+  // ============ LABEL MANAGEMENT ============
+
+  /**
+   * Add a label to a nest. The API auto-scopes personal labels
+   * (e.g., 'now' becomes 'userId:now' for the authenticated user).
+   */
+  async addLabel(nestId: string, labelId: string): Promise<Nest> {
+    return this.fetch<Nest>(`/nests/${nestId}/add_label/${labelId}`, {
+      method: "PATCH",
+    });
+  }
+
+  /**
+   * Remove a label from a nest. The API auto-scopes personal labels
+   * (e.g., 'now' removes 'userId:now' for the authenticated user).
+   */
+  async removeLabel(nestId: string, labelId: string): Promise<Nest> {
+    return this.fetch<Nest>(`/nests/${nestId}/remove_label/${labelId}`, {
+      method: "PATCH",
+    });
+  }
+
   // ============ DAILY PLAN (requires OAuth token) ============
 
   /**
