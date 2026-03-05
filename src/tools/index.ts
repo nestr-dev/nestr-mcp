@@ -115,7 +115,7 @@ export const schemas = {
   }),
 
   getNest: z.object({
-    nestId: z.string().describe("Nest ID"),
+    nestId: z.string().describe("Nest ID. Supports comma-separated IDs to fetch multiple nests in one call (e.g., 'id1,id2,id3') — returns an array instead of a single object. Keep total URL under 2000 chars to avoid HTTP limits."),
     fieldsMetaData: z.boolean().optional().describe("Set to true to include field schema metadata (e.g., available options for project.status)"),
   }),
 
@@ -513,11 +513,11 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
   },
   {
     name: "nestr_get_nest",
-    description: "Get details of a specific nest (task, project, role, etc.). Use fieldsMetaData=true to get field schema info like available options for project.status.",
+    description: "Get details of a specific nest (task, project, role, etc.). Supports fetching multiple nests in one call by passing comma-separated IDs (returns an array). Use fieldsMetaData=true to get field schema info like available options for project.status.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        nestId: { type: "string", description: "Nest ID" },
+        nestId: { type: "string", description: "Nest ID, or comma-separated IDs to fetch multiple nests at once (e.g., 'id1,id2,id3'). Keep total URL under 2000 chars." },
         fieldsMetaData: { type: "boolean", description: "Set to true to include field schema metadata (available options, field types)" },
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
       },

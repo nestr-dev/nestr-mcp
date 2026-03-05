@@ -394,13 +394,14 @@ export class NestrClient {
   async getNest(
     nestId: string,
     options?: { cleanText?: boolean; fieldsMetaData?: boolean }
-  ): Promise<Nest & { fieldsMetaData?: Record<string, unknown> }> {
+  ): Promise<(Nest & { fieldsMetaData?: Record<string, unknown> }) | (Nest & { fieldsMetaData?: Record<string, unknown> })[]> {
     const params = new URLSearchParams();
     if (options?.cleanText) params.set("cleanText", "true");
     if (options?.fieldsMetaData) params.set("fieldsMetaData", "true");
 
     const query = params.toString();
-    return this.fetch<Nest & { fieldsMetaData?: Record<string, unknown> }>(
+    // Comma-separated IDs return an array from the API
+    return this.fetch<(Nest & { fieldsMetaData?: Record<string, unknown> }) | (Nest & { fieldsMetaData?: Record<string, unknown> })[]>(
       `/nests/${nestId}${query ? `?${query}` : ""}`
     );
   }
