@@ -1008,28 +1008,16 @@ app.post("/mcp", async (req: Request, res: Response) => {
 
     let userId: string | undefined;
 
-    // For OAuth tokens, validate the session exists before creating an MCP session.
-    // Without this check, an expired OAuth token creates a session that immediately
-    // fails on every tool call, and the client loops re-initializing with the same dead token.
+    // For OAuth tokens, check if we have a stored session (legacy browser flow).
+    // In the standard MCP OAuth flow, the client gets tokens from /oauth/token
+    // and manages refresh itself — we won't have a stored session, and that's fine.
+    // We only use the stored session for analytics (userId) and server-side refresh.
     if (!isApiKey) {
       try {
         const storedSession = getSession(authToken);
-        if (!storedSession) {
-          // No OAuth session found — return 401 to trigger full re-authentication
-          console.log("OAuth session not found during initialization, requesting re-auth");
-          res.status(401);
-          res.setHeader("WWW-Authenticate", buildWwwAuthenticateHeader(req));
-          res.json({
-            jsonrpc: "2.0",
-            error: {
-              code: -32001,
-              message: "OAuth session expired. Re-authenticate to continue.",
-            },
-            id: (req.body as Record<string, unknown>)?.id ?? null,
-          });
-          return;
+        if (storedSession) {
+          userId = storedSession.userId;
         }
-        userId = storedSession.userId;
       } catch (e) { console.error("[GA4] Analytics lookup error:", e); }
     }
 
@@ -1053,12 +1041,14 @@ app.post("/mcp", async (req: Request, res: Response) => {
     const client = new NestrClient({
       apiKey: authToken,
       mcpClient: mcpClientName,
-      tokenProvider: isApiKey ? undefined : async () => {
+      // tokenProvider enables server-side token refresh for stored sessions (legacy browser flow).
+      // In the standard MCP OAuth flow, there's no stored session — the client manages refresh.
+      // When tokenProvider is undefined, NestrClient lets 401 propagate to the client.
+      tokenProvider: isApiKey ? undefined : (getSession(authToken) ? async () => {
         const session = await getOAuthSession(authToken);
         if (!session) {
-          // Remove the MCP session from the lookup map so the next request
-          // won't find it. The init-time OAuth validation will then return 401,
-          // triggering a full re-authentication flow.
+          // Stored session expired and refresh failed — remove the MCP session
+          // so the next request triggers re-initialization
           const sid = sessionRef?.transport?.sessionId;
           if (sid && sessions[sid]) {
             console.log(`OAuth session expired mid-session, removing MCP session: ${sid}`);
@@ -1070,7 +1060,7 @@ app.post("/mcp", async (req: Request, res: Response) => {
           });
         }
         return session.accessToken;
-      },
+      } : undefined),
     });
 
     const server = createServer({

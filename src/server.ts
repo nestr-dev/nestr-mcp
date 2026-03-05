@@ -1633,7 +1633,6 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
 
     // Cache user identity to avoid repeated API calls per session
     let cachedIdentity: { userId: string; userName: string } | null = null;
-    let identityFetched = false;
 
     mcpcat.track(server, mcpcatProjectId, {
       ...(enableReplay ? {} : {
@@ -1655,19 +1654,17 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
         }
       }),
       identify: async (request: any, extra: any) => {
-        if (identityFetched) return cachedIdentity;
-        identityFetched = true;
+        // Return cached identity if we already fetched successfully
+        if (cachedIdentity) return cachedIdentity;
         try {
-          console.log('[MCPCat] identify called, fetching user...');
           const user = await client.getCurrentUser();
           cachedIdentity = {
             userId: user._id,
             userName: user.profile?.fullName || user._id,
           };
-          console.log('[MCPCat] identify success:', cachedIdentity.userName);
           return cachedIdentity;
         } catch (err) {
-          // getCurrentUser requires OAuth token - may fail for API key auth
+          // May fail transiently or for API key auth — will retry on next call
           console.error('[MCPCat] identify failed:', err instanceof Error ? err.message : err);
           return null;
         }
