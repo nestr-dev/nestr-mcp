@@ -461,15 +461,29 @@ Skills are nests with the \`skill\` label that live directly under a role or cir
 - Skills make AI-persisted knowledge visible, searchable, and a first-class citizen in Nestr
 - They transfer with the role — when a role is reassigned, skills stay with the role, not the previous holder
 
+### Skill Types
+
+Skills can be typed using \`fields['skill.type']\` to distinguish their nature:
+
+- **\`process\`** — Step-by-step procedures: how to do something. Example: "How to deploy to production", "Customer onboarding checklist".
+- **\`knowledge\`** — Domain knowledge, contacts, learned patterns. Example: "Key API endpoints", "Vendor contact list", "Common error patterns".
+- **\`doctrine\`** — Organizational principles that guide decisions: the *why* behind how we work. Doctrine skills apply broadly and should be consulted before making decisions that affect the role or circle. Example: "Bias towards minimal output per tension", "Governance before operations".
+- **\`trigger\`** — Skills with conditions for periodic or event-based execution. Agents check trigger skills during their operational rhythm and surface tensions when conditions are met. Example: "Weekly: check all projects have clear DoD", "On new member: run onboarding checklist".
+
+When untyped, skills default to general-purpose knowledge. Use the type to help agents and humans find the right skill for the context — e.g., search for doctrine before proposing governance changes, or check triggers at session start.
+
 ### When to Create Skills
 - After completing repeatable work — capture the process so it can be followed again
 - When learning domain-specific patterns — record them for future reference
 - When discovering key contacts, recurring processes, or domain knowledge relevant to a role
 - When decisions are made that should inform future work from this role
+- When organizational principles emerge that should guide future decisions (doctrine)
 
 ### How to Use Skills
 - Before starting work from a role, search for skills under that role: \`in:roleId label:skill\`
 - Review relevant skills for context, processes, and prior decisions
+- Check doctrine skills before proposing governance changes or making decisions
+- Check trigger skills at session start and natural breakpoints for proactive tension discovery
 - After completing work, create or update skills to reflect what was learned
 - Keep skills focused — one skill per process or knowledge area
 
@@ -575,12 +589,16 @@ Tensions move through five phases. The first two are *individual* (they happen i
 
 ### Tension Anatomy
 
-A tension has four parts, designed to separate what humans naturally blend together:
+A tension has several parts, designed to separate what humans naturally blend together:
 
 - **Title** — The gap you're sensing. What is the difference between current reality and desired state?
 - **Description** — The observable facts. What do you see, hear, or experience that creates this tension?
 - **\`fields['tension.feeling']\`** — The feeling this evokes. Separated from the facts because humans tend to blend thoughts, feelings, needs, and strategies into one "frankenstein solution." Keeping feelings explicit but separate lets the organizational response stay focused on what the role/organization actually needs.
 - **\`fields['tension.needs']\`** — The need that is alive. What personal or organizational need is not being met? Same separation principle — naming the need explicitly prevents it from unconsciously shaping the proposed solution.
+- **\`fields['tension.source']\`** — Where this tension originates: \`personal\` or \`role\`.
+  - \`personal\`: Sensed by the human/agent in their own capacity — not yet translated into organizational language. The raw observation precedes organizational framing.
+  - \`role\`: A clear role-driven tension with a known processing pathway. The sensing role is identified.
+- **\`fields['tension.sourceRole']\`** — When source is \`role\`, this links to the role or circle that is sensing the tension. Gives the tension explicit provenance: "My [Developer] role senses this gap."
 
 This separation exists because without it, people unconsciously merge their personal experience with organizational needs, producing proposals that serve both poorly. By making each dimension explicit, we keep the organizational response clean while still honoring the human experience.
 
@@ -618,6 +636,8 @@ Every tension resolves through one or more of these pathways:
 3. **Request outcome/project** — "I need X to be achieved." → Requests a project or outcome from another role.
 4. **Request action/task** — "I need you to do X." → Requests a specific next action from another role.
 5. **Set expectation/governance** — "We need ongoing clarity about X." → Proposes a structural change: new role, accountability, domain, policy, or circle.
+
+**Directing output to specific roles.** When processing pathways 1-4, you can direct the output to a specific person by including their userId in the tension part's \`users\` field. This ensures the person energizing the accountable role receives the request. For example, a "request action" tension can be assigned to the person filling the Developer role so it appears in their tension list.
 
 **Bias towards minimal output.** A well-processed tension typically produces 1-2 outputs. If you find yourself creating many outputs from a single tension, it's likely multiple tensions blended together — separate them.
 
@@ -743,6 +763,8 @@ nestr_create_tension(circleId, {
 - **proposed**: Submitted for consent. Circle members vote. Can be retracted back to \`draft\`.
 - **accepted**: All members consented. Changes are applied to governance.
 - **objected**: One or more members objected. Requires integration and resubmission.
+
+**Tracking status:** Use \`nestr_get_tension_status\` to see the current lifecycle state and per-user voting responses with timestamps. Use \`nestr_update_tension_status\` to move a tension through its lifecycle (e.g., submit for consent or retract to draft).
 
 ### Auto-Detection
 
