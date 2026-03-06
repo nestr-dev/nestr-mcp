@@ -941,20 +941,6 @@ export class NestrClient {
     );
   }
 
-  async proposeTensionRemoval(
-    nestId: string,
-    tensionId: string,
-    data: { _id: string }
-  ): Promise<TensionPart> {
-    return this.fetch<TensionPart>(
-      `/nests/${nestId}/tensions/${tensionId}/parts`,
-      {
-        method: "DELETE",
-        body: JSON.stringify(data),
-      }
-    );
-  }
-
   async modifyTensionPart(
     nestId: string,
     tensionId: string,
@@ -977,6 +963,63 @@ export class NestrClient {
   ): Promise<void> {
     await this.fetch<void>(
       `/nests/${nestId}/tensions/${tensionId}/parts/${partId}`,
+      {
+        method: "DELETE",
+      }
+    );
+  }
+
+  // Tension part children (accountabilities/domains within a proposal part)
+
+  async getTensionPartChildren(
+    nestId: string,
+    tensionId: string,
+    partId: string
+  ): Promise<unknown[]> {
+    return this.fetch<unknown[]>(
+      `/nests/${nestId}/tensions/${tensionId}/parts/${partId}/children`
+    );
+  }
+
+  async createTensionPartChild(
+    nestId: string,
+    tensionId: string,
+    partId: string,
+    data: Record<string, unknown>
+  ): Promise<unknown> {
+    return this.fetch<unknown>(
+      `/nests/${nestId}/tensions/${tensionId}/parts/${partId}/children`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      }
+    );
+  }
+
+  async updateTensionPartChild(
+    nestId: string,
+    tensionId: string,
+    partId: string,
+    childId: string,
+    data: Record<string, unknown>
+  ): Promise<unknown> {
+    return this.fetch<unknown>(
+      `/nests/${nestId}/tensions/${tensionId}/parts/${partId}/children/${childId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }
+    );
+  }
+
+  async deleteTensionPartChild(
+    nestId: string,
+    tensionId: string,
+    partId: string,
+    childId: string
+  ): Promise<void> {
+    await this.fetch<void>(
+      `/nests/${nestId}/tensions/${tensionId}/parts/${partId}/children/${childId}`,
       {
         method: "DELETE",
       }

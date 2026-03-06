@@ -660,15 +660,21 @@ Proactively check for tensions at natural breakpoints (assistant and role-filler
 1. **Create a tension** on the relevant circle or role: \`nestr_create_tension\` with a title describing the gap. Optionally include \`feeling\` and \`needs\` to capture the personal or organizational context.
 
 2. **Add proposal parts** using \`nestr_add_tension_part\`:
-   - **New governance item**: Provide title and labels (e.g., \`["role"]\`, \`["policy"]\`). For roles, include accountabilities and/or domains.
-   - **Change existing item**: Provide the \`_id\` of the existing governance item plus fields to change.
-   - **Remove existing item**: Provide the \`_id\` and set \`removeNest: true\`.
+   - **New governance item**: Provide title and labels (e.g., \`["role"]\`, \`["policy"]\`). For roles, include accountabilities and/or domains as bulk shorthand.
+   - **Change existing item**: Provide the \`_id\` of the existing governance item plus fields to change. When updating a role, if accountabilities/domains are not provided, existing children are auto-copied into the proposal.
+   - **Remove existing item**: Use \`nestr_remove_tension_part\` to propose deletion of a governance item (when the part references an existing _id).
 
-3. **Review changes** with \`nestr_get_tension_changes\` to see the namespaced diff (what will actually change if accepted).
+3. **Manage children individually** (optional): After adding a part that references an existing role, use the children tools for fine-grained control:
+   - \`nestr_get_tension_part_children\` — List auto-copied accountabilities/domains
+   - \`nestr_create_tension_part_child\` — Add a new accountability/domain
+   - \`nestr_update_tension_part_child\` — Rename an existing one
+   - \`nestr_delete_tension_part_child\` — Soft-delete one (removed from role when enacted)
 
-4. **Submit for voting** with \`nestr_update_tension_status\` set to \`"proposed"\`. This triggers the async consent process — circle members are notified and can accept or object.
+4. **Review changes** with \`nestr_get_tension_changes\` to see the namespaced diff (what will actually change if accepted).
 
-5. **Monitor status** with \`nestr_get_tension_status\` to see per-user voting responses.
+5. **Submit for voting** with \`nestr_update_tension_status\` set to \`"proposed"\`. This triggers the async consent process — circle members are notified and can accept or object.
+
+6. **Monitor status** with \`nestr_get_tension_status\` to see per-user voting responses.
 
 ### Elections
 
@@ -708,13 +714,32 @@ nestr_create_tension(circleId, {
 3. nestr_update_tension_status(circleId, tensionId, "proposed")
 \`\`\`
 
-**Proposing changes to an existing role:**
+**Proposing changes to an existing role (using children for individual management):**
+\`\`\`
+1. nestr_create_tension(circleId, "Developer role needs infrastructure accountability")
+2. nestr_add_tension_part(circleId, tensionId, {
+     _id: "existingRoleId"
+   })
+   // → Existing accountabilities/domains are auto-copied into the proposal
+3. nestr_get_tension_part_children(circleId, tensionId, partId)
+   // → Returns all copied accountabilities/domains
+4. nestr_create_tension_part_child(circleId, tensionId, partId, {
+     title: "Managing infrastructure and deployments",
+     labels: ["accountability"]
+   })
+   // → Adds a new accountability to the proposal
+5. nestr_get_tension_changes(circleId, tensionId, partId) // Review the diff
+6. nestr_update_tension_status(circleId, tensionId, "proposed")
+\`\`\`
+
+**Proposing changes to an existing role (bulk shorthand):**
 \`\`\`
 1. nestr_create_tension(circleId, "Developer role needs infrastructure accountability")
 2. nestr_add_tension_part(circleId, tensionId, {
      _id: "existingRoleId",
      accountabilities: ["Developing new features", "Managing infrastructure and deployments"]
    })
+   // → accountabilities array replaces ALL existing accountabilities at once
 3. nestr_get_tension_changes(circleId, tensionId, partId) // Review the diff
 4. nestr_update_tension_status(circleId, tensionId, "proposed")
 \`\`\`
