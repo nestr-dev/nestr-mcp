@@ -624,11 +624,12 @@ This separation exists because without it, people unconsciously merge their pers
 
 Once a tension is recognized and captured, it needs to find its organizational home. Walk through this question tree for each captured tension:
 
-1. **Does one of MY roles care?** → If yes, process it within that role (create work, update projects, or create a tension if it requires another role's involvement).
+1. **Does one of MY roles care?** → Create the tension on that role (\`nestId\` = roleId). This anchors the tension to the role that is sensing it. Then process it: create work, update projects, or if it requires another role's involvement, the tension is visible from your role's context.
 2. **Does ANOTHER role in my circle care?** → Create a tension on the circle directed at that role.
 3. **Does my CIRCLE care (but no specific role)?** → The work may need a new role or accountability — create a governance tension on the circle.
 4. **Does the BROADER ORGANIZATION care?** → Escalate: create a tension on the super-circle or anchor circle.
-5. **Is this PERSONAL?** → Acknowledge it and process it in your personal space (inbox, personal workspace). Not everything belongs to the organization.
+5. **Is this PERSONAL (no role authority)?** → Create the tension on the circle with the \`individual-action\` label. This signals it comes from you personally, not from a role — the same pattern used for work items done outside of role authority.
+6. **None of the above?** → Let it go. Not every feeling needs to become organizational work.
 6. **None of the above?** → Let it go. Not every feeling needs to become organizational work.
 
 **One feeling, multiple tensions.** A single feeling often produces tensions that land in different contexts. For example, frustration about a missed delivery might produce: (a) an operational tension for the Developer role about the specific deliverable, (b) a governance tension about unclear accountability for deployment, and (c) a personal tension about your own stress management. Capture each separately and route them to the right context. This is why "bias towards minimal output" applies *per tension*, not per feeling.
@@ -693,7 +694,7 @@ Proactively check for tensions at natural breakpoints (assistant and role-filler
 
 ### Tension Workflow
 
-1. **Create a tension** on the relevant circle or role: \`nestr_create_tension\` with a title describing the gap. Optionally include \`feeling\` and \`needs\` to capture the personal or organizational context.
+1. **Create a tension** on the role that senses it, or on the circle for cross-role/governance/personal tensions: \`nestr_create_tension\` with a title describing the gap. Optionally include \`feeling\` and \`needs\` to capture the personal or organizational context. For personally sensed tensions (no role authority), add the \`individual-action\` label.
 
 2. **Add proposal parts** using \`nestr_add_tension_part\`:
    - **New governance item**: Provide title and labels (e.g., \`["role"]\`, \`["policy"]\`). For roles, include accountabilities and/or domains.
@@ -723,7 +724,8 @@ Tensions support discussion through the standard comments API. Use \`nestr_add_c
 
 **Requesting work from another role (pathway 3 — request outcome):**
 \`\`\`
-nestr_create_tension(circleId, {
+// Place on the Sales Lead role — that role is sensing this tension
+nestr_create_tension(salesLeadRoleId, {
   title: "Our clients can't access their data in a format they need",
   description: "Three enterprise clients have asked for MongoDB access this quarter. Currently we only expose data via REST API.",
   feeling: "Frustrated — I keep having to explain our limitations",
