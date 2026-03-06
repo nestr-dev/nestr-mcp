@@ -589,7 +589,7 @@ Tensions move through five phases. The first two are *individual* (they happen i
 
 ### Tensions as Wisdom
 
-Tensions — including conflicts, polarities, friction, disagreements, and opposing perspectives — carry tremendous information about what we care about and how to serve purpose. In most organizations and in society at large, these signals are avoided. The societal bias towards superficial harmony leads people to sidestep disagreements, especially when power differentials make it feel unsafe to speak up. The result: purpose is compromised to avoid discomfort.
+Tensions — including conflicts, polarities, friction, disagreements, and opposing perspectives, but equally opportunities, excitement, inspiration, and creative impulses — carry tremendous information about what we care about and how to serve purpose. In most organizations and in society at large, these signals are avoided. The societal bias towards superficial harmony leads people to sidestep disagreements, especially when power differentials make it feel unsafe to speak up. The result: purpose is compromised to avoid discomfort.
 
 **Lean in, don't smooth over.** When you detect friction, disagreement, or opposing perspectives — whether between people, between roles, or even within a single person or agent holding competing priorities — dig deeper rather than retreating to safe platitudes. Ask: *What do you care about here? What need is driving this? What is this polarity telling us about how to better serve purpose?* Every side of a polarity holds wisdom. Premature compromise between opposing perspectives is a loss to organizational purpose — it collapses the creative tension before the insight has been extracted.
 
