@@ -341,13 +341,12 @@ export const schemas = {
 
   // Tension tools
   createTension: z.object({
-    nestId: z.string().describe("ID of the circle or role to create the tension on"),
+    nestId: z.string().describe("ID of the role or circle to create the tension on. Use a role ID when that role is sensing the tension. Use a circle ID for cross-role, governance, or personally sensed tensions."),
     title: z.string().describe("The gap you're sensing — what is the difference between current reality and desired state (plain text)"),
     description: z.string().optional().describe("The observable facts — what you see/hear/experience that creates this tension (supports HTML)"),
     feeling: z.string().optional().describe("The feeling this tension evokes in you — separated from the facts to keep the organizational response clean (plain text)"),
     needs: z.string().optional().describe("The personal or organizational need that is alive — what need is not being met (plain text)"),
-    source: z.enum(["personal", "role"]).optional().describe("Where this tension originates: 'personal' = sensed in your own capacity before translating to organizational language, 'role' = a clear role-driven tension with a known processing pathway"),
-    sourceRoleId: z.string().optional().describe("ID of the role or circle sensing this tension (when source is 'role'). Creates a relationship linking the tension to its sensing role."),
+    source: z.enum(["personal", "role"]).optional().describe("Where this tension originates: 'personal' = sensed in your own capacity (place on circle with individual-action label), 'role' = sensed from a specific role (place on that role via nestId)"),
   }),
 
   getTension: z.object({
@@ -370,7 +369,6 @@ export const schemas = {
     feeling: z.string().optional().describe("Updated feeling this tension evokes (plain text)"),
     needs: z.string().optional().describe("Updated need that is alive (plain text)"),
     source: z.enum(["personal", "role"]).optional().describe("Where this tension originates: 'personal' or 'role'"),
-    sourceRoleId: z.string().optional().describe("ID of the role or circle sensing this tension (when source is 'role')"),
   }),
 
   deleteTension: z.object({
@@ -1100,17 +1098,16 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
   // Tension tools
   {
     name: "nestr_create_tension",
-    description: "Create a new tension — the fundamental unit of inter-role communication. Tensions represent a gap between current reality and potential. Use for ALL cross-role communication: requesting information, sharing information, requesting outcomes/projects, requesting actions/tasks, or setting expectations (governance). The parent nest must be a role, circle, or anchor-circle.",
+    description: "Create a new tension — the fundamental unit of inter-role communication. Tensions represent a gap between current reality and potential. Use for ALL cross-role communication: requesting information, sharing information, requesting outcomes/projects, requesting actions/tasks, or setting expectations (governance). Placement matters: use a role ID as nestId when that role is sensing the tension, or a circle ID for cross-role, governance, or personally sensed tensions.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        nestId: { type: "string", description: "ID of the circle or role to create the tension on" },
+        nestId: { type: "string", description: "ID of the role or circle to create the tension on. Place on a role to indicate that role is sensing the tension. Place on a circle for cross-role or governance tensions (use individual-action label if sensed personally without role authority)." },
         title: { type: "string", description: "The gap — what is the difference between current reality and desired state (plain text)" },
         description: { type: "string", description: "The observable facts — what you see/hear/experience (supports HTML)" },
         feeling: { type: "string", description: "The feeling this tension evokes — separated to keep the organizational response clean (plain text)" },
         needs: { type: "string", description: "The need that is alive — what personal or organizational need is not being met (plain text)" },
-        source: { type: "string", enum: ["personal", "role"], description: "Where this tension originates: 'personal' = sensed before translating to organizational language, 'role' = a clear role-driven tension" },
-        sourceRoleId: { type: "string", description: "ID of the role or circle sensing this tension (when source is 'role')" },
+        source: { type: "string", enum: ["personal", "role"], description: "Where this tension originates: 'personal' = sensed in own capacity, 'role' = sensed from a specific role" },
       },
       required: ["nestId", "title"],
     },
@@ -1154,7 +1151,6 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         feeling: { type: "string", description: "Updated feeling this tension evokes (plain text)" },
         needs: { type: "string", description: "Updated need that is alive (plain text)" },
         source: { type: "string", enum: ["personal", "role"], description: "Where this tension originates: 'personal' or 'role'" },
-        sourceRoleId: { type: "string", description: "ID of the role or circle sensing this tension (when source is 'role')" },
       },
       required: ["nestId", "tensionId"],
     },
@@ -1768,7 +1764,6 @@ async function _handleToolCall(
         if (parsed.feeling) fields["tension.feeling"] = parsed.feeling;
         if (parsed.needs) fields["tension.needs"] = parsed.needs;
         if (parsed.source) fields["tension.source"] = parsed.source;
-        if (parsed.sourceRoleId) fields["tension.sourceRole"] = parsed.sourceRoleId;
         const tension = await client.createTension(parsed.nestId, {
           title: parsed.title,
           description: parsed.description,
@@ -1803,7 +1798,6 @@ async function _handleToolCall(
         if (parsed.feeling !== undefined) fields["tension.feeling"] = parsed.feeling;
         if (parsed.needs !== undefined) fields["tension.needs"] = parsed.needs;
         if (parsed.source !== undefined) fields["tension.source"] = parsed.source;
-        if (parsed.sourceRoleId !== undefined) fields["tension.sourceRole"] = parsed.sourceRoleId;
         const tension = await client.updateTension(
           parsed.nestId,
           parsed.tensionId,
