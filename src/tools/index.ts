@@ -390,9 +390,8 @@ export const schemas = {
     parentId: z.string().optional().describe("Parent ID — use to move/restructure items (e.g., move role to different circle)"),
     users: z.array(z.string()).optional().describe("User IDs to assign (e.g., for role elections: assign the elected user to the role)"),
     due: z.string().optional().describe("Due date / re-election date (ISO format)"),
-    accountabilities: z.array(z.string()).optional().describe("Accountability titles to set on a role (replaces existing)"),
-    domains: z.array(z.string()).optional().describe("Domain titles to set on a role (replaces existing)"),
-    removeNest: z.boolean().optional().describe("Set to true with _id to propose removal of the existing governance item"),
+    accountabilities: z.array(z.string()).optional().describe("Accountability titles to set on a role (replaces all — use children endpoint for individual management)"),
+    domains: z.array(z.string()).optional().describe("Domain titles to set on a role (replaces all — use children endpoint for individual management)"),
   }),
 
   modifyTensionPart: z.object({
@@ -406,15 +405,43 @@ export const schemas = {
     parentId: z.string().optional().describe("Updated parent ID"),
     users: z.array(z.string()).optional().describe("Updated user assignments"),
     due: z.string().optional().describe("Updated due date (ISO format)"),
-    removeNest: z.boolean().optional().describe("Change removal flag"),
-    accountabilities: z.array(z.string()).optional().describe("Updated accountabilities"),
-    domains: z.array(z.string()).optional().describe("Updated domains"),
+    accountabilities: z.array(z.string()).optional().describe("Updated accountabilities (replaces all — use children endpoint for individual management)"),
+    domains: z.array(z.string()).optional().describe("Updated domains (replaces all — use children endpoint for individual management)"),
   }),
 
   removeTensionPart: z.object({
     nestId: z.string().describe("ID of the circle or role the tension belongs to"),
     tensionId: z.string().describe("Tension ID"),
     partId: z.string().describe("Part ID to remove from the proposal"),
+  }),
+
+  getTensionPartChildren: z.object({
+    nestId: z.string().describe("ID of the circle or role the tension belongs to"),
+    tensionId: z.string().describe("Tension ID"),
+    partId: z.string().describe("Part ID"),
+  }),
+
+  createTensionPartChild: z.object({
+    nestId: z.string().describe("ID of the circle or role the tension belongs to"),
+    tensionId: z.string().describe("Tension ID"),
+    partId: z.string().describe("Part ID"),
+    title: z.string().describe("Title for the new accountability or domain"),
+    labels: z.array(z.string()).describe("Labels defining the type: ['accountability'] or ['domain']"),
+  }),
+
+  updateTensionPartChild: z.object({
+    nestId: z.string().describe("ID of the circle or role the tension belongs to"),
+    tensionId: z.string().describe("Tension ID"),
+    partId: z.string().describe("Part ID"),
+    childId: z.string().describe("Child ID to update"),
+    title: z.string().describe("Updated title"),
+  }),
+
+  deleteTensionPartChild: z.object({
+    nestId: z.string().describe("ID of the circle or role the tension belongs to"),
+    tensionId: z.string().describe("Tension ID"),
+    partId: z.string().describe("Part ID"),
+    childId: z.string().describe("Child ID to soft-delete (will remove the original accountability/domain when enacted)"),
   }),
 
   getTensionChanges: z.object({
@@ -1179,11 +1206,13 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
     name: "nestr_add_tension_part",
     description: `Add a governance change to a tension. Three modes based on input:
 
-**New item** (no _id): Propose creating a new governance item. Provide title and labels (e.g., ["role"], ["circle"], ["policy"], ["accountability"], ["domain"]). For roles, include accountabilities and/or domains.
+**New item** (no _id): Propose creating a new governance item. Provide title and labels (e.g., ["role"], ["circle"], ["policy"], ["accountability"], ["domain"]). For roles, include accountabilities and/or domains as bulk shorthand.
 
-**Change existing item** (_id provided, no removeNest): Propose changes to an existing governance item. Provide the _id of the item plus fields to change. Supports title/purpose changes, restructuring (parentId to move between circles), conversions (labels to convert role↔circle), user assignment changes (for elections), and accountability/domain changes.
+**Change existing item** (_id provided): Propose changes to an existing governance item. Provide the _id of the item plus fields to change. Supports title/purpose changes, restructuring (parentId to move between circles), conversions (labels to convert role↔circle), user assignment changes (for elections), and accountability/domain changes. When updating a role with _id, if accountabilities/domains arrays are not provided, existing children are auto-copied into the proposal — use nestr_get_tension_part_children to list them and manage individually.
 
-**Remove existing item** (_id + removeNest: true): Propose removal of an existing governance item.`,
+**Remove existing item** (_id only, no other fields): Use nestr_remove_tension_part after adding the part, or use DELETE /parts to propose removal.
+
+The accountabilities/domains arrays are bulk shorthand — they replace all children at once. For individual management (rename, add, remove single accountabilities/domains), use the tension part children tools instead.`,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1197,16 +1226,15 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         parentId: { type: "string", description: "Parent ID — use to move/restructure items (e.g., move role to different circle)" },
         users: { type: "array", items: { type: "string" }, description: "User IDs to assign (e.g., for elections: assign elected user to the role)" },
         due: { type: "string", description: "Due date / re-election date (ISO format)" },
-        accountabilities: { type: "array", items: { type: "string" }, description: "Accountability titles to set on a role (replaces existing)" },
-        domains: { type: "array", items: { type: "string" }, description: "Domain titles to set on a role (replaces existing)" },
-        removeNest: { type: "boolean", description: "Set to true with _id to propose removal of the existing governance item" },
+        accountabilities: { type: "array", items: { type: "string" }, description: "Accountability titles to set on a role (replaces all — use children endpoint for individual management)" },
+        domains: { type: "array", items: { type: "string" }, description: "Domain titles to set on a role (replaces all — use children endpoint for individual management)" },
       },
       required: ["nestId", "tensionId"],
     },
   },
   {
     name: "nestr_modify_tension_part",
-    description: "Modify an existing proposal part. Use to refine proposed values after initial creation — e.g., adjust a role's title or add accountabilities to a proposed role.",
+    description: "Modify an existing proposal part. Use to refine proposed values after initial creation — e.g., adjust a role's title or purpose. For individual accountability/domain changes, prefer the children endpoint (nestr_get_tension_part_children, etc.).",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1220,16 +1248,15 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         parentId: { type: "string", description: "Updated parent ID" },
         users: { type: "array", items: { type: "string" }, description: "Updated user assignments" },
         due: { type: "string", description: "Updated due date (ISO format)" },
-        removeNest: { type: "boolean", description: "Change removal flag" },
-        accountabilities: { type: "array", items: { type: "string" }, description: "Updated accountabilities" },
-        domains: { type: "array", items: { type: "string" }, description: "Updated domains" },
+        accountabilities: { type: "array", items: { type: "string" }, description: "Updated accountabilities (replaces all — use children endpoint for individual management)" },
+        domains: { type: "array", items: { type: "string" }, description: "Updated domains (replaces all — use children endpoint for individual management)" },
       },
       required: ["nestId", "tensionId", "partId"],
     },
   },
   {
     name: "nestr_remove_tension_part",
-    description: "Remove a part from the proposal entirely. This does NOT propose deletion of a governance item — it removes the proposal part itself. Use nestr_add_tension_part with removeNest:true to propose deleting a governance item.",
+    description: "Remove a part from the proposal entirely, or propose deletion of a governance item. When used on a part that references an existing item (_id), this proposes removal of that governance item. When used on a part for a new item, it simply removes the proposal part.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1238,6 +1265,63 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         partId: { type: "string", description: "Part ID to remove from the proposal" },
       },
       required: ["nestId", "tensionId", "partId"],
+    },
+  },
+  {
+    name: "nestr_get_tension_part_children",
+    description: "List children (accountabilities/domains) of a proposal part. When a part proposes changes to an existing role (_id), existing accountabilities/domains are auto-copied into the proposal. Use this to see them and then manage individually with create/update/delete children tools.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
+        tensionId: { type: "string", description: "Tension ID" },
+        partId: { type: "string", description: "Part ID" },
+      },
+      required: ["nestId", "tensionId", "partId"],
+    },
+  },
+  {
+    name: "nestr_create_tension_part_child",
+    description: "Add a new accountability or domain to a proposal part. When the proposal is enacted, this creates a new accountability/domain on the role.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
+        tensionId: { type: "string", description: "Tension ID" },
+        partId: { type: "string", description: "Part ID" },
+        title: { type: "string", description: "Title for the new accountability or domain" },
+        labels: { type: "array", items: { type: "string" }, description: "Labels defining the type: ['accountability'] or ['domain']" },
+      },
+      required: ["nestId", "tensionId", "partId", "title", "labels"],
+    },
+  },
+  {
+    name: "nestr_update_tension_part_child",
+    description: "Rename an accountability or domain within a proposal part. When the proposal is enacted, the original accountability/domain is updated.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
+        tensionId: { type: "string", description: "Tension ID" },
+        partId: { type: "string", description: "Part ID" },
+        childId: { type: "string", description: "Child ID to update" },
+        title: { type: "string", description: "Updated title" },
+      },
+      required: ["nestId", "tensionId", "partId", "childId", "title"],
+    },
+  },
+  {
+    name: "nestr_delete_tension_part_child",
+    description: "Soft-delete an accountability or domain from a proposal part. When the proposal is enacted, the original accountability/domain is removed from the role.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
+        tensionId: { type: "string", description: "Tension ID" },
+        partId: { type: "string", description: "Part ID" },
+        childId: { type: "string", description: "Child ID to soft-delete" },
+      },
+      required: ["nestId", "tensionId", "partId", "childId"],
     },
   },
   {
@@ -1822,14 +1906,10 @@ async function _handleToolCall(
 
       case "nestr_add_tension_part": {
         const parsed = schemas.addTensionPart.parse(args);
-        const { nestId, tensionId, removeNest, ...body } = parsed;
+        const { nestId, tensionId, ...body } = parsed;
 
-        if (body._id && removeNest) {
-          // Propose removal of existing item
-          const part = await client.proposeTensionRemoval(nestId, tensionId, { _id: body._id });
-          return formatResult({ message: "Removal proposal added successfully", part });
-        } else if (body._id) {
-          // Propose change to existing item
+        if (body._id) {
+          // Propose change to existing item (existing children auto-copied if accountabilities/domains not provided)
           const part = await client.proposeTensionChange(nestId, tensionId, body);
           return formatResult({ message: "Change proposal added successfully", part });
         } else {
@@ -1850,6 +1930,50 @@ async function _handleToolCall(
         const parsed = schemas.removeTensionPart.parse(args);
         await client.removeTensionPart(parsed.nestId, parsed.tensionId, parsed.partId);
         return formatResult({ message: `Tension part ${parsed.partId} removed successfully` });
+      }
+
+      case "nestr_get_tension_part_children": {
+        const parsed = schemas.getTensionPartChildren.parse(args);
+        const children = await client.getTensionPartChildren(
+          parsed.nestId,
+          parsed.tensionId,
+          parsed.partId
+        );
+        return formatResult(children);
+      }
+
+      case "nestr_create_tension_part_child": {
+        const parsed = schemas.createTensionPartChild.parse(args);
+        const child = await client.createTensionPartChild(
+          parsed.nestId,
+          parsed.tensionId,
+          parsed.partId,
+          { title: parsed.title, labels: parsed.labels }
+        );
+        return formatResult({ message: "Child created successfully", child });
+      }
+
+      case "nestr_update_tension_part_child": {
+        const parsed = schemas.updateTensionPartChild.parse(args);
+        const child = await client.updateTensionPartChild(
+          parsed.nestId,
+          parsed.tensionId,
+          parsed.partId,
+          parsed.childId,
+          { title: parsed.title }
+        );
+        return formatResult({ message: "Child updated successfully", child });
+      }
+
+      case "nestr_delete_tension_part_child": {
+        const parsed = schemas.deleteTensionPartChild.parse(args);
+        await client.deleteTensionPartChild(
+          parsed.nestId,
+          parsed.tensionId,
+          parsed.partId,
+          parsed.childId
+        );
+        return formatResult({ message: `Child ${parsed.childId} soft-deleted successfully` });
       }
 
       case "nestr_get_tension_changes": {

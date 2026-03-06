@@ -281,9 +281,13 @@ The server exposes these tools to AI assistants:
 | `nestr_update_tension` | `PATCH /nests/{id}/tensions/{tid}` |
 | `nestr_delete_tension` | `DELETE /nests/{id}/tensions/{tid}` |
 | `nestr_get_tension_parts` | `GET /nests/{id}/tensions/{tid}/parts` |
-| `nestr_add_tension_part` | `POST/PATCH/DELETE /nests/{id}/tensions/{tid}/parts` |
+| `nestr_add_tension_part` | `POST/PATCH /nests/{id}/tensions/{tid}/parts` |
 | `nestr_modify_tension_part` | `PATCH /nests/{id}/tensions/{tid}/parts/{pid}` |
 | `nestr_remove_tension_part` | `DELETE /nests/{id}/tensions/{tid}/parts/{pid}` |
+| `nestr_get_tension_part_children` | `GET /nests/{id}/tensions/{tid}/parts/{pid}/children` |
+| `nestr_create_tension_part_child` | `POST /nests/{id}/tensions/{tid}/parts/{pid}/children` |
+| `nestr_update_tension_part_child` | `PATCH /nests/{id}/tensions/{tid}/parts/{pid}/children/{cid}` |
+| `nestr_delete_tension_part_child` | `DELETE /nests/{id}/tensions/{tid}/parts/{pid}/children/{cid}` |
 | `nestr_get_tension_changes` | `GET /nests/{id}/tensions/{tid}/parts/{pid}/changes` |
 | `nestr_get_tension_status` | `GET /nests/{id}/tensions/{tid}/status` |
 | `nestr_update_tension_status` | `PATCH /nests/{id}/tensions/{tid}/status` |
