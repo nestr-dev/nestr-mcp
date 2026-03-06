@@ -612,9 +612,9 @@ A tension has several parts, designed to separate what humans naturally blend to
 - **Description** — The observable facts. What do you see, hear, or experience that creates this tension?
 - **\`fields['tension.feeling']\`** — The feeling this evokes. Separated from the facts because humans tend to blend thoughts, feelings, needs, and strategies into one "frankenstein solution." Keeping feelings explicit but separate lets the organizational response stay focused on what the role/organization actually needs.
 - **\`fields['tension.needs']\`** — The need that is alive. What personal or organizational need is not being met? Same separation principle — naming the need explicitly prevents it from unconsciously shaping the proposed solution.
-- **\`fields['tension.source']\`** — Where this tension originates: \`personal\` or \`role\`. The tension's **placement** (its \`nestId\`) reinforces this:
-  - \`role\`: A clear role-driven tension. **Place the tension on the role** that is sensing it (use the role's ID as \`nestId\` when creating). The placement itself gives the tension provenance: "My [Developer] role senses this gap."
-  - \`personal\`: Sensed by the human/agent in their own capacity — not yet translated into organizational language. **Place the tension on the circle** and set source to \`personal\`. This follows the same principle as \`individual-action\` work items — work (or tensions) that exist for the circle's purpose but don't yet belong to a specific role.
+- **Placement** — Where a tension lives determines its source. This follows the same \`individual-action\` pattern that applies to all work throughout Nestr:
+  - **On a role**: The role is sensing the tension. Placement gives provenance: "My [Developer] role senses this gap." Use the role's ID as \`nestId\` when creating.
+  - **On a circle**: A cross-role, governance, or personally sensed tension. If sensed personally (without role authority), add the \`individual-action\` label — just as with work items that exist for the circle's purpose but don't yet belong to a specific role.
 
 This separation exists because without it, people unconsciously merge their personal experience with organizational needs, producing proposals that serve both poorly. By making each dimension explicit, we keep the organizational response clean while still honoring the human experience.
 
