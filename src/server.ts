@@ -614,7 +614,7 @@ A tension has several parts, designed to separate what humans naturally blend to
 - **\`fields['tension.needs']\`** — The need that is alive. What personal or organizational need is not being met? Same separation principle — naming the need explicitly prevents it from unconsciously shaping the proposed solution.
 - **Placement** — Where a tension lives determines its source. This follows the same \`individual-action\` pattern that applies to all work throughout Nestr:
   - **On a role**: The role is sensing the tension. Placement gives provenance: "My [Developer] role senses this gap." Use the role's ID as \`nestId\` when creating.
-  - **On a circle**: A cross-role, governance, or personally sensed tension. If sensed personally (without role authority), add the \`individual-action\` label — just as with work items that exist for the circle's purpose but don't yet belong to a specific role.
+  - **On a circle**: A cross-role, governance, or personally sensed tension. If sensed personally (not from any specific role), add the \`individual-action\` label — this signals the tension comes from you as a person, not from a role you fill.
 
 This separation exists because without it, people unconsciously merge their personal experience with organizational needs, producing proposals that serve both poorly. By making each dimension explicit, we keep the organizational response clean while still honoring the human experience.
 
@@ -628,7 +628,7 @@ Once a tension is recognized and captured, it needs to find its organizational h
 2. **Does ANOTHER role in my circle care?** → Create a tension on the circle directed at that role.
 3. **Does my CIRCLE care (but no specific role)?** → The work may need a new role or accountability — create a governance tension on the circle.
 4. **Does the BROADER ORGANIZATION care?** → Escalate: create a tension on the super-circle or anchor circle.
-5. **Is this PERSONAL (no role authority)?** → Create the tension on the circle with the \`individual-action\` label. This signals it comes from you personally, not from a role — the same pattern used for work items done outside of role authority.
+5. **Is this PERSONAL (not from a role)?** → Create the tension on the circle with the \`individual-action\` label. This signals it comes from you as a person, not from any role you fill.
 6. **None of the above?** → Let it go. Not every feeling needs to become organizational work.
 6. **None of the above?** → Let it go. Not every feeling needs to become organizational work.
 
@@ -694,7 +694,7 @@ Proactively check for tensions at natural breakpoints (assistant and role-filler
 
 ### Tension Workflow
 
-1. **Create a tension** on the role that senses it, or on the circle for cross-role/governance/personal tensions: \`nestr_create_tension\` with a title describing the gap. Optionally include \`feeling\` and \`needs\` to capture the personal or organizational context. For personally sensed tensions (no role authority), add the \`individual-action\` label.
+1. **Create a tension** on the role that senses it, or on the circle for cross-role/governance/personal tensions: \`nestr_create_tension\` with a title describing the gap. Optionally include \`feeling\` and \`needs\` to capture the personal or organizational context. For personally sensed tensions (not from a specific role), add the \`individual-action\` label.
 
 2. **Add proposal parts** using \`nestr_add_tension_part\`:
    - **New governance item**: Provide title and labels (e.g., \`["role"]\`, \`["policy"]\`). For roles, include accountabilities and/or domains.
