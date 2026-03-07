@@ -19,6 +19,10 @@ export interface NestrMcpServerConfig {
   client?: NestrClient;
   /** Optional callback for analytics tracking of tool calls */
   onToolCall?: (toolName: string, args: Record<string, unknown>, success: boolean, error?: string) => void;
+  /** Pre-resolved user ID (e.g., from stored OAuth session) for MCPcat identification */
+  userId?: string;
+  /** Pre-resolved user display name for MCPcat identification */
+  userName?: string;
 }
 
 // Server instructions provide context to AI assistants about what Nestr is and how to use it
@@ -1631,8 +1635,14 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
   if (mcpcatProjectId) {
     const enableReplay = process.env.MCPCAT_ENABLE_REPLAY === 'true';
 
-    // Cache user identity to avoid repeated API calls per session
-    let cachedIdentity: { userId: string; userName: string } | null = null;
+    // Cache user identity to avoid repeated API calls per session.
+    // Three states: undefined = not yet attempted, null = attempted and failed, object = success
+    let cachedIdentity: { userId: string; userName?: string } | null | undefined = undefined;
+
+    // If we have pre-resolved user info (e.g., from stored OAuth session), use it immediately
+    if (config.userId) {
+      cachedIdentity = { userId: config.userId, userName: config.userName };
+    }
 
     mcpcat.track(server, mcpcatProjectId, {
       ...(enableReplay ? {} : {
@@ -1654,8 +1664,10 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
         }
       }),
       identify: async (request: any, extra: any) => {
-        // Return cached identity if we already fetched successfully
+        // Return cached identity (success or pre-resolved)
         if (cachedIdentity) return cachedIdentity;
+        // Don't retry after a failed attempt (e.g., workspace API keys can never resolve a user)
+        if (cachedIdentity === null) return null;
         try {
           const user = await client.getCurrentUser();
           cachedIdentity = {
@@ -1664,7 +1676,9 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
           };
           return cachedIdentity;
         } catch (err) {
-          // May fail transiently or for API key auth — will retry on next call
+          // Cache the failure so we don't make failing API calls on every request
+          // (e.g., workspace API keys will never resolve to a user)
+          cachedIdentity = null;
           console.error('[MCPCat] identify failed:', err instanceof Error ? err.message : err);
           return null;
         }
