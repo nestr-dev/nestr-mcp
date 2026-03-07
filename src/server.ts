@@ -1642,9 +1642,6 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
     // If we have pre-resolved user info (e.g., from stored OAuth session), use it immediately
     if (config.userId) {
       cachedIdentity = { userId: config.userId, userName: config.userName };
-      console.log(`[MCPCat] pre-resolved userId=${config.userId}`);
-    } else {
-      console.log(`[MCPCat] no pre-resolved userId, will attempt getCurrentUser on first identify`);
     }
 
     mcpcat.track(server, mcpcatProjectId, {
@@ -1668,23 +1665,17 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
       }),
       identify: async (request: any, extra: any) => {
         // Return cached identity (success or pre-resolved)
-        if (cachedIdentity) {
-          console.log(`[MCPCat] identify: cached userId=${cachedIdentity.userId}`);
-          return cachedIdentity;
-        }
+        if (cachedIdentity) return cachedIdentity;
         // Don't retry after a failed attempt (e.g., workspace API keys can never resolve a user)
         if (cachedIdentity === null) return null;
-        console.log(`[MCPCat] identify: attempting getCurrentUser (pre-resolved userId=${config.userId || 'none'}, sessionId=${extra?.sessionId || 'none'})`);
         try {
           const response = await client.getCurrentUser();
           // The Nestr API wraps responses in { status, data } — unwrap if needed
           const user = (response as any)?.data || response;
-          console.log(`[MCPCat] identify: raw response=${JSON.stringify(response).slice(0, 300)}`);
           cachedIdentity = {
             userId: user._id,
             userName: user.profile?.fullName || user._id,
           };
-          console.log(`[MCPCat] identify: resolved userId=${cachedIdentity.userId}, userName=${cachedIdentity.userName}`);
           return cachedIdentity;
         } catch (err) {
           // Cache the failure so we don't make failing API calls on every request
