@@ -1677,9 +1677,10 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
         console.log(`[MCPCat] identify: attempting getCurrentUser (pre-resolved userId=${config.userId || 'none'}, sessionId=${extra?.sessionId || 'none'})`);
         try {
           const user = await client.getCurrentUser();
+          console.log(`[MCPCat] identify: getCurrentUser response keys=${Object.keys(user || {}).join(',')}, _id=${(user as any)?._id}, id=${(user as any)?.id}`);
           cachedIdentity = {
-            userId: user._id,
-            userName: user.profile?.fullName || user._id,
+            userId: user._id || (user as any).id,
+            userName: user.profile?.fullName || user._id || (user as any).id,
           };
           console.log(`[MCPCat] identify: resolved userId=${cachedIdentity.userId}, userName=${cachedIdentity.userName}`);
           return cachedIdentity;
