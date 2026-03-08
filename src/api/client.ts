@@ -434,6 +434,62 @@ export class NestrClient {
     });
   }
 
+  /**
+   * Create one or more roles in a circle using the self-organization endpoint.
+   * Supports inline accountabilities and domains arrays.
+   * Uses POST /workspaces/:workspaceId/circles/:circleId/roles
+   */
+  async createRolesInCircle(
+    workspaceId: string,
+    circleId: string,
+    roles: Array<{
+      title: string;
+      purpose?: string;
+      description?: string;
+      labels?: string[];
+      users?: string[];
+      accountabilities?: string[];
+      domains?: string[];
+    }>
+  ): Promise<Nest | Nest[]> {
+    const body = roles.length === 1 ? roles[0] : roles;
+    return this.fetch<Nest | Nest[]>(
+      `/workspaces/${workspaceId}/circles/${circleId}/roles`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      }
+    );
+  }
+
+  /**
+   * Create one or more circles in a workspace using the self-organization endpoint.
+   * Supports inline accountabilities and domains arrays.
+   * Uses POST /workspaces/:workspaceId/circles
+   */
+  async createCircles(
+    workspaceId: string,
+    circles: Array<{
+      title: string;
+      purpose?: string;
+      description?: string;
+      parentId?: string;
+      labels?: string[];
+      users?: string[];
+      accountabilities?: string[];
+      domains?: string[];
+    }>
+  ): Promise<Nest | Nest[]> {
+    const body = circles.length === 1 ? circles[0] : circles;
+    return this.fetch<Nest | Nest[]>(
+      `/workspaces/${workspaceId}/circles`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      }
+    );
+  }
+
   async updateNest(
     nestId: string,
     updates: Partial<{
@@ -453,6 +509,68 @@ export class NestrClient {
       method: "PATCH",
       body: JSON.stringify(updates),
     });
+  }
+
+  /**
+   * Update a role using the self-organization endpoint.
+   * Supports inline accountabilities and domains arrays.
+   * Uses PATCH /workspaces/:workspaceId/roles/:roleId
+   */
+  async updateRole(
+    workspaceId: string,
+    roleId: string,
+    updates: {
+      title?: string;
+      purpose?: string;
+      description?: string;
+      parentId?: string;
+      labels?: string[];
+      users?: string[];
+      fields?: Record<string, unknown>;
+      data?: Record<string, unknown>;
+      due?: string;
+      accountabilities?: string[];
+      domains?: string[];
+    }
+  ): Promise<Nest> {
+    return this.fetch<Nest>(
+      `/workspaces/${workspaceId}/roles/${roleId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(updates),
+      }
+    );
+  }
+
+  /**
+   * Update a circle using the self-organization endpoint.
+   * Supports inline accountabilities and domains arrays.
+   * Uses PATCH /workspaces/:workspaceId/circles/:circleId
+   */
+  async updateCircle(
+    workspaceId: string,
+    circleId: string,
+    updates: {
+      title?: string;
+      purpose?: string;
+      description?: string;
+      parentId?: string;
+      labels?: string[];
+      users?: string[];
+      fields?: Record<string, unknown>;
+      data?: Record<string, unknown>;
+      due?: string;
+      accountabilities?: string[];
+      domains?: string[];
+    }
+  ): Promise<Nest> {
+    return this.fetch<Nest>(
+      `/workspaces/${workspaceId}/circles/${circleId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(updates),
+      }
+    );
   }
 
   async deleteNest(nestId: string): Promise<void> {

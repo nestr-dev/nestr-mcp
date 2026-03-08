@@ -4,7 +4,7 @@
  */
 
 import { z } from "zod";
-import { NestrApiError, type NestrClient, type ToolError, type ErrorCode } from "../api/client.js";
+import { NestrApiError, type NestrClient, type Nest, type ToolError, type ErrorCode } from "../api/client.js";
 import { appResources } from "../apps/index.js";
 
 // MCP Apps UI metadata for tools that can render in the completable list app.
@@ -133,6 +133,9 @@ export const schemas = {
     description: z.string().optional().describe("Detailed description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)"),
     labels: z.array(z.string()).optional().describe("Label IDs to apply"),
     users: z.array(z.string()).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
+    accountabilities: z.array(z.string()).optional().describe("Accountability titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes an accountability child nest."),
+    domains: z.array(z.string()).optional().describe("Domain titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes a domain child nest."),
+    workspaceId: z.string().optional().describe("Workspace ID. Required when creating roles/circles with accountabilities or domains (used to route to the self-organization API)."),
   }),
 
   updateNest: z.object({
@@ -147,6 +150,9 @@ export const schemas = {
     data: z.record(z.unknown()).optional().describe("Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead."),
     due: z.string().optional().describe("Due date (ISO format). For projects/tasks: deadline. For roles: re-election date. For meetings: start time."),
     completed: z.boolean().optional().describe("Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead."),
+    accountabilities: z.array(z.string()).optional().describe("Accountability titles for roles/circles (replaces existing). Only used when updating a role or circle. Requires workspaceId."),
+    domains: z.array(z.string()).optional().describe("Domain titles for roles/circles (replaces existing). Only used when updating a role or circle. Requires workspaceId."),
+    workspaceId: z.string().optional().describe("Workspace ID. Required when updating accountabilities or domains on roles/circles."),
   }),
 
   deleteNest: z.object({
@@ -435,6 +441,11 @@ export const schemas = {
   }),
 };
 
+// Tool annotations for MCP - hints for clients on tool behavior
+const readOnly = { annotations: { readOnlyHint: true, destructiveHint: false } };
+const mutating = { annotations: { readOnlyHint: false, destructiveHint: false } };
+const destructive = { annotations: { readOnlyHint: false, destructiveHint: true } };
+
 // Tool definitions for MCP
 export const toolDefinitions = [
   {
@@ -449,6 +460,7 @@ export const toolDefinitions = [
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for bulk/index operations." },
       },
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_workspace",
@@ -461,22 +473,11 @@ export const toolDefinitions = [
       },
       required: ["workspaceId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_create_workspace",
-    description: `Create a new workspace. Use this rarely - mainly when a user has no workspaces (e.g., new signup).
-
-**If the user has no workspaces, they must create one first using this tool before they can do anything else in Nestr.**
-
-A workspace is a container for work - either personal or collaborative:
-- **Personal**: For individual use, free forever. Only you have access.
-- **Collaborative**: For teams, starts with free trial (no auto-payment - user must explicitly activate).
-
-The creator is the only one with access initially. Others must be explicitly invited. Safe to create and test - no one else will see it.
-
-**Important**: Always ask the user to provide a purpose - why does this workspace exist? What is it trying to achieve? They can always change it later, but starting with a clear purpose is valuable. Probe them for the why, but create the workspace with or without it.
-
-Requires user-scoped authentication (OAuth token or personal API key with user scope).`,
+    description: `Create a new workspace. Requires user-scoped authentication (OAuth token or personal API key). See the "Workspace & Circle Setup Mode" instructions for the full guided flow on when and how to create workspaces.`,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -512,6 +513,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["title"],
     },
+    ...mutating,
   },
   {
     name: "nestr_search",
@@ -529,6 +531,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       required: ["workspaceId", "query"],
     },
     _meta: completableListUi,
+    ...readOnly,
   },
   {
     name: "nestr_get_nest",
@@ -542,6 +545,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_nest_children",
@@ -558,10 +562,11 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       required: ["nestId"],
     },
     _meta: completableListUi,
+    ...readOnly,
   },
   {
     name: "nestr_create_nest",
-    description: "Create a new nest (task, project, etc.) under a parent. Set users to assign to people - placing under a role does NOT auto-assign.",
+    description: "Create a new nest (task, project, role, circle, etc.) under a parent. Set users to assign to people - placing under a role does NOT auto-assign. For roles and circles: include accountabilities and domains arrays to create them inline (requires workspaceId). The API auto-routes to the self-organization endpoint when governance labels are detected with accountabilities/domains.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -572,20 +577,35 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         labels: {
           type: "array",
           items: { type: "string" },
-          description: "Label IDs to apply (e.g., 'project', 'todo')",
+          description: "Label IDs to apply (e.g., 'project', 'role', 'circle')",
         },
         users: {
           type: "array",
           items: { type: "string" },
           description: "User IDs to assign (required for tasks/projects to associate with a person)",
         },
+        accountabilities: {
+          type: "array",
+          items: { type: "string" },
+          description: "Accountability titles for roles/circles. Each becomes an accountability child nest. Only used when labels include 'role' or 'circle'. Requires workspaceId.",
+        },
+        domains: {
+          type: "array",
+          items: { type: "string" },
+          description: "Domain titles for roles/circles. Each becomes a domain child nest. Only used when labels include 'role' or 'circle'. Requires workspaceId.",
+        },
+        workspaceId: {
+          type: "string",
+          description: "Workspace ID. Required when creating roles/circles with accountabilities or domains.",
+        },
       },
       required: ["parentId", "title"],
     },
+    ...mutating,
   },
   {
     name: "nestr_update_nest",
-    description: "Update properties of an existing nest. Use parentId to move a nest (e.g., inbox item to a project). For AI knowledge persistence, create skill-labeled nests under roles/circles instead of using data fields.",
+    description: "Update properties of an existing nest. Use parentId to move a nest (e.g., inbox item to a project). For roles and circles: include accountabilities and domains arrays to update them inline (requires workspaceId). For AI knowledge persistence, create skill-labeled nests under roles/circles instead of using data fields.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -620,9 +640,24 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
           type: "boolean",
           description: "Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead.",
         },
+        accountabilities: {
+          type: "array",
+          items: { type: "string" },
+          description: "Accountability titles for roles/circles (replaces existing). Requires workspaceId.",
+        },
+        domains: {
+          type: "array",
+          items: { type: "string" },
+          description: "Domain titles for roles/circles (replaces existing). Requires workspaceId.",
+        },
+        workspaceId: {
+          type: "string",
+          description: "Workspace ID. Required when updating accountabilities or domains.",
+        },
       },
       required: ["nestId"],
     },
+    ...mutating,
   },
   {
     name: "nestr_delete_nest",
@@ -634,6 +669,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId"],
     },
+    ...destructive,
   },
   {
     name: "nestr_add_comment",
@@ -646,6 +682,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "body"],
     },
+    ...mutating,
   },
   {
     name: "nestr_update_comment",
@@ -658,6 +695,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["commentId", "body"],
     },
+    ...mutating,
   },
   {
     name: "nestr_delete_comment",
@@ -669,6 +707,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["commentId"],
     },
+    ...destructive,
   },
   {
     name: "nestr_list_circles",
@@ -683,6 +722,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_circle_roles",
@@ -698,6 +738,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId", "circleId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_list_roles",
@@ -712,6 +753,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_insights",
@@ -724,6 +766,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_list_users",
@@ -738,6 +781,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_list_labels",
@@ -752,6 +796,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_projects",
@@ -768,6 +813,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       required: ["workspaceId"],
     },
     _meta: completableListUi,
+    ...readOnly,
   },
   {
     name: "nestr_get_comments",
@@ -780,6 +826,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_circle",
@@ -793,6 +840,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId", "circleId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_user",
@@ -805,6 +853,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId", "userId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_add_workspace_user",
@@ -824,6 +873,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId", "username"],
     },
+    ...mutating,
   },
   {
     name: "nestr_get_label",
@@ -836,6 +886,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId", "labelId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_insight_history",
@@ -851,6 +902,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId", "metricId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_workspace_apps",
@@ -862,6 +914,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId"],
     },
+    ...readOnly,
   },
   // Inbox tools (require OAuth token - won't work with workspace API keys)
   {
@@ -875,6 +928,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
     },
     _meta: completableListUi,
+    ...readOnly,
   },
   {
     name: "nestr_create_inbox_item",
@@ -887,6 +941,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["title"],
     },
+    ...mutating,
   },
   {
     name: "nestr_get_inbox_item",
@@ -899,6 +954,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_update_inbox_item",
@@ -914,6 +970,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId"],
     },
+    ...mutating,
   },
   {
     name: "nestr_reorder_inbox",
@@ -929,6 +986,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestIds"],
     },
+    ...mutating,
   },
   {
     name: "nestr_reorder_inbox_item",
@@ -942,6 +1000,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "position", "relatedNestId"],
     },
+    ...mutating,
   },
   // Personal labels (require OAuth token - user's own labels, not workspace labels)
   {
@@ -951,6 +1010,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       type: "object" as const,
       properties: {},
     },
+    ...readOnly,
   },
   {
     name: "nestr_create_personal_label",
@@ -965,6 +1025,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["title"],
     },
+    ...mutating,
   },
   // Reorder tools
   {
@@ -979,6 +1040,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "position", "relatedNestId"],
     },
+    ...mutating,
   },
   {
     name: "nestr_bulk_reorder",
@@ -995,6 +1057,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId", "nestIds"],
     },
+    ...mutating,
   },
   // Daily plan (requires OAuth token)
   {
@@ -1007,6 +1070,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
     },
     _meta: completableListUi,
+    ...readOnly,
   },
   // Label management
   {
@@ -1020,6 +1084,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "labelId"],
     },
+    ...mutating,
   },
   {
     name: "nestr_remove_label",
@@ -1032,6 +1097,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "labelId"],
     },
+    ...mutating,
   },
   {
     name: "nestr_add_to_daily_plan",
@@ -1047,6 +1113,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestIds"],
     },
+    ...mutating,
   },
   {
     name: "nestr_remove_from_daily_plan",
@@ -1062,6 +1129,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestIds"],
     },
+    ...mutating,
   },
   // Current user identity
   {
@@ -1071,6 +1139,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       type: "object" as const,
       properties: {},
     },
+    ...readOnly,
   },
   // User tension tools (requires OAuth token)
   {
@@ -1082,6 +1151,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         context: { type: "string", description: "Optional context filter (e.g., workspace ID or circle ID)" },
       },
     },
+    ...readOnly,
   },
   {
     name: "nestr_list_tensions_awaiting_consent",
@@ -1092,6 +1162,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         context: { type: "string", description: "Optional context filter (e.g., workspace ID or circle ID)" },
       },
     },
+    ...readOnly,
   },
   // Tension tools
   {
@@ -1108,6 +1179,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "title"],
     },
+    ...mutating,
   },
   {
     name: "nestr_get_tension",
@@ -1120,6 +1192,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "tensionId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_list_tensions",
@@ -1134,6 +1207,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_update_tension",
@@ -1150,6 +1224,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "tensionId"],
     },
+    ...mutating,
   },
   {
     name: "nestr_delete_tension",
@@ -1162,6 +1237,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "tensionId"],
     },
+    ...destructive,
   },
   {
     name: "nestr_get_tension_parts",
@@ -1174,6 +1250,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "tensionId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_add_tension_part",
@@ -1203,6 +1280,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "tensionId"],
     },
+    ...mutating,
   },
   {
     name: "nestr_modify_tension_part",
@@ -1226,6 +1304,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "tensionId", "partId"],
     },
+    ...mutating,
   },
   {
     name: "nestr_remove_tension_part",
@@ -1239,6 +1318,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "tensionId", "partId"],
     },
+    ...destructive,
   },
   {
     name: "nestr_get_tension_changes",
@@ -1252,6 +1332,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "tensionId", "partId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_tension_status",
@@ -1264,6 +1345,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "tensionId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_update_tension_status",
@@ -1277,6 +1359,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "tensionId", "status"],
     },
+    ...mutating,
   },
 ];
 
@@ -1400,6 +1483,41 @@ async function _handleToolCall(
 
       case "nestr_create_nest": {
         const parsed = schemas.createNest.parse(args);
+        const hasGovernanceLabels = parsed.labels?.some(l =>
+          ["role", "circle"].includes(l)
+        );
+        const hasInlineGovernance = parsed.accountabilities?.length || parsed.domains?.length;
+
+        // Route to self-organization API when creating roles/circles with accountabilities/domains
+        if (hasGovernanceLabels && hasInlineGovernance && parsed.workspaceId) {
+          const isCircle = parsed.labels?.includes("circle");
+          const nestData = {
+            title: parsed.title,
+            purpose: parsed.purpose,
+            description: parsed.description,
+            labels: parsed.labels,
+            users: parsed.users,
+            accountabilities: parsed.accountabilities,
+            domains: parsed.domains,
+          };
+
+          let result: Nest | Nest[];
+          if (isCircle) {
+            result = await client.createCircles(
+              parsed.workspaceId,
+              [{ ...nestData, parentId: parsed.parentId }]
+            );
+          } else {
+            result = await client.createRolesInCircle(
+              parsed.workspaceId,
+              parsed.parentId,
+              [nestData]
+            );
+          }
+          const nest = Array.isArray(result) ? result[0] : result;
+          return formatResult({ message: "Nest created successfully", nest });
+        }
+
         const nest = await client.createNest({
           parentId: parsed.parentId,
           title: parsed.title,
@@ -1413,6 +1531,34 @@ async function _handleToolCall(
 
       case "nestr_update_nest": {
         const parsed = schemas.updateNest.parse(args);
+        const hasInlineGovernance = parsed.accountabilities?.length || parsed.domains?.length;
+
+        // Route to self-organization API when updating roles/circles with accountabilities/domains
+        if (hasInlineGovernance && parsed.workspaceId) {
+          // Determine if this is a circle or role by checking labels
+          // If labels are being set and include 'circle', use circle endpoint
+          // Otherwise default to role endpoint (more common case)
+          const isCircle = parsed.labels?.includes("circle");
+          const updates = {
+            title: parsed.title,
+            purpose: parsed.purpose,
+            description: parsed.description,
+            parentId: parsed.parentId,
+            labels: parsed.labels,
+            users: parsed.users,
+            fields: parsed.fields,
+            data: parsed.data as Record<string, unknown> | undefined,
+            due: parsed.due,
+            accountabilities: parsed.accountabilities,
+            domains: parsed.domains,
+          };
+
+          const nest = isCircle
+            ? await client.updateCircle(parsed.workspaceId, parsed.nestId, updates)
+            : await client.updateRole(parsed.workspaceId, parsed.nestId, updates);
+          return formatResult({ message: "Nest updated successfully", nest });
+        }
+
         const nest = await client.updateNest(parsed.nestId, {
           title: parsed.title,
           purpose: parsed.purpose,
