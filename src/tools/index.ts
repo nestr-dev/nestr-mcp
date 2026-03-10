@@ -517,7 +517,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_search",
-    description: "Search for nests within a workspace. Supports operators: label:, parent-label:, assignee: (me/userId/!userId/none), admin:, createdby:, completed:, type:, has: (due/pastdue/children/incompletechildren), depth:, mindepth:, in:, updated-date:, limit:, template:, data.property:, fields.{label}.{property}: to search any value in a nest's fields object (supports partial match, e.g., fields.project.status:Current — use nestr_get_nest with fieldsMetaData=true to discover available fields), label->field:value. Use ! prefix for negation. IMPORTANT: Use completed:false when searching for work to exclude old completed items. Response includes meta.total showing total matching count. NOTE: The completable list UI app should ONLY be used when results are completable items (tasks, projects, todos). Do NOT use the app for any other type of nest.",
+    description: "Search for nests within a workspace. Supports operators: label:, parent-label:, assignee: (me/userId/!userId/none), admin:, createdby:, completed:, type:, has: (due/pastdue/children/incompletechildren), depth:, mindepth:, in:, updated-date:, limit:, template:, data.property:, fields.{label}.{property}: to search any value in a nest's fields object (supports partial match, e.g., fields.project.status:Current — use nestr_get_nest with fieldsMetaData=true to discover available fields), label->field:value. Use ! prefix for negation. IMPORTANT: Use completed:false when searching for work to exclude old completed items. Response includes meta.total showing total matching count. IMPORTANT UI RULE: The completable list app must ONLY be used when results contain completable items (tasks, projects, todos) AND there are results to show. When searching for roles, circles, metrics, policies, or any non-completable type, you MUST omit the _listTitle parameter and respond in plain text instead — never render these in the app. Also never render empty results in the app.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -549,7 +549,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_nest_children",
-    description: "Get child nests (sub-tasks, sub-projects) of a nest. Response includes meta.total showing total matching count. NOTE: The completable list UI app should ONLY be used when results are completable items (tasks, projects, todos). Do NOT use the app for any other type of nest.",
+    description: "Get child nests (sub-tasks, sub-projects) of a nest. Response includes meta.total showing total matching count. IMPORTANT UI RULE: The completable list app must ONLY be used when results contain completable items (tasks, projects, todos) AND there are results to show. When results are roles, circles, metrics, policies, or any non-completable type, you MUST omit the _listTitle parameter and respond in plain text instead — never render these in the app. Also never render empty results in the app.",
     inputSchema: {
       type: "object" as const,
       properties: {

@@ -1100,7 +1100,12 @@ An interactive list for displaying and managing completable items (tasks and pro
 
 #### When to Use
 
-Only use the completable list app when the user **explicitly asks to see or manage a list of completable items** as the primary goal of their request. Examples:
+Only use the completable list app when **ALL** of these conditions are met:
+1. The user **explicitly asks to see or manage a list** as the primary goal of their request
+2. The results are **completable items** — tasks, projects, todos, or inbox items
+3. The results are **not empty** — there must be at least one item to display
+
+Examples where you SHOULD use the app:
 - "Show me my daily plan" / "What's in my inbox?"
 - "List my projects" / "Show tasks under this role"
 - "What do I need to work on?"
@@ -1108,8 +1113,9 @@ Only use the completable list app when the user **explicitly asks to see or mana
 #### When NOT to Use
 
 Do NOT use the app when:
-- **Searching as part of processing a larger request** (e.g., finding roles to determine where work belongs, looking up a project to add a task to it, gathering context for a question). In these cases, just use the search results internally and respond in text.
+- **The results are not completable items.** Roles, circles, metrics, policies, accountabilities, domains, and any other structural nests must NEVER be shown in the completable list app. Always respond in text for these.
 - **The search returns no results.** Never render an empty completable list — just tell the user no items were found.
+- **Searching as part of processing a larger request** (e.g., finding roles to determine where work belongs, looking up a project to add a task to it, gathering context for a question). In these cases, just use the search results internally and respond in text.
 - **The user asked a question**, not for a list (e.g., "What's the status of project X?" — answer in text, don't show a list with one item).
 - **You are in the middle of a multi-step workflow** and the search is an intermediate step, not the final output.
 
@@ -1476,8 +1482,21 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
           };
           return cachedIdentity;
         } catch (err) {
-          // Cache the failure so we don't make failing API calls on every request
-          // (e.g., workspace API keys will never resolve to a user)
+          // getCurrentUser failed — likely a workspace API key.
+          // Try to identify by workspace name instead.
+          try {
+            const workspaces = await client.listWorkspaces({ limit: 1 });
+            if (workspaces.length > 0) {
+              const ws = workspaces[0];
+              cachedIdentity = {
+                userId: ws._id,
+                userName: `${ws.title} (API key)`,
+              };
+              return cachedIdentity;
+            }
+          } catch (wsErr) {
+            // Ignore — fall through to null
+          }
           cachedIdentity = null;
           console.error('[MCPCat] identify failed:', err instanceof Error ? err.message : err);
           return null;
