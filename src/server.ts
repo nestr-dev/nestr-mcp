@@ -203,18 +203,22 @@ Nestr is a work management platform for teams practicing self-organization, Hola
 
 ## Linking to Nests
 
-**Always link to nests when mentioning them.** When referring to any nest (role, circle, project, task, etc.), include a clickable link using this URL format:
+**Always link to nests when mentioning them.** The URL format is:
 
-\`https://app.nestr.io/n/{circleId}/{nestId}\`
+\`https://app.nestr.io/n/{nestId}\`
 
-Where:
-- \`{circleId}\` is the ID of the nearest circle ancestor (the circle containing the nest)
-- \`{nestId}\` is the ID of the nest itself
+If you know the context (circle or workspace) of the nest, include it as a prefix:
 
-Example: When mentioning the "Developer" role in the Tech Circle, link it as:
-\`[Developer](https://app.nestr.io/n/techCircleId/developerRoleId)\`
+\`https://app.nestr.io/n/{contextId}/{nestId}\`
 
-This allows users to quickly navigate to any item you reference.
+Where \`{contextId}\` is the nest's containing circle or workspace (found in the \`ancestors\` array). If you don't know the context ID, just use \`/n/{nestId}\` — it will still work.
+
+**IMPORTANT:** The URL path is \`/n/\`, NOT \`/nest/\`, \`/nests/\`, or any other variation. Always use \`/n/\`.
+
+Examples:
+- Role in a circle: \`[Developer](https://app.nestr.io/n/circleId/roleId)\`
+- Top-level workspace: \`[My Workspace](https://app.nestr.io/n/workspaceId)\`
+- Task (circle unknown): \`[Fix bug](https://app.nestr.io/n/taskId)\`
 
 ## Workspace Types
 
