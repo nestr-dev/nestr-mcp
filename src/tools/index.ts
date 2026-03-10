@@ -334,7 +334,9 @@ export const schemas = {
   getDailyPlan: z.object({}),
 
   // Current user identity (requires OAuth token)
-  getMe: z.object({}),
+  getMe: z.object({
+    fullWorkspaces: z.boolean().optional().describe("Set true to include full workspace details (purpose, labels, governance type, user access roles). Recommended on first call to establish workspace context."),
+  }),
 
   // User tension tools (requires OAuth token)
   listMyTensions: z.object({
@@ -450,7 +452,7 @@ const destructive = { annotations: { readOnlyHint: false, destructiveHint: true 
 export const toolDefinitions = [
   {
     name: "nestr_list_workspaces",
-    description: "List all Nestr workspaces you have access to. Response includes meta.total showing total count.",
+    description: "List and search Nestr workspaces. Use this to find a workspace by name when `nestr_get_me` workspaces cache doesn't have a match, or for paginated browsing. Prefer `nestr_get_me` with `fullWorkspaces: true` as the primary way to discover workspaces at session start. Response includes meta.total showing total count.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1131,13 +1133,15 @@ export const toolDefinitions = [
     },
     ...mutating,
   },
-  // Current user identity
+  // Current user identity and workspace context — primary entry point
   {
     name: "nestr_get_me",
-    description: "Get the current authenticated identity and operating mode. Returns user info including `bot: true` if the agent energizes roles directly (role-filler mode) or absent/false if assisting a human who energizes roles. Returns `authMode: 'api-key'` when using a workspace API key (no user identity, no user-scoped features). Call at session start to determine how to behave. Requires OAuth token for full user info; gracefully handles API key auth.",
+    description: "CALL THIS FIRST at session start. Returns your identity, operating mode, and accessible workspaces. With `fullWorkspaces: true`, includes full workspace details (purpose, governance type, user access roles) — use this to establish workspace context without a separate list_workspaces call. If only one workspace exists, it is the active workspace. For multiple workspaces, use names to identify the right one. Returns `authMode: 'api-key'` when using a workspace API key (workspace mode, no user identity).",
     inputSchema: {
       type: "object" as const,
-      properties: {},
+      properties: {
+        fullWorkspaces: { type: "boolean", description: "Set true to include full workspace details. Recommended on first call." },
+      },
     },
     ...readOnly,
   },
@@ -1856,11 +1860,13 @@ async function _handleToolCall(
         return formatResult(completableResponse(compactResponse(items), "daily-plan", "Daily Plan"));
       }
 
-      // Current user identity
+      // Current user identity and workspace context
       case "nestr_get_me": {
-        schemas.getMe.parse(args);
+        const parsed = schemas.getMe.parse(args);
         try {
-          const user = await client.getCurrentUser();
+          const user = await client.getCurrentUser({
+            fullWorkspaces: parsed.fullWorkspaces,
+          });
           return formatResult({
             authMode: "oauth",
             user,

@@ -1171,8 +1171,11 @@ export class NestrClient {
    * Requires OAuth token - does not work with workspace API keys.
    * Used for analytics to get user_id for session stitching.
    */
-  async getCurrentUser(): Promise<User> {
-    return this.fetch<User>("/users/me");
+  async getCurrentUser(options?: { fullWorkspaces?: boolean }): Promise<User> {
+    const params = new URLSearchParams();
+    if (options?.fullWorkspaces) params.set("fullWorkspaces", "true");
+    const query = params.toString();
+    return this.fetch<User>(`/users/me${query ? `?${query}` : ""}`);
   }
 }
 
