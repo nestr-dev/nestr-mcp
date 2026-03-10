@@ -345,6 +345,17 @@ export const schemas = {
     context: z.string().optional().describe("Optional context filter (e.g., workspace ID or circle ID)"),
   }),
 
+  // Notification tools (requires OAuth token)
+  listNotifications: z.object({
+    type: z.enum(["all", "me", "relevant"]).optional().describe("Filter by type: 'all' (default), 'me' (direct — mentions, replies, reactions, DMs), 'relevant' (delayed — updates, governance)"),
+    limit: z.number().optional().describe("Max results to return (default 50, max 200)"),
+    skip: z.number().optional().describe("Number of results to skip (default 0)"),
+    showRead: z.boolean().optional().describe("Include already-read notifications (default false)"),
+    group: z.string().optional().describe("Filter by notification group (mentions, replies, direct_message, reactions, updates, governance)"),
+  }),
+
+  markNotificationsRead: z.object({}),
+
   // Tension tools
   createTension: z.object({
     nestId: z.string().describe("ID of the circle or role to create the tension on"),
@@ -1164,6 +1175,31 @@ export const toolDefinitions = [
     },
     ...readOnly,
   },
+  // Notification tools (requires OAuth token)
+  {
+    name: "nestr_list_notifications",
+    description: "List in-app notifications for the current user. By default returns only unread notifications. Use 'type' to filter: 'all' (default), 'me' (direct — mentions, replies, reactions, DMs), 'relevant' (delayed — updates, governance). Check at session start alongside tensions and inbox. Requires OAuth token.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        type: { type: "string", enum: ["all", "me", "relevant"], description: "Filter by type: 'all' (default), 'me' (direct), 'relevant' (delayed)" },
+        limit: { type: "number", description: "Max results (default 50, max 200)" },
+        skip: { type: "number", description: "Number of results to skip (default 0)" },
+        showRead: { type: "boolean", description: "Include already-read notifications (default false)" },
+        group: { type: "string", description: "Filter by group (mentions, replies, direct_message, reactions, updates, governance)" },
+      },
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_mark_notifications_read",
+    description: "Mark all unread in-app notifications as read for the current user. Returns the count of notifications marked. Requires OAuth token.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+    },
+    ...mutating,
+  },
   // Tension tools
   {
     name: "nestr_create_tension",
@@ -1897,6 +1933,25 @@ async function _handleToolCall(
         const parsed = schemas.listTensionsAwaitingConsent.parse(args);
         const tensions = await client.listTensionsAwaitingConsent({ context: parsed.context });
         return formatResult(compactResponse(tensions));
+      }
+
+      // Notification tools (requires OAuth token)
+      case "nestr_list_notifications": {
+        const parsed = schemas.listNotifications.parse(args);
+        const notifications = await client.listNotifications({
+          type: parsed.type,
+          limit: parsed.limit,
+          skip: parsed.skip,
+          showRead: parsed.showRead,
+          group: parsed.group,
+        });
+        return formatResult(notifications);
+      }
+
+      case "nestr_mark_notifications_read": {
+        schemas.markNotificationsRead.parse(args);
+        const result = await client.markNotificationsRead();
+        return formatResult(result);
       }
 
       // Tension tools

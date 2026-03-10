@@ -1164,6 +1164,40 @@ export class NestrClient {
     return this.fetch<Tension[]>(`/users/me/tensions/awaiting-my-consent${query ? `?${query}` : ""}`);
   }
 
+  // ============ NOTIFICATIONS (requires OAuth token) ============
+
+  /**
+   * List in-app notifications for the current user.
+   * Requires OAuth token (user-scoped) - does not work with workspace API keys.
+   */
+  async listNotifications(options?: {
+    type?: string;
+    limit?: number;
+    skip?: number;
+    showRead?: boolean;
+    group?: string;
+  }): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (options?.type) params.set("type", options.type);
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+    if (options?.skip !== undefined) params.set("skip", String(options.skip));
+    if (options?.showRead) params.set("showRead", "true");
+    if (options?.group) params.set("group", options.group);
+
+    const query = params.toString();
+    return this.fetch<unknown>(`/users/me/notifications${query ? `?${query}` : ""}`);
+  }
+
+  /**
+   * Mark all unread in-app notifications as read for the current user.
+   * Requires OAuth token (user-scoped) - does not work with workspace API keys.
+   */
+  async markNotificationsRead(): Promise<unknown> {
+    return this.fetch<unknown>("/users/me/notifications/mark-all-read", {
+      method: "POST",
+    });
+  }
+
   // ============ CURRENT USER ============
 
   /**
