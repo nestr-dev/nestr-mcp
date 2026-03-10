@@ -1178,7 +1178,7 @@ export const toolDefinitions = [
   // Notification tools (requires OAuth token)
   {
     name: "nestr_list_notifications",
-    description: "List in-app notifications for the current user. By default returns only unread notifications. Use 'type' to filter: 'all' (default), 'me' (direct — mentions, replies, reactions, DMs), 'relevant' (delayed — updates, governance). Check at session start alongside tensions and inbox. Requires OAuth token.",
+    description: "List in-app notifications for the current user. By default returns only unread notifications. Use 'type' to filter: 'all' (default), 'me' (direct — mentions, replies, reactions, DMs), 'relevant' (delayed — updates, governance). Each notification includes a rendered 'title' (e.g. 'Joost changed Project X in Developer') and optional 'details' array with change descriptions (e.g. 'Item was completed', 'Updated Project status from Backlog to Done'). Check at session start alongside tensions and inbox. Requires OAuth token.",
     inputSchema: {
       type: "object" as const,
       properties: {
