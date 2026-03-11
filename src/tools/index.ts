@@ -1197,7 +1197,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_mark_notifications_read",
-    description: "Mark all unread in-app notifications as read for the current user. Returns the count of notifications marked. Requires OAuth token.",
+    description: "Mark all unread in-app notifications as read for the current user. Returns { status, data: { markedCount } }. Requires OAuth token.",
     inputSchema: {
       type: "object" as const,
       properties: {},

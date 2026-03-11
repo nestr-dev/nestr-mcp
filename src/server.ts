@@ -1101,6 +1101,49 @@ User: "What should I work on today?"
 5. Execute work, processing tensions and completing tasks
 \`\`\`
 
+## Notifications (What Changed)
+
+Notifications surface relevant changes that happened in the organization — work completed, governance updated, mentions, reactions, and more. They complement tensions (which are forward-looking requests for change) by showing what has already changed that might need your attention.
+
+Think of notifications as the "what happened" signal: someone completed a project under your circle, a governance proposal was accepted, a colleague mentioned you in a comment, or a role's accountabilities changed. Reviewing notifications helps you stay aware of the evolving state of the organization without having to manually check every circle and role.
+
+### Notification Types
+
+Notifications are split into two types based on urgency:
+
+- **\`me\` (direct)** — Things directed at you personally: mentions, replies to your comments, reactions to your posts, and direct messages. These typically need prompt attention.
+- **\`relevant\` (delayed)** — Changes in areas you're involved in: project updates, task completions, governance changes in your circles. These are informational — review them to stay current, but they rarely need immediate action.
+
+Use \`type\` to filter: \`nestr_list_notifications({ type: "me" })\` for direct notifications only, or \`type: "relevant"\` for organizational changes.
+
+### Notification Groups
+
+For more granular filtering, use the \`group\` parameter:
+- **\`mentions\`** — Someone @mentioned you
+- **\`replies\`** — Someone replied to your comment
+- **\`direct_message\`** — You received a direct message
+- **\`reactions\`** — Someone reacted to your post
+- **\`updates\`** — Operational changes (tasks completed, projects updated, etc.)
+- **\`governance\`** — Governance changes (roles created/modified, proposals accepted, etc.)
+
+### When to Check Notifications
+
+Check notifications at the same natural breakpoints as tensions and inbox:
+
+- **Session start** — Use \`nestr_list_notifications\` to see what changed since last session
+- **After completing work** — Check if your changes triggered responses or follow-up from others
+- **When the user asks what happened** — Notifications are the answer to "what changed?" or "what did I miss?"
+
+**In assistant mode:** When the user asks what's new or what they missed, fetch notifications and summarize the key changes. Group them by type (direct vs. relevant) and highlight anything that might need action. Offer to mark all as read once reviewed.
+
+**In role-filler mode:** Check notifications proactively at session start. Direct notifications (\`type: "me"\`) may require a response — a mention might be a question, a reply might need follow-up. Relevant notifications (\`type: "relevant"\`) inform your situational awareness — a governance change might affect your role's accountabilities, a completed project might unblock your work.
+
+### Marking Notifications as Read
+
+Once notifications have been reviewed, use \`nestr_mark_notifications_read\` to clear them. This marks all unread notifications as read. In assistant mode, confirm with the user before marking. In role-filler mode, mark as read after processing.
+
+**Note:** Notification tools require OAuth authentication. They are not available in workspace mode.
+
 ## MCP Apps (Interactive UI)
 
 Nestr provides interactive UI components that can be embedded in MCP clients that support the \`ui://\` resource protocol.
