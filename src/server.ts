@@ -280,9 +280,20 @@ When in doubt with \`custom\`, explain concepts in plain language rather than as
 Nestr uses different formats for different fields:
 
 - **\`title\`**: Plain text only. HTML tags are stripped. Keep titles concise.
-- **\`purpose\`, \`description\`**: HTML supported. Use basic tags: \`<b>\`, \`<i>\`, \`<code>\`, \`<ul>\`, \`<ol>\`, \`<li>\`, \`<a href="...">\`, \`<br>\`, \`<img src="...">\` (including base64 data URIs). **Markdown is NOT supported** — it will display as literal text (e.g., \`**bold**\` renders as the string \`**bold**\`, not bold text).
-- **Comment \`body\`**: HTML supported (same as above, including base64 images). Use \`@username\` for mentions.
+- **\`purpose\`**: The aspirational future state this nest is working towards. **Most important for workspaces, circles, and roles** — it defines the north star and context boundary for the organization, circle, or role. Everything within that container should serve its purpose. For other nests (tasks, projects, etc.), prefer \`description\` or \`fields\` for detailed information — but purpose can be set if it serves the user. Supports HTML.
+- **\`description\`**: The primary field for detailed information about a nest. Use for project details, task context, acceptance criteria, Definition of Done, and any persistent information about the nest. Supports HTML.
+- **\`fields\`**: Structured data defined by labels (e.g., \`fields['project.status']\`, \`fields['metric.frequency']\`). Use for structured, label-specific information.
+- **Comment \`body\`**: HTML supported (same tags as above, including base64 images). Use \`@username\` for mentions. **Use comments for progress updates**, status changes, and conversation — not purpose or description.
 - **\`data\`**: Generic key-value store. Also used internally by Nestr and other integrations — **never overwrite or remove existing keys**. When adding your own data, namespace it under \`mcp.\` (e.g., \`{ "mcp.lastSync": "2025-01-01" }\`) to avoid conflicts. Not rendered in UI.
+
+**Where to put information:**
+| Information type | Field to use |
+|-----------------|-------------|
+| North star / aspirational future state | \`purpose\` (primarily workspaces, circles, roles) |
+| Details, context, acceptance criteria, DoD | \`description\` |
+| Structured data (status, frequency, etc.) | \`fields\` |
+| Progress updates, status changes, discussion | Comments |
+| Integration metadata, custom tracking | \`data\` (namespace under \`mcp.\`) |
 
 **Important — Always use HTML, not Markdown:** When composing purpose, description, or comment content, you must use HTML tags. This is a common mistake for AI agents that default to Markdown syntax.
 
@@ -394,12 +405,16 @@ A strategy that all roles within the circle must follow. Sub-circle strategies m
 
 ### Hierarchical Purpose
 
+The \`purpose\` field is most important for **workspaces, circles, and roles** — it defines the aspirational future state that container is working towards. It is the north star and context boundary: everything within that container should serve its purpose.
+
 The \`purpose\` field follows a strict hierarchy:
 - The **anchor circle's purpose** is the purpose of the entire organization
 - Each **sub-circle's purpose** must contribute to its parent circle's purpose
 - Each **role's purpose** must contribute to its circle's purpose
 
 This cascades through the entire hierarchy, which may be many layers deep. When creating or updating purposes, ensure they align with and serve the parent's purpose.
+
+**For other nests** (tasks, projects, etc.), prefer \`description\` for details, acceptance criteria, and Definition of Done. Use \`fields\` for structured data. Use comments for progress updates. Purpose can still be set on any nest if it serves the user, but by default reach for description first.
 
 ## Work Assignment & Context in Self-Organization
 
@@ -1532,31 +1547,38 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
           const response = await client.getCurrentUser();
           // The Nestr API wraps responses in { status, data } — unwrap if needed
           const user = (response as any)?.data || response;
-          cachedIdentity = {
-            userId: user._id,
-            userName: user.profile?.fullName || user._id,
-          };
-          return cachedIdentity;
+          if (user?._id) {
+            cachedIdentity = {
+              userId: user._id,
+              userName: user.profile?.fullName || user._id,
+            };
+            return cachedIdentity;
+          }
+          // getCurrentUser returned but without a valid _id — fall through to workspace fallback
+          console.warn('[MCPCat] getCurrentUser returned no _id, trying workspace fallback');
         } catch (err) {
           // getCurrentUser failed — likely a workspace API key.
-          // Try to identify by workspace name instead.
-          try {
-            const workspaces = await client.listWorkspaces({ limit: 1 });
-            if (workspaces.length > 0) {
-              const ws = workspaces[0];
-              cachedIdentity = {
-                userId: ws._id,
-                userName: `${ws.title} (API key)`,
-              };
-              return cachedIdentity;
-            }
-          } catch (wsErr) {
-            // Ignore — fall through to null
-          }
-          cachedIdentity = null;
-          console.error('[MCPCat] identify failed:', err instanceof Error ? err.message : err);
-          return null;
+          console.log('[MCPCat] getCurrentUser failed, trying workspace fallback:', err instanceof Error ? err.message : err);
         }
+        // Try to identify by workspace name instead.
+        try {
+          const result = await client.listWorkspaces({ limit: 1 });
+          // Handle both array responses and wrapped { data: [...] } responses
+          const workspaces = Array.isArray(result) ? result : (result as any)?.data || [];
+          if (Array.isArray(workspaces) && workspaces.length > 0) {
+            const ws = workspaces[0];
+            cachedIdentity = {
+              userId: ws._id,
+              userName: `${ws.title} (API key)`,
+            };
+            return cachedIdentity;
+          }
+          console.warn('[MCPCat] listWorkspaces returned no results:', JSON.stringify(result).slice(0, 200));
+        } catch (wsErr) {
+          console.error('[MCPCat] listWorkspaces also failed:', wsErr instanceof Error ? wsErr.message : wsErr);
+        }
+        cachedIdentity = null;
+        return null;
       },
     });
   }

@@ -96,7 +96,7 @@ export const schemas = {
 
   createWorkspace: z.object({
     title: z.string().describe("Workspace name"),
-    purpose: z.string().optional().describe("Workspace purpose or description"),
+    purpose: z.string().optional().describe("Workspace purpose — the aspirational future state of the organization. Defines the north star that all circles and roles serve."),
     type: z.enum(['personal', 'collaborative']).optional().describe("'personal' for individual use (free forever), 'collaborative' for team use (free trial, then paid). Defaults to 'collaborative'."),
     governance: z.enum(['holacracy', 'sociocracy', 'roles_circles']).optional().describe("Self-organization model. Defaults to 'roles_circles' (generic role-based)."),
     plan: z.enum(['starter', 'pro']).optional().describe("Subscription plan for collaborative workspaces. Defaults to 'pro' (17-day trial)."),
@@ -129,8 +129,8 @@ export const schemas = {
   createNest: z.object({
     parentId: z.string().describe("Parent nest ID (workspace, circle, or project)"),
     title: z.string().describe("Title of the new nest (plain text, HTML stripped)"),
-    purpose: z.string().optional().describe("Purpose - why this nest exists (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)"),
-    description: z.string().optional().describe("Detailed description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)"),
+    purpose: z.string().optional().describe("Purpose — the aspirational future state this nest is working towards. Most important for workspaces, circles, and roles where it defines the north star and context boundary. For other nests, prefer description or fields for detailed information — but purpose can be set if meaningful. Supports HTML."),
+    description: z.string().optional().describe("Detailed description — the primary field for storing information about a nest. Use for project details, task context, acceptance criteria, Definition of Done, etc. Supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>."),
     labels: z.array(z.string()).optional().describe("Label IDs to apply"),
     users: z.array(z.string()).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
     accountabilities: z.array(z.string()).optional().describe("Accountability titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes an accountability child nest."),
@@ -141,8 +141,8 @@ export const schemas = {
   updateNest: z.object({
     nestId: z.string().describe("Nest ID to update"),
     title: z.string().optional().describe("New title (plain text, HTML stripped)"),
-    purpose: z.string().optional().describe("New purpose (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)"),
-    description: z.string().optional().describe("New description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)"),
+    purpose: z.string().optional().describe("New purpose — the aspirational future state. Most important for workspaces, circles, and roles. For other nests, prefer description or fields — but purpose can be set if meaningful. Supports HTML."),
+    description: z.string().optional().describe("New description — the primary field for detailed information. Use for project details, task context, acceptance criteria, etc. Supports HTML."),
     parentId: z.string().optional().describe("New parent ID (move nest to different location, e.g., move inbox item to a role or project)"),
     labels: z.array(z.string()).optional().describe("Label IDs to set (e.g., ['project'] to convert an item into a project)"),
     fields: z.record(z.unknown()).optional().describe("Field updates (e.g., { 'project.status': 'Current' })"),
@@ -404,8 +404,8 @@ export const schemas = {
     _id: z.string().optional().describe("ID of an existing governance item to change or remove. Omit to propose a new item."),
     title: z.string().optional().describe("Title for the governance item"),
     labels: z.array(z.string()).optional().describe("Labels defining the item type (e.g., ['role'], ['circle'], ['policy'], ['accountability'], ['domain'])"),
-    purpose: z.string().optional().describe("Purpose of the item (supports HTML)"),
-    description: z.string().optional().describe("Description (supports HTML)"),
+    purpose: z.string().optional().describe("Purpose — aspirational future state. Most important for roles/circles where it defines the north star. Supports HTML."),
+    description: z.string().optional().describe("Description — detailed information about the item. Supports HTML."),
     parentId: z.string().optional().describe("Parent ID — use to move/restructure items (e.g., move role to different circle)"),
     users: z.array(z.string()).optional().describe("User IDs to assign (e.g., for role elections: assign the elected user to the role)"),
     due: z.string().optional().describe("Due date / re-election date (ISO format)"),
@@ -419,8 +419,8 @@ export const schemas = {
     tensionId: z.string().describe("Tension ID"),
     partId: z.string().describe("Part ID to modify"),
     title: z.string().optional().describe("Updated title"),
-    purpose: z.string().optional().describe("Updated purpose (supports HTML)"),
-    description: z.string().optional().describe("Updated description (supports HTML)"),
+    purpose: z.string().optional().describe("Updated purpose — aspirational future state. Most important for roles/circles. Supports HTML."),
+    description: z.string().optional().describe("Updated description — detailed information. Supports HTML."),
     labels: z.array(z.string()).optional().describe("Updated labels"),
     parentId: z.string().optional().describe("Updated parent ID"),
     users: z.array(z.string()).optional().describe("Updated user assignments"),
@@ -585,8 +585,8 @@ export const toolDefinitions = [
       properties: {
         parentId: { type: "string", description: "Parent nest ID (workspace, circle, or project)" },
         title: { type: "string", description: "Title of the new nest (plain text, HTML tags stripped)" },
-        purpose: { type: "string", description: "Purpose - why this nest exists (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
-        description: { type: "string", description: "Detailed description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
+        purpose: { type: "string", description: "Purpose — the aspirational future state this nest works towards. Most important for workspaces/circles/roles where it defines the north star and context boundary. For other nests, prefer description or fields — but purpose can be set if meaningful. Supports HTML." },
+        description: { type: "string", description: "Detailed description — primary field for nest information: project details, task context, acceptance criteria, DoD, etc. Use fields (e.g., project.status) for structured data and comments for progress updates. Supports HTML." },
         labels: {
           type: "array",
           items: { type: "string" },
@@ -624,8 +624,8 @@ export const toolDefinitions = [
       properties: {
         nestId: { type: "string", description: "Nest ID to update" },
         title: { type: "string", description: "New title (plain text, HTML tags stripped)" },
-        purpose: { type: "string", description: "New purpose (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
-        description: { type: "string", description: "New description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
+        purpose: { type: "string", description: "New purpose — aspirational future state. Most important for workspaces/circles/roles. For other nests, prefer description or fields — but purpose can be set if meaningful. Supports HTML." },
+        description: { type: "string", description: "New description — primary field for nest information. Use for details, context, criteria. Use fields for structured data, comments for progress. Supports HTML." },
         parentId: { type: "string", description: "New parent ID (move nest to different location)" },
         labels: {
           type: "array",
