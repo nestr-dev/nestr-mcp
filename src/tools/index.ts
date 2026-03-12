@@ -4,7 +4,7 @@
  */
 
 import { z } from "zod";
-import { NestrApiError, type NestrClient, type ToolError, type ErrorCode } from "../api/client.js";
+import { NestrApiError, type NestrClient, type Nest, type ToolError, type ErrorCode } from "../api/client.js";
 import { appResources } from "../apps/index.js";
 
 // MCP Apps UI metadata for tools that can render in the completable list app.
@@ -96,7 +96,7 @@ export const schemas = {
 
   createWorkspace: z.object({
     title: z.string().describe("Workspace name"),
-    purpose: z.string().optional().describe("Workspace purpose or description"),
+    purpose: z.string().optional().describe("Workspace purpose — the aspirational future state of the organization. Defines the north star that all circles and roles serve."),
     type: z.enum(['personal', 'collaborative']).optional().describe("'personal' for individual use (free forever), 'collaborative' for team use (free trial, then paid). Defaults to 'collaborative'."),
     governance: z.enum(['holacracy', 'sociocracy', 'roles_circles']).optional().describe("Self-organization model. Defaults to 'roles_circles' (generic role-based)."),
     plan: z.enum(['starter', 'pro']).optional().describe("Subscription plan for collaborative workspaces. Defaults to 'pro' (17-day trial)."),
@@ -129,17 +129,20 @@ export const schemas = {
   createNest: z.object({
     parentId: z.string().describe("Parent nest ID (workspace, circle, or project)"),
     title: z.string().describe("Title of the new nest (plain text, HTML stripped)"),
-    purpose: z.string().optional().describe("Purpose - why this nest exists (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)"),
-    description: z.string().optional().describe("Detailed description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)"),
+    purpose: z.string().optional().describe("Purpose — the aspirational future state this nest is working towards. Most important for workspaces, circles, and roles where it defines the north star and context boundary. For other nests, prefer description or fields for detailed information — but purpose can be set if meaningful. Supports HTML."),
+    description: z.string().optional().describe("Detailed description — the primary field for storing information about a nest. Use for project details, task context, acceptance criteria, Definition of Done, etc. Supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>."),
     labels: z.array(z.string()).optional().describe("Label IDs to apply"),
     users: z.array(z.string()).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
+    accountabilities: z.array(z.string()).optional().describe("Accountability titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes an accountability child nest."),
+    domains: z.array(z.string()).optional().describe("Domain titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes a domain child nest."),
+    workspaceId: z.string().optional().describe("Workspace ID. Required when creating roles/circles with accountabilities or domains (used to route to the self-organization API)."),
   }),
 
   updateNest: z.object({
     nestId: z.string().describe("Nest ID to update"),
     title: z.string().optional().describe("New title (plain text, HTML stripped)"),
-    purpose: z.string().optional().describe("New purpose (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)"),
-    description: z.string().optional().describe("New description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)"),
+    purpose: z.string().optional().describe("New purpose — the aspirational future state. Most important for workspaces, circles, and roles. For other nests, prefer description or fields — but purpose can be set if meaningful. Supports HTML."),
+    description: z.string().optional().describe("New description — the primary field for detailed information. Use for project details, task context, acceptance criteria, etc. Supports HTML."),
     parentId: z.string().optional().describe("New parent ID (move nest to different location, e.g., move inbox item to a role or project)"),
     labels: z.array(z.string()).optional().describe("Label IDs to set (e.g., ['project'] to convert an item into a project)"),
     fields: z.record(z.unknown()).optional().describe("Field updates (e.g., { 'project.status': 'Current' })"),
@@ -147,6 +150,9 @@ export const schemas = {
     data: z.record(z.unknown()).optional().describe("Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead."),
     due: z.string().optional().describe("Due date (ISO format). For projects/tasks: deadline. For roles: re-election date. For meetings: start time."),
     completed: z.boolean().optional().describe("Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead."),
+    accountabilities: z.array(z.string()).optional().describe("Accountability titles for roles/circles (replaces existing). Only used when updating a role or circle. Requires workspaceId."),
+    domains: z.array(z.string()).optional().describe("Domain titles for roles/circles (replaces existing). Only used when updating a role or circle. Requires workspaceId."),
+    workspaceId: z.string().optional().describe("Workspace ID. Required when updating accountabilities or domains on roles/circles."),
   }),
 
   deleteNest: z.object({
@@ -328,7 +334,9 @@ export const schemas = {
   getDailyPlan: z.object({}),
 
   // Current user identity (requires OAuth token)
-  getMe: z.object({}),
+  getMe: z.object({
+    fullWorkspaces: z.boolean().optional().describe("Set true to include full workspace details (purpose, labels, governance type, user access roles). Recommended on first call to establish workspace context."),
+  }),
 
   // User tension tools (requires OAuth token)
   listMyTensions: z.object({
@@ -338,6 +346,17 @@ export const schemas = {
   listTensionsAwaitingConsent: z.object({
     context: z.string().optional().describe("Optional context filter (e.g., workspace ID or circle ID)"),
   }),
+
+  // Notification tools (requires OAuth token)
+  listNotifications: z.object({
+    type: z.enum(["all", "me", "relevant"]).optional().describe("Filter by type: 'all' (default), 'me' (direct — mentions, replies, reactions, DMs), 'relevant' (delayed — updates, governance)"),
+    limit: z.number().optional().describe("Max results to return (default 50, max 200)"),
+    skip: z.number().optional().describe("Number of results to skip (default 0)"),
+    showRead: z.boolean().optional().describe("Include already-read notifications (default false)"),
+    group: z.string().optional().describe("Filter by notification group (mentions, replies, direct_message, reactions, updates, governance)"),
+  }),
+
+  markNotificationsRead: z.object({}),
 
   // Tension tools
   createTension: z.object({
@@ -385,8 +404,8 @@ export const schemas = {
     _id: z.string().optional().describe("ID of an existing governance item to change or remove. Omit to propose a new item."),
     title: z.string().optional().describe("Title for the governance item"),
     labels: z.array(z.string()).optional().describe("Labels defining the item type (e.g., ['role'], ['circle'], ['policy'], ['accountability'], ['domain'])"),
-    purpose: z.string().optional().describe("Purpose of the item (supports HTML)"),
-    description: z.string().optional().describe("Description (supports HTML)"),
+    purpose: z.string().optional().describe("Purpose — aspirational future state. Most important for roles/circles where it defines the north star. Supports HTML."),
+    description: z.string().optional().describe("Description — detailed information about the item. Supports HTML."),
     parentId: z.string().optional().describe("Parent ID — use to move/restructure items (e.g., move role to different circle)"),
     users: z.array(z.string()).optional().describe("User IDs to assign (e.g., for role elections: assign the elected user to the role)"),
     due: z.string().optional().describe("Due date / re-election date (ISO format)"),
@@ -399,8 +418,8 @@ export const schemas = {
     tensionId: z.string().describe("Tension ID"),
     partId: z.string().describe("Part ID to modify"),
     title: z.string().optional().describe("Updated title"),
-    purpose: z.string().optional().describe("Updated purpose (supports HTML)"),
-    description: z.string().optional().describe("Updated description (supports HTML)"),
+    purpose: z.string().optional().describe("Updated purpose — aspirational future state. Most important for roles/circles. Supports HTML."),
+    description: z.string().optional().describe("Updated description — detailed information. Supports HTML."),
     labels: z.array(z.string()).optional().describe("Updated labels"),
     parentId: z.string().optional().describe("Updated parent ID"),
     users: z.array(z.string()).optional().describe("Updated user assignments"),
@@ -462,11 +481,16 @@ export const schemas = {
   }),
 };
 
+// Tool annotations for MCP - hints for clients on tool behavior
+const readOnly = { annotations: { readOnlyHint: true, destructiveHint: false } };
+const mutating = { annotations: { readOnlyHint: false, destructiveHint: false } };
+const destructive = { annotations: { readOnlyHint: false, destructiveHint: true } };
+
 // Tool definitions for MCP
 export const toolDefinitions = [
   {
     name: "nestr_list_workspaces",
-    description: "List all Nestr workspaces you have access to. Response includes meta.total showing total count.",
+    description: "List and search Nestr workspaces. Use this to find a workspace by name when `nestr_get_me` workspaces cache doesn't have a match, or for paginated browsing. Prefer `nestr_get_me` with `fullWorkspaces: true` as the primary way to discover workspaces at session start. Response includes meta.total showing total count.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -476,6 +500,7 @@ export const toolDefinitions = [
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for bulk/index operations." },
       },
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_workspace",
@@ -488,22 +513,11 @@ export const toolDefinitions = [
       },
       required: ["workspaceId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_create_workspace",
-    description: `Create a new workspace. Use this rarely - mainly when a user has no workspaces (e.g., new signup).
-
-**If the user has no workspaces, they must create one first using this tool before they can do anything else in Nestr.**
-
-A workspace is a container for work - either personal or collaborative:
-- **Personal**: For individual use, free forever. Only you have access.
-- **Collaborative**: For teams, starts with free trial (no auto-payment - user must explicitly activate).
-
-The creator is the only one with access initially. Others must be explicitly invited. Safe to create and test - no one else will see it.
-
-**Important**: Always ask the user to provide a purpose - why does this workspace exist? What is it trying to achieve? They can always change it later, but starting with a clear purpose is valuable. Probe them for the why, but create the workspace with or without it.
-
-Requires user-scoped authentication (OAuth token or personal API key with user scope).`,
+    description: `Create a new workspace. Requires user-scoped authentication (OAuth token or personal API key). See the "Workspace & Circle Setup Mode" instructions for the full guided flow on when and how to create workspaces.`,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -539,10 +553,11 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["title"],
     },
+    ...mutating,
   },
   {
     name: "nestr_search",
-    description: "Search for nests within a workspace. Supports operators: label:, parent-label:, assignee: (me/userId/!userId/none), admin:, createdby:, completed:, type:, has: (due/pastdue/children/incompletechildren), depth:, mindepth:, in:, updated-date:, limit:, template:, data.property:, fields.{label}.{property}: to search any value in a nest's fields object (supports partial match, e.g., fields.project.status:Current — use nestr_get_nest with fieldsMetaData=true to discover available fields), label->field:value. Use ! prefix for negation. IMPORTANT: Use completed:false when searching for work to exclude old completed items. Response includes meta.total showing total matching count. NOTE: The completable list UI app should ONLY be used when results are completable items (tasks, projects, todos). Do NOT use the app for any other type of nest.",
+    description: "Search for nests within a workspace. Supports operators: label:, parent-label:, assignee: (me/userId/!userId/none), admin:, createdby:, completed:, type:, has: (due/pastdue/children/incompletechildren), depth:, mindepth:, in:, updated-date:, limit:, template:, data.property:, fields.{label}.{property}: to search any value in a nest's fields object (supports partial match, e.g., fields.project.status:Current — use nestr_get_nest with fieldsMetaData=true to discover available fields), label->field:value. Use ! prefix for negation. IMPORTANT: Use completed:false when searching for work to exclude old completed items. Response includes meta.total showing total matching count. IMPORTANT UI RULE: The completable list app must ONLY be used when results contain completable items (tasks, projects, todos) AND there are results to show. When searching for roles, circles, metrics, policies, or any non-completable type, you MUST omit the _listTitle parameter and respond in plain text instead — never render these in the app. Also never render empty results in the app.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -556,6 +571,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       required: ["workspaceId", "query"],
     },
     _meta: completableListUi,
+    ...readOnly,
   },
   {
     name: "nestr_get_nest",
@@ -569,10 +585,11 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_nest_children",
-    description: "Get child nests (sub-tasks, sub-projects) of a nest. Response includes meta.total showing total matching count. NOTE: The completable list UI app should ONLY be used when results are completable items (tasks, projects, todos). Do NOT use the app for any other type of nest.",
+    description: "Get child nests (sub-tasks, sub-projects) of a nest. Response includes meta.total showing total matching count. IMPORTANT UI RULE: The completable list app must ONLY be used when results contain completable items (tasks, projects, todos) AND there are results to show. When results are roles, circles, metrics, policies, or any non-completable type, you MUST omit the _listTitle parameter and respond in plain text instead — never render these in the app. Also never render empty results in the app.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -585,41 +602,57 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       required: ["nestId"],
     },
     _meta: completableListUi,
+    ...readOnly,
   },
   {
     name: "nestr_create_nest",
-    description: "Create a new nest (task, project, etc.) under a parent. Set users to assign to people - placing under a role does NOT auto-assign.",
+    description: "Create a new nest (task, project, role, circle, etc.) under a parent. Set users to assign to people - placing under a role does NOT auto-assign. For roles and circles: include accountabilities and domains arrays to create them inline (requires workspaceId). The API auto-routes to the self-organization endpoint when governance labels are detected with accountabilities/domains.",
     inputSchema: {
       type: "object" as const,
       properties: {
         parentId: { type: "string", description: "Parent nest ID (workspace, circle, or project)" },
         title: { type: "string", description: "Title of the new nest (plain text, HTML tags stripped)" },
-        purpose: { type: "string", description: "Purpose - why this nest exists (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
-        description: { type: "string", description: "Detailed description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
+        purpose: { type: "string", description: "Purpose — the aspirational future state this nest works towards. Most important for workspaces/circles/roles where it defines the north star and context boundary. For other nests, prefer description or fields — but purpose can be set if meaningful. Supports HTML." },
+        description: { type: "string", description: "Detailed description — primary field for nest information: project details, task context, acceptance criteria, DoD, etc. Use fields (e.g., project.status) for structured data and comments for progress updates. Supports HTML." },
         labels: {
           type: "array",
           items: { type: "string" },
-          description: "Label IDs to apply (e.g., 'project', 'todo')",
+          description: "Label IDs to apply (e.g., 'project', 'role', 'circle')",
         },
         users: {
           type: "array",
           items: { type: "string" },
           description: "User IDs to assign (required for tasks/projects to associate with a person)",
         },
+        accountabilities: {
+          type: "array",
+          items: { type: "string" },
+          description: "Accountability titles for roles/circles. Each becomes an accountability child nest. Only used when labels include 'role' or 'circle'. Requires workspaceId.",
+        },
+        domains: {
+          type: "array",
+          items: { type: "string" },
+          description: "Domain titles for roles/circles. Each becomes a domain child nest. Only used when labels include 'role' or 'circle'. Requires workspaceId.",
+        },
+        workspaceId: {
+          type: "string",
+          description: "Workspace ID. Required when creating roles/circles with accountabilities or domains.",
+        },
       },
       required: ["parentId", "title"],
     },
+    ...mutating,
   },
   {
     name: "nestr_update_nest",
-    description: "Update properties of an existing nest. Use parentId to move a nest (e.g., inbox item to a project). For AI knowledge persistence, create skill-labeled nests under roles/circles instead of using data fields.",
+    description: "Update properties of an existing nest. Use parentId to move a nest (e.g., inbox item to a project). For roles and circles: include accountabilities and domains arrays to update them inline (requires workspaceId). For AI knowledge persistence, create skill-labeled nests under roles/circles instead of using data fields.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID to update" },
         title: { type: "string", description: "New title (plain text, HTML tags stripped)" },
-        purpose: { type: "string", description: "New purpose (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
-        description: { type: "string", description: "New description (supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>)" },
+        purpose: { type: "string", description: "New purpose — aspirational future state. Most important for workspaces/circles/roles. For other nests, prefer description or fields — but purpose can be set if meaningful. Supports HTML." },
+        description: { type: "string", description: "New description — primary field for nest information. Use for details, context, criteria. Use fields for structured data, comments for progress. Supports HTML." },
         parentId: { type: "string", description: "New parent ID (move nest to different location)" },
         labels: {
           type: "array",
@@ -647,9 +680,24 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
           type: "boolean",
           description: "Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead.",
         },
+        accountabilities: {
+          type: "array",
+          items: { type: "string" },
+          description: "Accountability titles for roles/circles (replaces existing). Requires workspaceId.",
+        },
+        domains: {
+          type: "array",
+          items: { type: "string" },
+          description: "Domain titles for roles/circles (replaces existing). Requires workspaceId.",
+        },
+        workspaceId: {
+          type: "string",
+          description: "Workspace ID. Required when updating accountabilities or domains.",
+        },
       },
       required: ["nestId"],
     },
+    ...mutating,
   },
   {
     name: "nestr_delete_nest",
@@ -661,6 +709,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId"],
     },
+    ...destructive,
   },
   {
     name: "nestr_add_comment",
@@ -673,6 +722,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "body"],
     },
+    ...mutating,
   },
   {
     name: "nestr_update_comment",
@@ -685,6 +735,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["commentId", "body"],
     },
+    ...mutating,
   },
   {
     name: "nestr_delete_comment",
@@ -696,6 +747,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["commentId"],
     },
+    ...destructive,
   },
   {
     name: "nestr_list_circles",
@@ -710,6 +762,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_circle_roles",
@@ -725,6 +778,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId", "circleId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_list_roles",
@@ -739,6 +793,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_insights",
@@ -751,6 +806,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_list_users",
@@ -765,6 +821,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_list_labels",
@@ -779,6 +836,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_projects",
@@ -795,6 +853,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       required: ["workspaceId"],
     },
     _meta: completableListUi,
+    ...readOnly,
   },
   {
     name: "nestr_get_comments",
@@ -807,6 +866,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_circle",
@@ -820,6 +880,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId", "circleId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_user",
@@ -832,6 +893,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId", "userId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_add_workspace_user",
@@ -851,6 +913,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId", "username"],
     },
+    ...mutating,
   },
   {
     name: "nestr_get_label",
@@ -863,6 +926,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId", "labelId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_insight_history",
@@ -878,6 +942,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId", "metricId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_workspace_apps",
@@ -889,6 +954,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId"],
     },
+    ...readOnly,
   },
   // Inbox tools (require OAuth token - won't work with workspace API keys)
   {
@@ -902,6 +968,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
     },
     _meta: completableListUi,
+    ...readOnly,
   },
   {
     name: "nestr_create_inbox_item",
@@ -914,6 +981,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["title"],
     },
+    ...mutating,
   },
   {
     name: "nestr_get_inbox_item",
@@ -926,6 +994,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_update_inbox_item",
@@ -941,6 +1010,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId"],
     },
+    ...mutating,
   },
   {
     name: "nestr_reorder_inbox",
@@ -956,6 +1026,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestIds"],
     },
+    ...mutating,
   },
   {
     name: "nestr_reorder_inbox_item",
@@ -969,6 +1040,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "position", "relatedNestId"],
     },
+    ...mutating,
   },
   // Personal labels (require OAuth token - user's own labels, not workspace labels)
   {
@@ -978,6 +1050,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       type: "object" as const,
       properties: {},
     },
+    ...readOnly,
   },
   {
     name: "nestr_create_personal_label",
@@ -992,6 +1065,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["title"],
     },
+    ...mutating,
   },
   // Reorder tools
   {
@@ -1006,6 +1080,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "position", "relatedNestId"],
     },
+    ...mutating,
   },
   {
     name: "nestr_bulk_reorder",
@@ -1022,6 +1097,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["workspaceId", "nestIds"],
     },
+    ...mutating,
   },
   // Daily plan (requires OAuth token)
   {
@@ -1034,6 +1110,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
     },
     _meta: completableListUi,
+    ...readOnly,
   },
   // Label management
   {
@@ -1047,6 +1124,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "labelId"],
     },
+    ...mutating,
   },
   {
     name: "nestr_remove_label",
@@ -1059,6 +1137,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "labelId"],
     },
+    ...mutating,
   },
   {
     name: "nestr_add_to_daily_plan",
@@ -1074,6 +1153,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestIds"],
     },
+    ...mutating,
   },
   {
     name: "nestr_remove_from_daily_plan",
@@ -1089,15 +1169,19 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestIds"],
     },
+    ...mutating,
   },
-  // Current user identity
+  // Current user identity and workspace context — primary entry point
   {
     name: "nestr_get_me",
-    description: "Get the current authenticated identity and operating mode. Returns user info including `bot: true` if the agent energizes roles directly (role-filler mode) or absent/false if assisting a human who energizes roles. Returns `authMode: 'api-key'` when using a workspace API key (no user identity, no user-scoped features). Call at session start to determine how to behave. Requires OAuth token for full user info; gracefully handles API key auth.",
+    description: "CALL THIS FIRST at session start. Returns your identity, operating mode, and accessible workspaces. With `fullWorkspaces: true`, includes full workspace details (purpose, governance type, user access roles) — use this to establish workspace context without a separate list_workspaces call. If only one workspace exists, it is the active workspace. For multiple workspaces, use names to identify the right one. Returns `authMode: 'api-key'` when using a workspace API key (workspace mode, no user identity).",
     inputSchema: {
       type: "object" as const,
-      properties: {},
+      properties: {
+        fullWorkspaces: { type: "boolean", description: "Set true to include full workspace details. Recommended on first call." },
+      },
     },
+    ...readOnly,
   },
   // User tension tools (requires OAuth token)
   {
@@ -1109,6 +1193,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         context: { type: "string", description: "Optional context filter (e.g., workspace ID or circle ID)" },
       },
     },
+    ...readOnly,
   },
   {
     name: "nestr_list_tensions_awaiting_consent",
@@ -1119,6 +1204,32 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
         context: { type: "string", description: "Optional context filter (e.g., workspace ID or circle ID)" },
       },
     },
+    ...readOnly,
+  },
+  // Notification tools (requires OAuth token)
+  {
+    name: "nestr_list_notifications",
+    description: "List in-app notifications for the current user. By default returns only unread notifications. Use 'type' to filter: 'all' (default), 'me' (direct — mentions, replies, reactions, DMs), 'relevant' (delayed — updates, governance). Each notification includes a rendered 'title' (e.g. 'Joost changed Project X in Developer') and optional 'details' array with change descriptions (e.g. 'Item was completed', 'Updated Project status from Backlog to Done'). Check at session start alongside tensions and inbox. Requires OAuth token.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        type: { type: "string", enum: ["all", "me", "relevant"], description: "Filter by type: 'all' (default), 'me' (direct), 'relevant' (delayed)" },
+        limit: { type: "number", description: "Max results (default 50, max 200)" },
+        skip: { type: "number", description: "Number of results to skip (default 0)" },
+        showRead: { type: "boolean", description: "Include already-read notifications (default false)" },
+        group: { type: "string", description: "Filter by group (mentions, replies, direct_message, reactions, updates, governance)" },
+      },
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_mark_notifications_read",
+    description: "Mark all unread in-app notifications as read for the current user. Returns { status, data: { markedCount } }. Requires OAuth token.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+    },
+    ...mutating,
   },
   // Tension tools
   {
@@ -1135,6 +1246,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "title"],
     },
+    ...mutating,
   },
   {
     name: "nestr_get_tension",
@@ -1147,6 +1259,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "tensionId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_list_tensions",
@@ -1161,6 +1274,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_update_tension",
@@ -1177,6 +1291,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "tensionId"],
     },
+    ...mutating,
   },
   {
     name: "nestr_delete_tension",
@@ -1189,6 +1304,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "tensionId"],
     },
+    ...destructive,
   },
   {
     name: "nestr_get_tension_parts",
@@ -1201,6 +1317,7 @@ Requires user-scoped authentication (OAuth token or personal API key with user s
       },
       required: ["nestId", "tensionId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_add_tension_part",
@@ -1231,6 +1348,7 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
       },
       required: ["nestId", "tensionId"],
     },
+    ...mutating,
   },
   {
     name: "nestr_modify_tension_part",
@@ -1253,6 +1371,7 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
       },
       required: ["nestId", "tensionId", "partId"],
     },
+    ...mutating,
   },
   {
     name: "nestr_remove_tension_part",
@@ -1266,6 +1385,7 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
       },
       required: ["nestId", "tensionId", "partId"],
     },
+    ...destructive,
   },
   {
     name: "nestr_get_tension_part_children",
@@ -1336,6 +1456,7 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
       },
       required: ["nestId", "tensionId", "partId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_get_tension_status",
@@ -1348,6 +1469,7 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
       },
       required: ["nestId", "tensionId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_update_tension_status",
@@ -1361,6 +1483,7 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
       },
       required: ["nestId", "tensionId", "status"],
     },
+    ...mutating,
   },
 ];
 
@@ -1484,6 +1607,41 @@ async function _handleToolCall(
 
       case "nestr_create_nest": {
         const parsed = schemas.createNest.parse(args);
+        const hasGovernanceLabels = parsed.labels?.some(l =>
+          ["role", "circle"].includes(l)
+        );
+        const hasInlineGovernance = parsed.accountabilities?.length || parsed.domains?.length;
+
+        // Route to self-organization API when creating roles/circles with accountabilities/domains
+        if (hasGovernanceLabels && hasInlineGovernance && parsed.workspaceId) {
+          const isCircle = parsed.labels?.includes("circle");
+          const nestData = {
+            title: parsed.title,
+            purpose: parsed.purpose,
+            description: parsed.description,
+            labels: parsed.labels,
+            users: parsed.users,
+            accountabilities: parsed.accountabilities,
+            domains: parsed.domains,
+          };
+
+          let result: Nest | Nest[];
+          if (isCircle) {
+            result = await client.createCircles(
+              parsed.workspaceId,
+              [{ ...nestData, parentId: parsed.parentId }]
+            );
+          } else {
+            result = await client.createRolesInCircle(
+              parsed.workspaceId,
+              parsed.parentId,
+              [nestData]
+            );
+          }
+          const nest = Array.isArray(result) ? result[0] : result;
+          return formatResult({ message: "Nest created successfully", nest });
+        }
+
         const nest = await client.createNest({
           parentId: parsed.parentId,
           title: parsed.title,
@@ -1497,6 +1655,34 @@ async function _handleToolCall(
 
       case "nestr_update_nest": {
         const parsed = schemas.updateNest.parse(args);
+        const hasInlineGovernance = parsed.accountabilities?.length || parsed.domains?.length;
+
+        // Route to self-organization API when updating roles/circles with accountabilities/domains
+        if (hasInlineGovernance && parsed.workspaceId) {
+          // Determine if this is a circle or role by checking labels
+          // If labels are being set and include 'circle', use circle endpoint
+          // Otherwise default to role endpoint (more common case)
+          const isCircle = parsed.labels?.includes("circle");
+          const updates = {
+            title: parsed.title,
+            purpose: parsed.purpose,
+            description: parsed.description,
+            parentId: parsed.parentId,
+            labels: parsed.labels,
+            users: parsed.users,
+            fields: parsed.fields,
+            data: parsed.data as Record<string, unknown> | undefined,
+            due: parsed.due,
+            accountabilities: parsed.accountabilities,
+            domains: parsed.domains,
+          };
+
+          const nest = isCircle
+            ? await client.updateCircle(parsed.workspaceId, parsed.nestId, updates)
+            : await client.updateRole(parsed.workspaceId, parsed.nestId, updates);
+          return formatResult({ message: "Nest updated successfully", nest });
+        }
+
         const nest = await client.updateNest(parsed.nestId, {
           title: parsed.title,
           purpose: parsed.purpose,
@@ -1794,11 +1980,13 @@ async function _handleToolCall(
         return formatResult(completableResponse(compactResponse(items), "daily-plan", "Daily Plan"));
       }
 
-      // Current user identity
+      // Current user identity and workspace context
       case "nestr_get_me": {
-        schemas.getMe.parse(args);
+        const parsed = schemas.getMe.parse(args);
         try {
-          const user = await client.getCurrentUser();
+          const user = await client.getCurrentUser({
+            fullWorkspaces: parsed.fullWorkspaces,
+          });
           return formatResult({
             authMode: "oauth",
             user,
@@ -1835,6 +2023,25 @@ async function _handleToolCall(
         const parsed = schemas.listTensionsAwaitingConsent.parse(args);
         const tensions = await client.listTensionsAwaitingConsent({ context: parsed.context });
         return formatResult(compactResponse(tensions));
+      }
+
+      // Notification tools (requires OAuth token)
+      case "nestr_list_notifications": {
+        const parsed = schemas.listNotifications.parse(args);
+        const notifications = await client.listNotifications({
+          type: parsed.type,
+          limit: parsed.limit,
+          skip: parsed.skip,
+          showRead: parsed.showRead,
+          group: parsed.group,
+        });
+        return formatResult(notifications);
+      }
+
+      case "nestr_mark_notifications_read": {
+        schemas.markNotificationsRead.parse(args);
+        const result = await client.markNotificationsRead();
+        return formatResult(result);
       }
 
       // Tension tools

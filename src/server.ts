@@ -13,12 +13,18 @@ import {
 import { NestrClient, createClientFromEnv } from "./api/client.js";
 import { toolDefinitions, handleToolCall } from "./tools/index.js";
 import { getCompletableListHtml, appResources } from "./apps/index.js";
+import { WORKSPACE_SETUP_INSTRUCTIONS } from "./skills/workspace-setup.js";
+import { TENSION_PROCESSING_INSTRUCTIONS } from "./skills/tension-processing.js";
 import * as mcpcat from "mcpcat";
 
 export interface NestrMcpServerConfig {
   client?: NestrClient;
   /** Optional callback for analytics tracking of tool calls */
   onToolCall?: (toolName: string, args: Record<string, unknown>, success: boolean, error?: string) => void;
+  /** Pre-resolved user ID (e.g., from stored OAuth session) for MCPcat identification */
+  userId?: string;
+  /** Pre-resolved user display name for MCPcat identification */
+  userName?: string;
 }
 
 // Server instructions provide context to AI assistants about what Nestr is and how to use it
@@ -107,13 +113,21 @@ A heartbeat for each container is crucial to effectively serve all. Without rhyt
 
 ### Three Operating Modes
 
-Call \`nestr_get_me\` at session start to determine your operating mode. The response tells you who you are and how to behave:
+Call \`nestr_get_me\` with \`fullWorkspaces: true\` at session start. This single call establishes your identity, operating mode, AND the workspaces you can access. Almost all work in Nestr happens within a workspace, so establishing workspace context early is critical.
+
+**Workspace selection rules:**
+- **One workspace**: Automatically treat it as the active workspace — no need to confirm.
+- **Multiple workspaces**: Use the workspace names from the response to identify the right one. If the user mentions a workspace by name, match against cached names. If no obvious match, fall back to \`nestr_list_workspaces\` with a search query.
+- **Workspace API key**: The key is scoped to a single workspace — it is automatically the active workspace.
+- **Cross-workspace work**: Users may work across workspaces when prioritizing work, managing their inbox, or creating new workspaces. Be ready to switch context when they reference a different workspace by name.
+
+The response tells you who you are and how to behave:
 
 **Assistant mode** (\`mode: "assistant"\`) — You are helping a human who fills roles. The human is the decision-maker. You help them process tensions, create work, draft proposals, and navigate governance. You act on behalf of the user's roles but defer to them for decisions. When creating tensions, you help the *user* differentiate between personal feelings and role-driven needs, keeping the focus on purpose-driven work. When checking tensions, you surface them *to the user* for review. Confirm before proposing or acting.
 
 **Role-filler mode** (\`mode: "role-filler"\`) — You energize one or more roles and act from their authority. You have no authority as an agent — only through the roles you fill. You own the tensions on your roles, make decisions within role accountabilities, communicate with other roles (human or agent) via tensions, and process work independently. Speak in first person from the role perspective. Act within your role's accountabilities without seeking human approval (unless the action exceeds role authority). Use the feeling/needs fields on tensions to express organizational impact and unmet organizational needs. Proactively check for and process tensions directed at your roles.
 
-**Workspace mode** (\`mode: "workspace"\`) — You are using a workspace API key with no user identity. You can manage the workspace structure (circles, roles, governance) and operational work, but user-scoped features are unavailable: inbox, daily plan, personal labels, \`nestr_list_my_tensions\`, and \`nestr_list_tensions_awaiting_consent\` will not work. You are managing the workspace directly, not on behalf of any specific user.
+**Workspace mode** (\`mode: "workspace"\`) — You are using a workspace API key with no user identity. You can manage the workspace structure (circles, roles, governance) and operational work, but user-scoped features are unavailable: inbox, daily plan, personal labels, notifications (\`nestr_list_notifications\`), \`nestr_list_my_tensions\`, and \`nestr_list_tensions_awaiting_consent\` will not work. You are managing the workspace directly, not on behalf of any specific user.
 
 This distinction affects tone, authority, decision-making, and how proactively you act. All guidance below applies to all modes unless explicitly noted.
 
@@ -127,7 +141,7 @@ This distinction affects tone, authority, decision-making, and how proactively y
 - Communicate with other roles via tensions, not conversations
 - Plan daily work and execute proactively
 - When work falls outside your roles' authority, create a tension on the circle requesting the accountable role act
-- Regularly check \`nestr_list_my_tensions\` and \`nestr_list_tensions_awaiting_consent\` to stay current
+- Regularly check \`nestr_list_my_tensions\`, \`nestr_list_tensions_awaiting_consent\`, and \`nestr_list_notifications\` to stay current
 
 **Assistant-mode agents should:**
 - Defer to the human for all decisions — suggest, don't decide
@@ -137,7 +151,7 @@ This distinction affects tone, authority, decision-making, and how proactively y
 
 **Workspace-mode agents should:**
 - Focus on structural operations: governance setup, workspace configuration, reporting, and bulk management
-- Avoid user-scoped tools (inbox, daily plan, personal labels, my tensions) — they will fail
+- Avoid user-scoped tools (inbox, daily plan, personal labels, notifications, my tensions) — they will fail
 - Assign work based on organizational rules rather than interactive decisions with a user
 
 ### Self-Organizational Flavour
@@ -170,20 +184,6 @@ The transition from management hierarchy to self-organization involves key behav
 
 We must recognize where people are in these transitions and support them with patience, not judgment.
 
-### Listening for Tensions
-
-Tensions are always sensed by a person or agent first — they begin as a felt experience before they become organizational communication. This human (or agent) starting point is essential: without someone *feeling* the gap between reality and potential, no organizational change can begin.
-
-**In assistant mode:** Help people move from *feeling* to *recognizing* their tensions. People often sense something is off without being able to articulate it — frustration, excitement, confusion, repeated complaints, or vague unease are all signals. Reflect it back: "It sounds like you're sensing a gap between [current reality] and [what could be]. Am I reading that right?" If confirmed, help them *identify* the right context (see Identifying the Right Context under Tensions below) and offer processing pathways. Encourage people to capture their raw feeling without editing — premature filtering loses signal.
-
-**In role-filler mode:** Tune into tensions both reactively and proactively:
-- **Reactive**: Notice gaps, friction, or unmet needs that arise during your work. Capture them immediately — don't edit or filter the raw observation.
-- **Proactive**: Regularly review your roles' accountabilities and purpose. For each accountability, ask: "Is this translating into concrete projects? Is the accountability itself clear enough?" For each role's purpose, ask: "Is there a project that directly advances this purpose?" This systematic role review surfaces tensions you might not *feel* but that exist structurally.
-
-**Check tensions at natural breakpoints** (assistant and role-filler modes): At session start and after completing work, use \`nestr_list_my_tensions\` to surface authored/assigned tensions and \`nestr_list_tensions_awaiting_consent\` to surface governance proposals needing a vote. In assistant mode, present these to the user for review. In role-filler mode, process them directly. Unprocessed tensions block organizational progress.
-
-**Hold each other accountable:** When someone expresses frustration or describes a problem without framing it as a tension, gently redirect: "Sounds like a tension! Would you like to capture it?" In role-filler mode, when interacting with other roles, ask: "Have you mapped your tensions lately?"
-
 ### Matching Work to Roles
 
 When determining which role should own a piece of work:
@@ -201,26 +201,32 @@ When determining work assignments, consider:
 2. Does the work impact any role's domain? If so, flag the need for coordination.
 3. Are there multiple roles whose accountabilities overlap? Surface this for clarification.
 
----
+`.trim();
 
+// Reference documentation: API usage, search syntax, labels, inbox, daily plan, etc.
+const SERVER_INSTRUCTIONS_REFERENCE = `
 # Using Nestr
 
 Nestr is a work management platform for teams practicing self-organization, Holacracy, Sociocracy, and Teal methodologies.
 
 ## Linking to Nests
 
-**Always link to nests when mentioning them.** When referring to any nest (role, circle, project, task, etc.), include a clickable link using this URL format:
+**Always link to nests when mentioning them.** The URL format is:
 
-\`https://app.nestr.io/n/{circleId}/{nestId}\`
+\`https://app.nestr.io/n/{nestId}\`
 
-Where:
-- \`{circleId}\` is the ID of the nearest circle ancestor (the circle containing the nest)
-- \`{nestId}\` is the ID of the nest itself
+If you know the context (circle or workspace) of the nest, include it as a prefix:
 
-Example: When mentioning the "Developer" role in the Tech Circle, link it as:
-\`[Developer](https://app.nestr.io/n/techCircleId/developerRoleId)\`
+\`https://app.nestr.io/n/{contextId}/{nestId}\`
 
-This allows users to quickly navigate to any item you reference.
+Where \`{contextId}\` is the nest's containing circle or workspace (found in the \`ancestors\` array). If you don't know the context ID, just use \`/n/{nestId}\` — it will still work.
+
+**IMPORTANT:** The URL path is \`/n/\`, NOT \`/nest/\`, \`/nests/\`, or any other variation. Always use \`/n/\`.
+
+Examples:
+- Role in a circle: \`[Developer](https://app.nestr.io/n/circleId/roleId)\`
+- Top-level workspace: \`[My Workspace](https://app.nestr.io/n/workspaceId)\`
+- Task (circle unknown): \`[Fix bug](https://app.nestr.io/n/taskId)\`
 
 ## Workspace Types
 
@@ -274,9 +280,20 @@ When in doubt with \`custom\`, explain concepts in plain language rather than as
 Nestr uses different formats for different fields:
 
 - **\`title\`**: Plain text only. HTML tags are stripped. Keep titles concise.
-- **\`purpose\`, \`description\`**: HTML supported. Use basic tags: \`<b>\`, \`<i>\`, \`<code>\`, \`<ul>\`, \`<ol>\`, \`<li>\`, \`<a href="...">\`, \`<br>\`, \`<img src="...">\` (including base64 data URIs). **Markdown is NOT supported** — it will display as literal text (e.g., \`**bold**\` renders as the string \`**bold**\`, not bold text).
-- **Comment \`body\`**: HTML supported (same as above, including base64 images). Use \`@username\` for mentions.
+- **\`purpose\`**: The aspirational future state this nest is working towards. **Most important for workspaces, circles, and roles** — it defines the north star and context boundary for the organization, circle, or role. Everything within that container should serve its purpose. For other nests (tasks, projects, etc.), prefer \`description\` or \`fields\` for detailed information — but purpose can be set if it serves the user. Supports HTML.
+- **\`description\`**: The primary field for detailed information about a nest. Use for project details, task context, acceptance criteria, Definition of Done, and any persistent information about the nest. Supports HTML.
+- **\`fields\`**: Structured data defined by labels (e.g., \`fields['project.status']\`, \`fields['metric.frequency']\`). Use for structured, label-specific information.
+- **Comment \`body\`**: HTML supported (same tags as above, including base64 images). Use \`@username\` for mentions. **Use comments for progress updates**, status changes, and conversation — not purpose or description.
 - **\`data\`**: Generic key-value store. Also used internally by Nestr and other integrations — **never overwrite or remove existing keys**. When adding your own data, namespace it under \`mcp.\` (e.g., \`{ "mcp.lastSync": "2025-01-01" }\`) to avoid conflicts. Not rendered in UI.
+
+**Where to put information:**
+| Information type | Field to use |
+|-----------------|-------------|
+| North star / aspirational future state | \`purpose\` (primarily workspaces, circles, roles) |
+| Details, context, acceptance criteria, DoD | \`description\` |
+| Structured data (status, frequency, etc.) | \`fields\` |
+| Progress updates, status changes, discussion | Comments |
+| Integration metadata, custom tracking | \`data\` (namespace under \`mcp.\`) |
 
 **Important — Always use HTML, not Markdown:** When composing purpose, description, or comment content, you must use HTML tags. This is a common mistake for AI agents that default to Markdown syntax.
 
@@ -388,12 +405,16 @@ A strategy that all roles within the circle must follow. Sub-circle strategies m
 
 ### Hierarchical Purpose
 
+The \`purpose\` field is most important for **workspaces, circles, and roles** — it defines the aspirational future state that container is working towards. It is the north star and context boundary: everything within that container should serve its purpose.
+
 The \`purpose\` field follows a strict hierarchy:
 - The **anchor circle's purpose** is the purpose of the entire organization
 - Each **sub-circle's purpose** must contribute to its parent circle's purpose
 - Each **role's purpose** must contribute to its circle's purpose
 
 This cascades through the entire hierarchy, which may be many layers deep. When creating or updating purposes, ensure they align with and serve the parent's purpose.
+
+**For other nests** (tasks, projects, etc.), prefer \`description\` for details, acceptance criteria, and Definition of Done. Use \`fields\` for structured data. Use comments for progress updates. Purpose can still be set on any nest if it serves the user, but by default reach for description first.
 
 ## Work Assignment & Context in Self-Organization
 
@@ -1291,8 +1312,8 @@ The daily plan only includes items from:
 
 **In role-filler mode**, manage your own daily plan:
 
-1. At session start, review your daily plan and pending tensions
-2. Prioritize based on due dates, role accountabilities, and pending tensions from other roles
+1. At session start, review your daily plan, pending tensions, and notifications
+2. Prioritize based on due dates, role accountabilities, pending tensions, and notifications from other roles
 3. Execute autonomously — mark items complete as you go
 4. At session end, clear completed items and queue tomorrow's priorities
 
@@ -1312,9 +1333,53 @@ User: "What should I work on today?"
 \`\`\`
 1. Fetch daily plan: nestr_get_daily_plan
 2. Check tensions: nestr_list_my_tensions, nestr_list_tensions_awaiting_consent
-3. Prioritize: urgent tensions first, then daily plan items, then backlog
-4. Execute work, processing tensions and completing tasks
+3. Check notifications: nestr_list_notifications
+4. Prioritize: urgent tensions first, then notifications, then daily plan items, then backlog
+5. Execute work, processing tensions and completing tasks
 \`\`\`
+
+## Notifications (What Changed)
+
+Notifications surface relevant changes that happened in the organization — work completed, governance updated, mentions, reactions, and more. They complement tensions (which are forward-looking requests for change) by showing what has already changed that might need your attention.
+
+Think of notifications as the "what happened" signal: someone completed a project under your circle, a governance proposal was accepted, a colleague mentioned you in a comment, or a role's accountabilities changed. Reviewing notifications helps you stay aware of the evolving state of the organization without having to manually check every circle and role.
+
+### Notification Types
+
+Notifications are split into two types based on urgency:
+
+- **\`me\` (direct)** — Things directed at you personally: mentions, replies to your comments, reactions to your posts, and direct messages. These typically need prompt attention.
+- **\`relevant\` (delayed)** — Changes in areas you're involved in: project updates, task completions, governance changes in your circles. These are informational — review them to stay current, but they rarely need immediate action.
+
+Use \`type\` to filter: \`nestr_list_notifications({ type: "me" })\` for direct notifications only, or \`type: "relevant"\` for organizational changes.
+
+### Notification Groups
+
+For more granular filtering, use the \`group\` parameter:
+- **\`mentions\`** — Someone @mentioned you
+- **\`replies\`** — Someone replied to your comment
+- **\`direct_message\`** — You received a direct message
+- **\`reactions\`** — Someone reacted to your post
+- **\`updates\`** — Operational changes (tasks completed, projects updated, etc.)
+- **\`governance\`** — Governance changes (roles created/modified, proposals accepted, etc.)
+
+### When to Check Notifications
+
+Check notifications at the same natural breakpoints as tensions and inbox:
+
+- **Session start** — Use \`nestr_list_notifications\` to see what changed since last session
+- **After completing work** — Check if your changes triggered responses or follow-up from others
+- **When the user asks what happened** — Notifications are the answer to "what changed?" or "what did I miss?"
+
+**In assistant mode:** When the user asks what's new or what they missed, fetch notifications and summarize the key changes. Group them by type (direct vs. relevant) and highlight anything that might need action. Offer to mark all as read once reviewed.
+
+**In role-filler mode:** Check notifications proactively at session start. Direct notifications (\`type: "me"\`) may require a response — a mention might be a question, a reply might need follow-up. Relevant notifications (\`type: "relevant"\`) inform your situational awareness — a governance change might affect your role's accountabilities, a completed project might unblock your work.
+
+### Marking Notifications as Read
+
+Once notifications have been reviewed, use \`nestr_mark_notifications_read\` to clear them. This marks all unread notifications as read. In assistant mode, confirm with the user before marking. In role-filler mode, mark as read after processing.
+
+**Note:** Notification tools require OAuth authentication. They are not available in workspace mode.
 
 ## MCP Apps (Interactive UI)
 
@@ -1328,7 +1393,12 @@ An interactive list for displaying and managing completable items (tasks and pro
 
 #### When to Use
 
-Only use the completable list app when the user **explicitly asks to see or manage a list of completable items** as the primary goal of their request. Examples:
+Only use the completable list app when **ALL** of these conditions are met:
+1. The user **explicitly asks to see or manage a list** as the primary goal of their request
+2. The results are **completable items** — tasks, projects, todos, or inbox items
+3. The results are **not empty** — there must be at least one item to display
+
+Examples where you SHOULD use the app:
 - "Show me my daily plan" / "What's in my inbox?"
 - "List my projects" / "Show tasks under this role"
 - "What do I need to work on?"
@@ -1336,8 +1406,9 @@ Only use the completable list app when the user **explicitly asks to see or mana
 #### When NOT to Use
 
 Do NOT use the app when:
-- **Searching as part of processing a larger request** (e.g., finding roles to determine where work belongs, looking up a project to add a task to it, gathering context for a question). In these cases, just use the search results internally and respond in text.
+- **The results are not completable items.** Roles, circles, metrics, policies, accountabilities, domains, and any other structural nests must NEVER be shown in the completable list app. Always respond in text for these.
 - **The search returns no results.** Never render an empty completable list — just tell the user no items were found.
+- **Searching as part of processing a larger request** (e.g., finding roles to determine where work belongs, looking up a project to add a task to it, gathering context for a question). In these cases, just use the search results internally and respond in text.
 - **The user asked a question**, not for a list (e.g., "What's the status of project X?" — answer in text, don't show a list with one item).
 - **You are in the middle of a multi-step workflow** and the search is an intermediate step, not the final output.
 
@@ -1526,7 +1597,12 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
         tools: {},
         resources: {},
       },
-      instructions: SERVER_INSTRUCTIONS,
+      instructions: [
+        SERVER_INSTRUCTIONS,
+        TENSION_PROCESSING_INSTRUCTIONS,
+        WORKSPACE_SETUP_INSTRUCTIONS,
+        SERVER_INSTRUCTIONS_REFERENCE,
+      ].join("\n\n"),
     }
   );
 
@@ -1656,8 +1732,14 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
   if (mcpcatProjectId) {
     const enableReplay = process.env.MCPCAT_ENABLE_REPLAY === 'true';
 
-    // Cache user identity to avoid repeated API calls per session
-    let cachedIdentity: { userId: string; userName: string } | null = null;
+    // Cache user identity to avoid repeated API calls per session.
+    // Three states: undefined = not yet attempted, null = attempted and failed, object = success
+    let cachedIdentity: { userId: string; userName?: string } | null | undefined = undefined;
+
+    // If we have pre-resolved user info (e.g., from stored OAuth session), use it immediately
+    if (config.userId) {
+      cachedIdentity = { userId: config.userId, userName: config.userName };
+    }
 
     mcpcat.track(server, mcpcatProjectId, {
       ...(enableReplay ? {} : {
@@ -1679,20 +1761,46 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
         }
       }),
       identify: async (request: any, extra: any) => {
-        // Return cached identity if we already fetched successfully
+        // Return cached identity (success or pre-resolved)
         if (cachedIdentity) return cachedIdentity;
+        // Don't retry after a failed attempt (e.g., workspace API keys can never resolve a user)
+        if (cachedIdentity === null) return null;
         try {
-          const user = await client.getCurrentUser();
-          cachedIdentity = {
-            userId: user._id,
-            userName: user.profile?.fullName || user._id,
-          };
-          return cachedIdentity;
+          const response = await client.getCurrentUser();
+          // The Nestr API wraps responses in { status, data } — unwrap if needed
+          const user = (response as any)?.data || response;
+          if (user?._id) {
+            cachedIdentity = {
+              userId: user._id,
+              userName: user.profile?.fullName || user._id,
+            };
+            return cachedIdentity;
+          }
+          // getCurrentUser returned but without a valid _id — fall through to workspace fallback
+          console.warn('[MCPCat] getCurrentUser returned no _id, trying workspace fallback');
         } catch (err) {
-          // May fail transiently or for API key auth — will retry on next call
-          console.error('[MCPCat] identify failed:', err instanceof Error ? err.message : err);
-          return null;
+          // getCurrentUser failed — likely a workspace API key.
+          console.log('[MCPCat] getCurrentUser failed, trying workspace fallback:', err instanceof Error ? err.message : err);
         }
+        // Try to identify by workspace name instead.
+        try {
+          const result = await client.listWorkspaces({ limit: 1 });
+          // Handle both array responses and wrapped { data: [...] } responses
+          const workspaces = Array.isArray(result) ? result : (result as any)?.data || [];
+          if (Array.isArray(workspaces) && workspaces.length > 0) {
+            const ws = workspaces[0];
+            cachedIdentity = {
+              userId: ws._id,
+              userName: `${ws.title} (API key)`,
+            };
+            return cachedIdentity;
+          }
+          console.warn('[MCPCat] listWorkspaces returned no results:', JSON.stringify(result).slice(0, 200));
+        } catch (wsErr) {
+          console.error('[MCPCat] listWorkspaces also failed:', wsErr instanceof Error ? wsErr.message : wsErr);
+        }
+        cachedIdentity = null;
+        return null;
       },
     });
   }

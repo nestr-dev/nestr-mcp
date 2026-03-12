@@ -1065,6 +1065,7 @@ app.post("/mcp", async (req: Request, res: Response) => {
 
     const server = createServer({
       client,
+      userId,
       onToolCall: (toolName, args, success, error) => {
         try {
           if (sessionRef?.analytics) {
