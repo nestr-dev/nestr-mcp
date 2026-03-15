@@ -273,7 +273,7 @@ When in doubt with \`custom\`, explain concepts in plain language rather than as
 - **Nest**: The universal building block - can be a task, project, role, circle, meeting, or any work item
 - **Circle**: A self-governing team with defined purpose, roles, and accountabilities (Holacracy/Sociocracy concept)
 - **Role**: A set of responsibilities (accountabilities) and decision rights (domains) that a person energizes
-- **Label**: Tags that define what type of nest something is (e.g., "project", "todo", "meeting", "anchor-circle")
+- **Label**: Tags that define what type of nest something is (e.g., "project", "role", "meeting", "anchor-circle"). A nest without system labels is a todo/action — no "todo" label exists or is needed.
 
 ## Content Format
 
@@ -482,15 +482,27 @@ Skills are nests with the \`skill\` label that live directly under a role or cir
 - Skills make AI-persisted knowledge visible, searchable, and a first-class citizen in Nestr
 - They transfer with the role — when a role is reassigned, skills stay with the role, not the previous holder
 
+### Skill Types
+
+Skills can be typed using \`fields['skill.type']\` to distinguish their nature:
+
+- **\`process\`** — Step-by-step procedures: how to do something. Example: "How to deploy to production", "Customer onboarding checklist".
+- **\`knowledge\`** — Domain knowledge, contacts, learned patterns. Example: "Key API endpoints", "Vendor contact list", "Common error patterns".
+- **\`doctrine\`** — Organizational principles that guide decisions: the *why* behind how we work. Doctrine skills apply broadly and should be consulted before making decisions that affect the role or circle. Example: "Bias towards minimal output per tension", "Governance before operations".
+
+When untyped, skills default to general-purpose knowledge. Use the type to help agents and humans find the right skill for the context — e.g., search for doctrine before proposing governance changes.
+
 ### When to Create Skills
 - After completing repeatable work — capture the process so it can be followed again
 - When learning domain-specific patterns — record them for future reference
 - When discovering key contacts, recurring processes, or domain knowledge relevant to a role
 - When decisions are made that should inform future work from this role
+- When organizational principles emerge that should guide future decisions (doctrine)
 
 ### How to Use Skills
 - Before starting work from a role, search for skills under that role: \`in:roleId label:skill\`
 - Review relevant skills for context, processes, and prior decisions
+- Check doctrine skills before proposing governance changes or making decisions
 - After completing work, create or update skills to reflect what was learned
 - Keep skills focused — one skill per process or knowledge area
 
@@ -688,7 +700,7 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 
 **Work Tracking:**
 - \`project\` - An outcome requiring multiple steps to complete. Define in past tense as what "done" looks like (e.g., "Website redesign launched", "Q1 report published"). Has status: Future/Current/Waiting/Done.
-- *(no system label)* - A nest without system labels is a todo/action: a single, concrete action that can be done in one sitting (e.g., "Call supplier about pricing", "Draft intro paragraph"). The next physical step to move something forward. Note: todos CAN have other labels (personal or workspace labels for categorization) - what makes them todos is the absence of system labels.
+- *(no system label)* - **Every nest is completable by default.** A nest without system labels is a todo/action — a single, concrete step that can be done in one sitting (e.g., "Call supplier about pricing", "Draft intro paragraph"). To create a todo, simply create a nest without labels. There is NO "todo" label — do NOT add \`labels: ["todo"]\`. Labels change behavior (e.g., \`project\` adds status tracking), but the default nest is already a completable work item. Todos CAN have workspace or personal labels for categorization — what makes them todos is the absence of *system* labels.
 
 **AI Knowledge:**
 - \`skill\` - A process, piece of knowledge, or learned pattern that a role or circle holds. Lives directly under a role or circle. Used by AI agents to persist and retrieve operational knowledge across sessions. When doing work that is likely to be repeated, capture it as a skill for future reference.

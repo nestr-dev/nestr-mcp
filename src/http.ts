@@ -1007,12 +1007,29 @@ app.post("/mcp", async (req: Request, res: Response) => {
     }
 
     let userId: string | undefined;
+    let userName: string | undefined;
 
-    // For OAuth tokens, check if we have a stored session (legacy browser flow).
-    // In the standard MCP OAuth flow, the client gets tokens from /oauth/token
-    // and manages refresh itself — we won't have a stored session, and that's fine.
-    // We only use the stored session for analytics (userId) and server-side refresh.
-    if (!isApiKey) {
+    if (isApiKey) {
+      // For API keys, resolve identity eagerly by fetching the workspace name.
+      // API keys can't call /users/me, so we identify by workspace instead.
+      // This avoids the MCPCat identify callback needing to make API calls.
+      try {
+        const tempClient = new NestrClient({ apiKey: authToken });
+        const result = await tempClient.listWorkspaces({ limit: 1 });
+        const workspaces = Array.isArray(result) ? result : (result as any)?.data || [];
+        if (Array.isArray(workspaces) && workspaces.length > 0) {
+          const ws = workspaces[0];
+          userId = ws._id;
+          userName = `${ws.title} (API key)`;
+        }
+      } catch (e) {
+        console.log('[Identity] API key workspace lookup failed:', e instanceof Error ? e.message : e);
+      }
+    } else {
+      // For OAuth/Bearer tokens, check if we have a stored session (legacy browser flow).
+      // In the standard MCP OAuth flow, the client gets tokens from /oauth/token
+      // and manages refresh itself — we won't have a stored session, and that's fine.
+      // We only use the stored session for analytics (userId) and server-side refresh.
       try {
         const storedSession = getSession(authToken);
         if (storedSession) {
@@ -1066,6 +1083,7 @@ app.post("/mcp", async (req: Request, res: Response) => {
     const server = createServer({
       client,
       userId,
+      userName,
       onToolCall: (toolName, args, success, error) => {
         try {
           if (sessionRef?.analytics) {

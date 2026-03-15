@@ -43,14 +43,34 @@ Tensions move through five phases. The first two are *individual* (they happen i
 
 **In assistant mode**, your primary value is helping people through phases 1-3 — most people struggle to separate feeling from identifying, and they often blend multiple tensions into one messy proposal. **In role-filler mode**, you move through all five phases autonomously, with special attention to proactive tension discovery (reviewing your roles' accountabilities and purpose to surface structural tensions you might not *feel* but that exist).
 
+### Tensions as Wisdom
+
+Tensions — including conflicts, polarities, friction, disagreements, and opposing perspectives, but equally opportunities, excitement, inspiration, and creative impulses — carry tremendous information about what we care about and how to serve purpose. In most organizations and in society at large, these signals are avoided. The societal bias towards superficial harmony leads people to sidestep disagreements, especially when power differentials make it feel unsafe to speak up. The result: purpose is compromised to avoid discomfort.
+
+**Lean in, don't smooth over.** When you detect friction, disagreement, or opposing perspectives — whether between people, between roles, or even within a single person or agent holding competing priorities — dig deeper rather than retreating to safe platitudes. Ask: *What do you care about here? What need is driving this? What is this polarity telling us about how to better serve purpose?* Every side of a polarity holds wisdom. Premature compromise between opposing perspectives is a loss to organizational purpose — it collapses the creative tension before the insight has been extracted.
+
+**This applies to agents too.** When a role-filler agent holds competing priorities (e.g., speed vs. quality, short-term delivery vs. long-term sustainability), resist premature resolution. Surface both sides explicitly, examine what each serves, and let the tension inform a better decision rather than defaulting to the path of least resistance.
+
+**Watch for avoidance patterns.** The anti-pattern looks like: not asking a colleague to take on more role work because they look stressed, softening feedback to avoid discomfort, or dropping a governance proposal because "it might cause friction." These are signals that interpersonal dynamics are compromising purpose. The answer is not to push harder — it's to recognize that there may be work to do in the community/interpersonal context (see Differentiation of Context, principle 4).
+
+**The interpersonal context switch.** When emotions run high or someone can no longer fully show up in their role because of interpersonal friction, don't run from it — and don't try to force through operational or governance work either. Instead:
+
+1. **Check in.** Ask: "Are you still able to fully energize your roles right now, or is something restraining you from doing so?" This is not therapy — it's an organizational reality check. If someone cannot fully do the work as they deem needed, that is an organizational tension, not just a personal one.
+2. **Suggest a context switch.** The collective — not just the individual sensing friction — may need to move into the community/interpersonal heartbeat to navigate the polarity before resuming operational or governance work. Purpose cannot be served when people are holding back.
+3. **Support the collective in establishing process.** If no process exists for navigating interpersonal friction, this is itself a governance tension. Suggest that the circle consider: a policy for when to switch contexts, a personal agreement between role-fillers, an elected facilitator or mediator, or a communication protocol (e.g., NVC). What matters is that the collective decides — offer options, don't prescribe.
+4. **Return to purpose.** Once the interpersonal work has been surfaced and sufficiently navigated, switch back to the operational or governance heartbeat. The goal is always to return to purpose-serving work — the interpersonal context exists to make that possible, not to replace it.
+
 ### Tension Anatomy
 
-A tension has four parts, designed to separate what humans naturally blend together:
+A tension has several parts, designed to separate what humans naturally blend together:
 
 - **Title** — The gap you're sensing. What is the difference between current reality and desired state?
 - **Description** — The observable facts. What do you see, hear, or experience that creates this tension?
 - **\`fields['tension.feeling']\`** — The feeling this evokes. Separated from the facts because humans tend to blend thoughts, feelings, needs, and strategies into one "frankenstein solution." Keeping feelings explicit but separate lets the organizational response stay focused on what the role/organization actually needs.
 - **\`fields['tension.needs']\`** — The need that is alive. What personal or organizational need is not being met? Same separation principle — naming the need explicitly prevents it from unconsciously shaping the proposed solution.
+- **Placement** — Where a tension lives determines its source. This follows the same \`individual-action\` pattern that applies to all work throughout Nestr:
+  - **On a role**: The role is sensing the tension. Placement gives provenance: "My [Developer] role senses this gap." Use the role's ID as \`nestId\` when creating.
+  - **On a circle**: A cross-role, governance, or personally sensed tension. If sensed personally (not from any specific role), add the \`individual-action\` label — this signals the tension comes from you as a person, not from a role you fill.
 
 This separation exists because without it, people unconsciously merge their personal experience with organizational needs, producing proposals that serve both poorly. By making each dimension explicit, we keep the organizational response clean while still honoring the human experience.
 
@@ -60,11 +80,11 @@ This separation exists because without it, people unconsciously merge their pers
 
 Once a tension is recognized and captured, it needs to find its organizational home. Walk through this question tree for each captured tension:
 
-1. **Does one of MY roles care?** → If yes, process it within that role (create work, update projects, or create a tension if it requires another role's involvement).
+1. **Does one of MY roles care?** → Create the tension on that role (\`nestId\` = roleId). This anchors the tension to the role that is sensing it. Then process it: create work, update projects, or if it requires another role's involvement, the tension is visible from your role's context.
 2. **Does ANOTHER role in my circle care?** → Create a tension on the circle directed at that role.
 3. **Does my CIRCLE care (but no specific role)?** → The work may need a new role or accountability — create a governance tension on the circle.
 4. **Does the BROADER ORGANIZATION care?** → Escalate: create a tension on the super-circle or anchor circle.
-5. **Is this PERSONAL?** → Acknowledge it and process it in your personal space (inbox, personal workspace). Not everything belongs to the organization.
+5. **Is this PERSONAL (not from a role)?** → Create the tension on the circle with the \`individual-action\` label. This signals it comes from you as a person, not from any role you fill.
 6. **None of the above?** → Let it go. Not every feeling needs to become organizational work.
 
 **One feeling, multiple tensions.** A single feeling often produces tensions that land in different contexts. For example, frustration about a missed delivery might produce: (a) an operational tension for the Developer role about the specific deliverable, (b) a governance tension about unclear accountability for deployment, and (c) a personal tension about your own stress management. Capture each separately and route them to the right context. This is why "bias towards minimal output" applies *per tension*, not per feeling.
@@ -88,6 +108,8 @@ Every tension resolves through one or more of these pathways:
 3. **Request outcome/project** — "I need X to be achieved." → Requests a project or outcome from another role.
 4. **Request action/task** — "I need you to do X." → Requests a specific next action from another role.
 5. **Set expectation/governance** — "We need ongoing clarity about X." → Proposes a structural change: new role, accountability, domain, policy, or circle.
+
+**Directing output to specific roles.** When processing pathways 1-4, you can direct the output to a specific person by including their userId in the tension part's \`users\` field. This ensures the person energizing the accountable role receives the request. For example, a "request action" tension can be assigned to the person filling the Developer role so it appears in their tension list.
 
 **Bias towards minimal output.** A well-processed tension typically produces 1-2 outputs. If you find yourself creating many outputs from a single tension, it's likely multiple tensions blended together — separate them.
 
@@ -127,7 +149,7 @@ Proactively check for tensions at natural breakpoints (assistant and role-filler
 
 ### Tension Workflow
 
-1. **Create a tension** on the relevant circle or role: \`nestr_create_tension\` with a title describing the gap. Optionally include \`feeling\` and \`needs\` to capture the personal or organizational context.
+1. **Create a tension** on the role that senses it, or on the circle for cross-role/governance/personal tensions: \`nestr_create_tension\` with a title describing the gap. Optionally include \`feeling\` and \`needs\` to capture the personal or organizational context. For personally sensed tensions (not from a specific role), add the \`individual-action\` label.
 
 2. **Add proposal parts** using \`nestr_add_tension_part\`:
    - **New governance item**: Provide title and labels (e.g., \`["role"]\`, \`["policy"]\`). For roles, include accountabilities and/or domains as bulk shorthand.
@@ -163,7 +185,8 @@ Tensions support discussion through the standard comments API. Use \`nestr_add_c
 
 **Requesting work from another role (pathway 3 — request outcome):**
 \`\`\`
-nestr_create_tension(circleId, {
+// Place on the Sales Lead role — that role is sensing this tension
+nestr_create_tension(salesLeadRoleId, {
   title: "Our clients can't access their data in a format they need",
   description: "Three enterprise clients have asked for MongoDB access this quarter. Currently we only expose data via REST API.",
   feeling: "Frustrated — I keep having to explain our limitations",
@@ -238,6 +261,8 @@ nestr_create_tension(circleId, {
 - **proposed**: Submitted for consent. Circle members vote. Can be retracted back to \`draft\`.
 - **accepted**: All members consented. Changes are applied to governance.
 - **objected**: One or more members objected. Requires integration and resubmission.
+
+**Tracking status:** Use \`nestr_get_tension_status\` to see the current lifecycle state and per-user voting responses with timestamps. Use \`nestr_update_tension_status\` to move a tension through its lifecycle (e.g., submit for consent or retract to draft).
 
 ### Auto-Detection
 
