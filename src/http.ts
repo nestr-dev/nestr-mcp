@@ -90,6 +90,8 @@ function escapeHtml(text: string): string {
 
 const app = express();
 
+app.set("trust proxy", 1);
+
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -583,7 +585,7 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
     // Try to fetch user_id for analytics (non-blocking)
     let userId: string | undefined;
     try {
-      const tempClient = new NestrClient({ apiKey: tokens.access_token });
+      const tempClient = new NestrClient({ apiKey: tokens.access_token, baseUrl: process.env.NESTR_API_BASE });
       const currentUser = await tempClient.getCurrentUser();
       userId = currentUser._id;
     } catch (userError) {
@@ -1086,6 +1088,7 @@ app.post("/mcp", async (req: Request, res: Response) => {
     // Create new session with the auth token and MCP client info
     const client = new NestrClient({
       apiKey: authToken,
+      baseUrl: process.env.NESTR_API_BASE,
       mcpClient: mcpClientName,
       // tokenProvider enables server-side token refresh for stored sessions (legacy browser flow).
       // In the standard MCP OAuth flow, there's no stored session — the client manages refresh.
