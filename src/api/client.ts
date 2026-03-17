@@ -229,6 +229,7 @@ export class NestrClient {
 
     const response = await fetch(url, {
       ...options,
+      signal: AbortSignal.timeout(30000),
       headers: {
         ...headers,
         ...(options.headers as Record<string, string>),

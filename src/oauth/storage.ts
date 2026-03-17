@@ -369,6 +369,92 @@ export function cleanupExpiredPendingAuth(): void {
   }
 }
 
+// ============ PKCE Code Storage ============
+// Stores PKCE challenges indexed by authorization code for token exchange verification
+
+const PKCE_FOR_CODE_FILE = join(STORAGE_DIR, "pkce-codes.json");
+let pkceForCodeCache: Map<string, PkceForCodeData> | null = null;
+
+interface PkceForCodeData {
+  codeChallenge: string;
+  codeChallengeMethod: string;
+  createdAt: number;
+}
+
+function loadPkceForCode(): Map<string, PkceForCodeData> {
+  if (pkceForCodeCache) return pkceForCodeCache;
+
+  ensureStorageDir();
+  pkceForCodeCache = new Map();
+
+  if (existsSync(PKCE_FOR_CODE_FILE)) {
+    try {
+      const data = JSON.parse(readFileSync(PKCE_FOR_CODE_FILE, "utf-8"));
+      const now = Date.now();
+      const TTL = 5 * 60 * 1000;
+
+      for (const [code, pkce] of Object.entries(data)) {
+        const p = pkce as PkceForCodeData;
+        if (now - p.createdAt < TTL) {
+          pkceForCodeCache.set(code, p);
+        }
+      }
+    } catch {
+      pkceForCodeCache = new Map();
+    }
+  }
+
+  return pkceForCodeCache;
+}
+
+function savePkceForCode(): void {
+  if (!pkceForCodeCache) return;
+
+  ensureStorageDir();
+  const data: Record<string, PkceForCodeData> = {};
+  for (const [code, pkce] of pkceForCodeCache) {
+    data[code] = pkce;
+  }
+
+  try {
+    writeFileSync(PKCE_FOR_CODE_FILE, JSON.stringify(data, null, 2));
+  } catch (error) {
+    console.error("Failed to save PKCE codes:", error);
+  }
+}
+
+export function storePkceForCode(
+  code: string,
+  codeChallenge: string,
+  codeChallengeMethod: string
+): void {
+  const cache = loadPkceForCode();
+  cache.set(code, {
+    codeChallenge,
+    codeChallengeMethod,
+    createdAt: Date.now(),
+  });
+  savePkceForCode();
+}
+
+export function consumePkceForCode(code: string): PkceForCodeData | undefined {
+  const cache = loadPkceForCode();
+  const pkce = cache.get(code);
+
+  if (!pkce) return undefined;
+
+  if (Date.now() - pkce.createdAt > 5 * 60 * 1000) {
+    cache.delete(code);
+    savePkceForCode();
+    return undefined;
+  }
+
+  cache.delete(code);
+  savePkceForCode();
+
+  return pkce;
+}
+
 // ============ OAuth Sessions ============
 // Uses plaintext storage by default, encrypted storage when OAUTH_ENCRYPTION_KEY is set
 

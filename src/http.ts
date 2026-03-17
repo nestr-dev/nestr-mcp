@@ -52,12 +52,15 @@ import {
   registerClient,
   getClient,
   validateRedirectUri,
+  storePkceForCode,
+  consumePkceForCode,
   type RegisteredClient,
   getSession,
 } from "./oauth/storage.js";
 import { analytics, type AnalyticsContext } from "./analytics/index.js";
-// Import GA4 to trigger auto-registration
 import "./analytics/ga4.js";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -68,9 +71,12 @@ const __dirname = path.dirname(__filename);
 const PORT = process.env.PORT || 3000;
 const GTM_ID = process.env.GTM_ID || process.env.NESTR_GTM_ID;
 
-/**
- * Escape HTML special characters to prevent XSS
- */
+const GTM_ID_REGEX = /^GTM-[A-Z0-9]+$/;
+
+function isValidGtmId(id: string | undefined): id is string {
+  return !!id && GTM_ID_REGEX.test(id);
+}
+
 function escapeHtml(text: string): string {
   const htmlEscapes: Record<string, string> = {
     "&": "&amp;",
@@ -83,7 +89,44 @@ function escapeHtml(text: string): string {
 }
 
 const app = express();
-app.use(express.json());
+
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://www.googletagmanager.com"],
+      connectSrc: ["'self'", "https://www.google-analytics.com"],
+      imgSrc: ["'self'", "https://www.googletagmanager.com", "data:"],
+      frameSrc: ["https://www.googletagmanager.com"],
+    },
+  },
+}));
+
+app.use(express.json({ limit: "1mb" }));
+
+const oauthLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "too_many_requests", error_description: "Too many requests, please try again later" },
+});
+
+const tokenLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "too_many_requests", error_description: "Too many token requests, please try again later" },
+});
+
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "too_many_requests", error_description: "Too many registration requests" },
+});
 
 // Serve static files from web directory (index: false so "/" goes to route handler for GTM injection)
 const webDir = path.join(__dirname, "..", "web");
@@ -101,28 +144,26 @@ app.get("/health", (_req, res) => {
 app.get("/", (_req, res) => {
   const indexPath = path.join(webDir, "index.html");
 
-  // If GTM is not configured, serve the static file directly
-  if (!GTM_ID) {
+  if (!isValidGtmId(GTM_ID)) {
+    if (GTM_ID) {
+      console.warn(`Invalid GTM_ID format: ${GTM_ID}. Expected format: GTM-XXXXXXX`);
+    }
     res.sendFile(indexPath);
     return;
   }
 
-  // Read and inject GTM scripts
   try {
     let html = fs.readFileSync(indexPath, "utf-8");
 
-    // GTM head script
     const gtmScript = `<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
 new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
 j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
 })(window,document,'script','dataLayer','${GTM_ID}');</script>`;
 
-    // GTM noscript fallback
     const gtmNoscript = `<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=${GTM_ID}"
 height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>`;
 
-    // Replace placeholders
     html = html.replace("<!-- __GTM_SCRIPT__ -->", gtmScript);
     html = html.replace("<!-- __GTM_NOSCRIPT__ -->", gtmNoscript);
 
@@ -160,7 +201,7 @@ app.get("/.well-known/oauth-authorization-server", (req, res) => {
  * Allows MCP clients to register themselves without pre-configuration.
  * This enables seamless connection from any MCP client (like Claude Code).
  */
-app.post("/oauth/register", express.json(), (req: Request, res: Response) => {
+app.post("/oauth/register", registerLimiter, express.json(), (req: Request, res: Response) => {
   try {
     const {
       client_name,
@@ -276,7 +317,7 @@ function getCallbackUrl(req: Request): string {
  *   - client_consumer: (optional) Identifier for the MCP client (e.g., "claude-code", "cursor")
  *   - _ga_client_id: (optional) GA4 client_id for cross-domain analytics
  */
-app.get("/oauth/authorize", (req: Request, res: Response) => {
+app.get("/oauth/authorize", oauthLimiter, (req: Request, res: Response) => {
   const config = getOAuthConfig();
 
   // Extract OAuth parameters
@@ -516,13 +557,15 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
   }
 
   try {
-    // Check if this is an MCP client flow (has PKCE challenge stored)
-    // For MCP clients, redirect back to their callback URL with the code
-    // CLI tools should use Device Flow (RFC 8628) for headless environments
     if (pending.codeChallenge && pending.clientId?.startsWith("mcp-")) {
       console.log(`OAuth: Redirecting code to MCP client ${pending.clientId}`);
 
-      // Build redirect URL to MCP client with code and state
+      storePkceForCode(
+        code as string,
+        pending.codeChallenge,
+        pending.codeChallengeMethod || "S256"
+      );
+
       const clientRedirect = new URL(pending.redirectUri);
       clientRedirect.searchParams.set("code", code as string);
       clientRedirect.searchParams.set("state", state as string);
@@ -607,7 +650,7 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
  *   - expires_in: Lifetime of codes in seconds
  *   - interval: Minimum polling interval in seconds
  */
-app.post("/oauth/device", express.urlencoded({ extended: true }), async (req: Request, res: Response) => {
+app.post("/oauth/device", oauthLimiter, express.urlencoded({ extended: true }), async (req: Request, res: Response) => {
   const config = getOAuthConfig();
 
   try {
@@ -681,7 +724,7 @@ app.post("/oauth/device", express.urlencoded({ extended: true }), async (req: Re
  *   - client_consumer: Identifier for the MCP client (e.g., "claude-code", "cursor")
  *     Passed to Nestr for token metadata to differentiate tokens by consuming client.
  */
-app.post("/oauth/token", express.urlencoded({ extended: true }), async (req: Request, res: Response) => {
+app.post("/oauth/token", tokenLimiter, express.urlencoded({ extended: true }), async (req: Request, res: Response) => {
   const config = getOAuthConfig();
 
   try {
@@ -730,25 +773,28 @@ app.post("/oauth/token", express.urlencoded({ extended: true }), async (req: Req
           return;
         }
 
-        // For dynamically registered clients, PKCE is required
-        // The code_verifier should be provided in the token request
-        // We need to verify it against the stored code_challenge
+        const pkceData = consumePkceForCode(code);
+        if (!pkceData) {
+          res.status(400).json({
+            error: "invalid_grant",
+            error_description: "Authorization code expired or already used",
+          });
+          return;
+        }
 
-        // Note: Since we don't have direct access to the state here (it was used in callback),
-        // we trust that if the code is valid at Nestr, the auth was legitimate.
-        // The PKCE verification happens conceptually:
-        // - Client sends code_challenge at /oauth/authorize -> stored with state
-        // - Nestr validates user auth and returns code
-        // - Client sends code_verifier at /oauth/token
-        // - We verify code_verifier matches code_challenge
-
-        // However, since we can't link the token request back to the pending auth
-        // (the state/code mapping is handled by Nestr), we verify PKCE differently:
-        // We check that code_verifier was provided (MCP spec requirement)
         if (!code_verifier) {
           res.status(400).json({
             error: "invalid_request",
             error_description: "code_verifier is required for PKCE",
+          });
+          return;
+        }
+
+        if (!verifyPKCE(code_verifier, pkceData.codeChallenge, pkceData.codeChallengeMethod)) {
+          console.warn(`PKCE verification failed for client ${client_id}`);
+          res.status(400).json({
+            error: "invalid_grant",
+            error_description: "PKCE verification failed",
           });
           return;
         }

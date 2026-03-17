@@ -183,9 +183,7 @@ class GA4Tracker implements EventTracker {
   }
 }
 
-// Auto-register GA4 tracker if configured
-try {
+// Auto-register GA4 tracker only if configured
+if (GA4_MEASUREMENT_ID) {
   analytics.register(new GA4Tracker());
-} catch {
-  // Not configured or incomplete - that's fine, warning already logged if needed
 }
