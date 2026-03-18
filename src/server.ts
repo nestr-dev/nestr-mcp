@@ -15,6 +15,7 @@ import { toolDefinitions, handleToolCall } from "./tools/index.js";
 import { getCompletableListHtml, appResources } from "./apps/index.js";
 import { WORKSPACE_SETUP_INSTRUCTIONS } from "./skills/workspace-setup.js";
 import { TENSION_PROCESSING_INSTRUCTIONS } from "./skills/tension-processing.js";
+import { DOING_WORK_INSTRUCTIONS } from "./skills/doing-work.js";
 import * as mcpcat from "mcpcat";
 
 export interface NestrMcpServerConfig {
@@ -338,45 +339,6 @@ Every nest has these **standard fields**:
 
 **Tip:** Use \`path\` to understand context without extra API calls. If you see \`"Acme Corp / Engineering / Developer / Fix bug"\`, you know the task is under the "Developer" role in the "Engineering" circle without fetching those nests.
 
-### User Assignment
-
-**CRITICAL:** When creating tasks or projects under a role, you MUST explicitly set the \`users\` array. Placing a nest under a role does NOT automatically assign it to the person or agent energizing that role. Forgetting this is a common mistake that leaves work unassigned.
-
-**Key principle:** Work belongs to roles, not to people or agents. A person or agent has no authority to impact organizational work or structure — only roles can. When someone energizes a role, they are assigned to work *because* they fill that role, not in their own right. The role has the accountability; the person/agent is the vehicle through which the role acts.
-
-#### Assignment Rules for Work Under Roles
-
-Before creating work under a role, check who energizes it (the \`users\` array on the role):
-
-1. **Role has one person/agent**: Assign to them
-   \`\`\`json
-   { "parentId": "roleId", "title": "Complete report", "users": ["userId"] }
-   \`\`\`
-
-2. **Role has multiple people/agents**:
-   - If you energize the role → assign to yourself
-   - If you don't energize the role:
-     - **Assistant mode**: Ask the user which person energizing the role should carry this work
-     - **Role-filler mode**: Create a tension on the circle requesting the accountable role take on this work
-     - **Workspace mode**: Assign based on organizational rules or leave for the circle lead to decide
-
-3. **Role is unfilled**: Leave \`users\` empty or omit — the work belongs to the role itself until someone energizes it
-   \`\`\`json
-   { "parentId": "roleId", "title": "Future task", "users": [] }
-   \`\`\`
-
-#### Quick Reference
-
-| Scenario | Action |
-|----------|--------|
-| Role has one person/agent | \`users: [userId]\` |
-| Multiple people, you energize the role | \`users: [yourUserId]\` (assign to self) |
-| Multiple people, you don't energize it | Assistant: ask user. Role-filler: create tension. Workspace: use org rules. |
-| Role unfilled | \`users: []\` or omit |
-| Work not under a role | Assign to whoever should own it |
-
-**Note:** Accountabilities, domains, and policies never have users assigned - they belong to roles, not people.
-
 ### The \`fields\` Property
 
 The \`fields\` object holds custom data defined by labels. Fields are **namespaced by the label that defines them**:
@@ -398,7 +360,7 @@ The \`fields\` object holds custom data defined by labels. Fields are **namespac
 - \`Waiting\` - Blocked or on hold
 - \`Done\` - Completed
 
-**Circle strategy** (in \`fields['circle.strategy']\`):
+**Circle strategy** (in \`fields['circle.strategy']\` for sub-circles, or \`fields['anchor-circle.strategy']\` for the anchor circle/workspace):
 A strategy that all roles within the circle must follow. Sub-circle strategies must align with and support the super-circle's strategy.
 
 **Important:** Label field schemas can be customized at the workspace or circle level. This means the available fields and their options may vary between different parts of the organization hierarchy. Always check what fields are actually present on a nest rather than assuming a fixed schema.
@@ -416,45 +378,6 @@ This cascades through the entire hierarchy, which may be many layers deep. When 
 
 **For other nests** (tasks, projects, etc.), prefer \`description\` for details, acceptance criteria, and Definition of Done. Use \`fields\` for structured data. Use comments for progress updates. Purpose can still be set on any nest if it serves the user, but by default reach for description first.
 
-## Work Assignment & Context in Self-Organization
-
-In role-based self-organization, understanding where work lives is crucial:
-
-### Work Should Live Under Roles
-The goal is to do all work from a role. Each task or project should be owned by a role that has the accountability for it.
-
-### Circles as Roles
-From a super-circle's perspective, a sub-circle is just another role. Work directly under a circle (not under a role within it) is work the circle-as-a-whole does for its super-circle. How that work is internally organized is irrelevant to the super-circle.
-
-### The \`individual-action\` Label
-Sometimes work needs to be done before a role exists for it. This work is captured directly in a circle with the \`individual-action\` label:
-- **Context**: The work is for this circle's purpose (not the super-circle)
-- **Meaning**: Work needed for the circle but not yet assigned to a role
-- **Next step**: When this work becomes structural, create a role for it
-
-### Querying Work "In a Circle"
-When someone asks for "all work in circle X", be aware of context:
-
-**Include:**
-- Work under roles within the circle: \`in:circleId label:!individual-action depth:2 completed:false\`
-- Individual actions for the circle: \`in:circleId label:individual-action depth:1 completed:false\`
-
-**Handle separately:**
-- Work directly in circle WITHOUT \`individual-action\` label = work the circle does for its super-circle
-- You may include this but explicitly note: "This work lives at the super-circle level"
-
-**Example queries:**
-\`\`\`
-in:circleId label:individual-action depth:1 completed:false
-  -> Individual actions directly in the circle (circle's own work without a role)
-
-in:circleId label:!individual-action depth:2 completed:false
-  -> Work under direct roles in the circle (depth:2 = roles + their work)
-
-in:circleId completed:false
-  -> ALL work in circle including sub-circles (may include super-circle context work)
-\`\`\`
-
 ## Best Practices
 
 1. **Start by listing workspaces** to get the workspace ID and check if it has the "anchor-circle" label
@@ -462,12 +385,7 @@ in:circleId completed:false
 3. **Check labels** to understand what type of nest you're working with
 4. **Use @mentions** in comments to notify team members
 5. **Respect the hierarchy**: nests live under parents (workspace → circle → role/project → task)
-6. **Check circle strategy and purpose** before creating work or governance:
-   - Fetch the parent circle to review its \`purpose\` and \`fields['circle.strategy']\`
-   - Ensure new projects and tasks align with and serve the circle's strategy
-   - Use strategy and purpose to prioritize work and define clear outcomes
-   - When proposing governance changes, consider how they support the circle's purpose
-7. **Maintain skills on roles and circles** for AI knowledge persistence:
+6. **Maintain skills on roles and circles** for AI knowledge persistence:
    - Before doing work from a role, check for existing skills under that role or its circle — they contain processes, patterns, and domain knowledge from prior sessions
    - When completing work that is likely repeatable, capture it as a skill under the appropriate role or circle
    - Skills are the primary mechanism for AI context persistence — they're visible, searchable, and transfer with the role when it's reassigned
@@ -508,115 +426,6 @@ When untyped, skills default to general-purpose knowledge. Use the type to help 
 
 ### Nestr as Context and History
 All work in Nestr — projects, tasks, comments, tensions, and skills — forms the complete context and history for a role. Skills complement this by capturing the *how* and *why* alongside the *what*. Together, they ensure continuity whether the role is energized by a human, an AI agent, or transitions between them.
-
-## Setting Up and Tracking Work
-
-Follow these practices to ensure work is properly captured, tracked, and documented in Nestr. In assistant mode, you help the user set up work. In role-filler mode, you set up your own work autonomously. In workspace mode, you manage work structurally.
-
-### Setting Up Work
-
-1. **Find the appropriate role** for the work:
-   - Identify which role has the accountability for this type of work — the work belongs to the role, not to any individual
-   - **Fetch the role** to check who energizes it (the \`users\` array on the role)
-   - **If you energize the role**: Proceed with creating the project under that role, assigned to yourself
-   - **If multiple people energize the role**: See "User Assignment" rules above for mode-specific behavior
-   - **If you do NOT energize the role**:
-     - **Assistant mode**: Inform the user which role is accountable and who energizes it. Ask if they still want to create the project there. If yes, add a comment notifying the person energizing the role: "@username - [User] is proposing this project for your role [RoleName]. Do you accept this work?"
-     - **Role-filler mode**: Create a tension on the circle requesting the accountable role take on this work. Do not create projects under another role — only that role's holder can accept work into it.
-     - **Workspace mode**: Create the project under the accountable role and assign to whoever energizes it based on organizational rules.
-
-2. **Create a project** under the role:
-   - Title in past tense describing what "done" looks like (e.g., "API integration completed", "User onboarding flow redesigned")
-   - Set \`labels: ["project"]\` and \`fields: { "project.status": "Current" }\`
-   - Use \`purpose\` to describe the Definition of Done (DoD) with clear acceptance criteria
-   - **ALWAYS set \`users\` explicitly** - see "User Assignment" section above for rules:
-     \`\`\`json
-     { "parentId": "roleId", "title": "...", "labels": ["project"], "users": ["roleFillerUserId"] }
-     \`\`\`
-
-3. **If a project is already provided**, review and enhance it:
-   - Check if the description has clear DoD criteria
-   - If not, **append** to the description (don't overwrite) with suggested criteria
-   - In assistant mode, suggest a clearer DoD to the user. In role-filler mode, define the DoD yourself.
-
-4. **Break down into tasks** under the project:
-   - Create individual tasks (nests without labels) for discrete pieces of work
-   - Use \`description\` for additional context, acceptance criteria, or notes
-   - Keep tasks small enough to complete in one sitting
-
-### While Working
-
-5. **Document progress as comments** (\`nestr_add_comment\`):
-   - Post updates to individual tasks as you work on them
-   - Post summaries or milestone updates to the project itself
-   - In assistant mode, capture relevant questions you asked the user and their answers
-   - Note: Comments on a task automatically appear on the parent project, so don't double-post
-
-6. **Mark tasks complete** as you finish them:
-   - Use \`nestr_update_nest\` with \`completed: true\`
-   - Add a final comment summarizing what was done if helpful
-
-### Example Flows
-
-**Assistant mode:**
-\`\`\`
-User: "Can you refactor our authentication module to use JWT?"
-
-1. Search for relevant role (e.g., Developer role in Tech circle)
-2. Create project: "Authentication module refactored to JWT"
-   - Purpose: "Replace session-based auth with JWT tokens. DoD: All endpoints use JWT, tests pass, documentation updated."
-   - Parent: Developer role
-   - Assign to user
-3. Create tasks, work through them, post findings as comments
-4. Mark each task complete as finished
-\`\`\`
-
-**Role-filler mode:**
-\`\`\`
-Agent identifies a gap: session-based auth doesn't meet the security accountability.
-
-1. Create project under own role: "Authentication module refactored to JWT"
-   - Purpose: "Replace session-based auth with JWT tokens. DoD: All endpoints use JWT, tests pass."
-   - Assign to self
-2. Break down into tasks, execute autonomously
-3. Document progress as comments for transparency
-4. If the work impacts another role's domain (e.g., "Security stack"),
-   create a tension requesting input from that role before proceeding
-\`\`\`
-
-## Checking Role Authority
-
-Before creating work or proposing changes, verify which role has the accountability or domain for the work. Use these tools:
-
-### Finding the Right Role
-
-1. **\`nestr_get_circle_roles\`** — Returns all roles in a circle with their accountabilities and domains. This is the fastest way to see the full governance structure.
-
-2. **\`nestr_search\`** with \`label:accountability\` or \`label:domain\` — Search across the workspace for specific accountabilities or domains by keyword.
-
-3. **\`nestr_get_nest_children\`** on a specific role — Returns the role's accountabilities, domains, policies, and work items.
-
-### Checking Before Acting
-
-When assigning work to a role, verify the role actually has accountability for it:
-
-\`\`\`
-1. nestr_get_circle_roles(workspaceId, circleId)
-   → Review accountabilities of each role
-2. Find the role whose accountability matches the work
-3. Create the project/task under that role
-\`\`\`
-
-When proposing governance changes, check for domain conflicts:
-
-\`\`\`
-1. nestr_search(workspaceId, "label:domain [keyword]")
-   → Check if another role already controls this area
-2. If a domain exists, coordinate with the domain holder
-3. Propose the change via nestr_create_tension on the circle
-\`\`\`
-
-**Tip:** Use \`nestr_search\` with \`in:circleId label:role\` to find all roles (including in sub-circles), or add \`depth:1\` to limit to direct roles only.
 
 ## Label Architecture
 
@@ -691,8 +500,10 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 **Meetings & Operations:**
 - \`metric\` - A metric tracked by a role/circle
 - \`checklist\` - A recurring checklist item
-- \`governance\` - A governance meeting
-- \`tactical\` - A tactical/operational meeting
+- \`governance\` - Combined with \`meeting\` label to create a governance meeting (processes governance tensions/proposals)
+- \`circle-meeting\` - Combined with \`meeting\` label to create a circle/tactical meeting (processes operational tensions — projects, todos, inter-role requests)
+
+**Creating meetings:** A meeting is a nest with \`labels: ["meeting", "governance"]\` or \`labels: ["meeting", "circle-meeting"]\`. Set \`due\` to the meeting start time. Assign all role fillers in the circle to the meeting's \`users\` array — this includes people/agents energizing roles in the circle, plus rep-link and circle-lead roles from sub-circles. Use graph tools (\`nestr_add_graph_link\` with relation \`meeting\`) to link tensions as agenda items. Agenda items that don't originate from a specific role can be created as child nests of the meeting directly.
 
 **OKRs & Goals:**
 - \`goal\` - An Objective (the O in OKR)
@@ -1389,6 +1200,7 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
       },
       instructions: [
         SERVER_INSTRUCTIONS,
+        DOING_WORK_INSTRUCTIONS,
         TENSION_PROCESSING_INSTRUCTIONS,
         WORKSPACE_SETUP_INSTRUCTIONS,
         SERVER_INSTRUCTIONS_REFERENCE,

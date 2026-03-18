@@ -479,6 +479,27 @@ export const schemas = {
     tensionId: z.string().describe("Tension ID"),
     status: z.enum(["proposed", "draft"]).describe("'proposed' to submit for voting, 'draft' to retract back to draft"),
   }),
+
+  // Graph link tools
+  getGraphLinks: z.object({
+    nestId: z.string().describe("Nest ID to get graph links for"),
+    relation: z.string().describe("Relation name (e.g., 'meeting' for meeting agenda items)"),
+    direction: z.enum(["outgoing", "incoming"]).optional().describe("Link direction: 'outgoing' (default) = links FROM this nest, 'incoming' = links TO this nest"),
+    limit: z.number().optional().describe("Max results per page (default 50)"),
+    page: z.number().optional().describe("Page number for pagination"),
+  }),
+
+  addGraphLink: z.object({
+    nestId: z.string().describe("Source nest ID"),
+    relation: z.string().describe("Relation name (e.g., 'meeting' to link a tension to a meeting as an agenda item)"),
+    targetId: z.string().describe("Target nest ID to link to"),
+  }),
+
+  removeGraphLink: z.object({
+    nestId: z.string().describe("Source nest ID"),
+    relation: z.string().describe("Relation name (e.g., 'meeting')"),
+    targetId: z.string().describe("Target nest ID to unlink"),
+  }),
 };
 
 // Tool annotations for MCP - hints for clients on tool behavior
@@ -1485,6 +1506,51 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
     },
     ...mutating,
   },
+  // Graph link tools
+  {
+    name: "nestr_get_graph_links",
+    description: "Get nests linked via a named graph relation. Use relation 'meeting' on a meeting with direction 'incoming' to get its agenda items (linked tensions), or on a tension with direction 'outgoing' to see which meetings it's on. Supports pagination.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest ID to get graph links for" },
+        relation: { type: "string", description: "Relation name (e.g., 'meeting' for meeting agenda items)" },
+        direction: { type: "string", enum: ["outgoing", "incoming"], description: "Link direction: 'outgoing' (default) = links FROM this nest, 'incoming' = links TO this nest" },
+        limit: { type: "number", description: "Max results per page (default 50)" },
+        page: { type: "number", description: "Page number for pagination" },
+      },
+      required: ["nestId", "relation"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_add_graph_link",
+    description: "Create a bidirectional graph link between two nests. Primary use case: link a tension to a meeting as an agenda item using relation 'meeting' (nestId = tension, targetId = meeting). Links are bidirectional — queryable from either side.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Source nest ID" },
+        relation: { type: "string", description: "Relation name (e.g., 'meeting' to link a tension to a meeting)" },
+        targetId: { type: "string", description: "Target nest ID to link to" },
+      },
+      required: ["nestId", "relation", "targetId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_remove_graph_link",
+    description: "Remove a graph link between two nests. For example, remove a tension from a meeting's agenda by removing the 'meeting' relation.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Source nest ID" },
+        relation: { type: "string", description: "Relation name (e.g., 'meeting')" },
+        targetId: { type: "string", description: "Target nest ID to unlink" },
+      },
+      required: ["nestId", "relation", "targetId"],
+    },
+    ...destructive,
+  },
 ];
 
 // Tool handler type
@@ -2207,6 +2273,29 @@ async function _handleToolCall(
           parsed.status
         );
         return formatResult({ message: `Tension status updated to '${parsed.status}'`, status });
+      }
+
+      // Graph link tools
+      case "nestr_get_graph_links": {
+        const parsed = schemas.getGraphLinks.parse(args);
+        const result = await client.getGraphLinks(parsed.nestId, parsed.relation, {
+          direction: parsed.direction,
+          limit: parsed.limit,
+          page: parsed.page,
+        });
+        return formatResult(compactResponse(result));
+      }
+
+      case "nestr_add_graph_link": {
+        const parsed = schemas.addGraphLink.parse(args);
+        const result = await client.addGraphLink(parsed.nestId, parsed.relation, parsed.targetId);
+        return formatResult(result);
+      }
+
+      case "nestr_remove_graph_link": {
+        const parsed = schemas.removeGraphLink.parse(args);
+        const result = await client.removeGraphLink(parsed.nestId, parsed.relation, parsed.targetId);
+        return formatResult({ message: "Graph link removed" });
       }
 
       default:

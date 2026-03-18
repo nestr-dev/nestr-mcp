@@ -267,4 +267,30 @@ nestr_create_tension(circleId, {
 ### Auto-Detection
 
 Tensions with governance labels (role, circle, policy, accountability, domain) in their parts automatically become governance proposals. Tensions without governance labels become output tensions (e.g., meeting outputs, operational decisions, inter-role requests).
+
+### Tensions as Meeting Agenda Items
+
+Tensions become meeting agenda items through graph links. Use \`nestr_add_graph_link\` with relation \`meeting\` to link a tension to a meeting.
+
+**Which tensions are available for a meeting's agenda?** All non-completed tensions where the nearest circle ancestor matches the meeting's circle. The meeting type determines which tensions are relevant:
+
+- **Governance meetings** (\`governance\` + \`meeting\` labels): Tensions with governance parts — proposals for new/changed roles, circles, accountabilities, domains, or policies. These are processed through Integrative Decision Making.
+- **Circle meetings** (\`circle-meeting\` + \`meeting\` labels): Tensions with operational output — requests for information, projects, actions, or inter-role coordination. These drive the operational/tactical heartbeat.
+
+**Linking tensions to meetings:**
+\`\`\`
+// Link a tension as an agenda item for a meeting
+nestr_add_graph_link(tensionNestId, "meeting", meetingNestId)
+
+// View a meeting's agenda (all linked tensions)
+nestr_get_graph_links(meetingNestId, "meeting", { direction: "incoming" })
+
+// See which meeting a tension is on
+nestr_get_graph_links(tensionNestId, "meeting")
+
+// Remove a tension from a meeting's agenda
+nestr_remove_graph_link(tensionNestId, "meeting", meetingNestId)
+\`\`\`
+
+**Agenda items without a role source.** If a tension doesn't clearly originate from a specific role — for example, an ad-hoc discussion point or a freshly sensed tension that hasn't been anchored yet — create it as a child nest of the meeting directly (using \`nestr_create_nest\` with the meeting's ID as \`parentId\`). The graph link to the meeting is still needed. For tensions that DO originate from a specific role, create the tension on that role and link it to the meeting via the graph — this preserves provenance.
 `.trim();
