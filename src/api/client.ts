@@ -1242,6 +1242,55 @@ export class NestrClient {
     });
   }
 
+  // ============ GRAPH LINKS ============
+
+  /**
+   * Get graph links for a nest filtered by relation.
+   */
+  async getGraphLinks(
+    nestId: string,
+    relation: string,
+    options?: {
+      direction?: "outgoing" | "incoming";
+      limit?: number;
+      page?: number;
+    }
+  ): Promise<any> {
+    const params = new URLSearchParams();
+    if (options?.direction) params.set("direction", options.direction);
+    if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.page) params.set("page", options.page.toString());
+    const query = params.toString();
+    return this.fetch<any>(`/nests/${nestId}/graph/${relation}${query ? `?${query}` : ""}`);
+  }
+
+  /**
+   * Create a graph link between two nests.
+   */
+  async addGraphLink(
+    nestId: string,
+    relation: string,
+    targetId: string
+  ): Promise<any> {
+    return this.fetch<any>(`/nests/${nestId}/graph/${relation}`, {
+      method: "POST",
+      body: JSON.stringify({ targetId }),
+    });
+  }
+
+  /**
+   * Remove a graph link between two nests.
+   */
+  async removeGraphLink(
+    nestId: string,
+    relation: string,
+    targetId: string
+  ): Promise<any> {
+    return this.fetch<any>(`/nests/${nestId}/graph/${relation}/${targetId}`, {
+      method: "DELETE",
+    });
+  }
+
   // ============ CURRENT USER ============
 
   /**

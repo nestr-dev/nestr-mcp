@@ -79,18 +79,21 @@ Ask your AI assistant things like:
 | `nestr_get_workspace` | Get workspace details |
 | `nestr_create_workspace` | Create a new workspace (OAuth only) |
 | `nestr_search` | Search for nests (tasks, projects, roles) |
+| `nestr_get_me` | Get current user identity and workspace list |
 
 ### Nests (Tasks, Projects, Roles)
 
 | Tool | Description |
 |------|-------------|
-| `nestr_get_nest` | Get details of a specific nest |
+| `nestr_get_nest` | Get details of a specific nest (supports batch fetch with comma-separated IDs) |
 | `nestr_get_nest_children` | Get child nests |
 | `nestr_create_nest` | Create a new nest |
 | `nestr_update_nest` | Update nest properties |
 | `nestr_delete_nest` | Delete a nest |
 | `nestr_reorder_nest` | Reorder a nest relative to another |
 | `nestr_bulk_reorder` | Bulk reorder multiple nests |
+| `nestr_add_label` | Add a label to a nest |
+| `nestr_remove_label` | Remove a label from a nest |
 
 ### Comments & Discussion
 
@@ -98,6 +101,8 @@ Ask your AI assistant things like:
 |------|-------------|
 | `nestr_add_comment` | Add a comment to a nest |
 | `nestr_get_comments` | Get comments/discussion on a nest |
+| `nestr_update_comment` | Update a comment |
+| `nestr_delete_comment` | Delete a comment |
 
 ### Organization Structure
 
@@ -105,10 +110,40 @@ Ask your AI assistant things like:
 |------|-------------|
 | `nestr_list_circles` | List organizational circles |
 | `nestr_get_circle` | Get circle details |
-| `nestr_get_circle_roles` | Get roles in a circle |
+| `nestr_get_circle_roles` | Get roles in a circle with accountabilities and domains |
 | `nestr_list_roles` | List all roles |
 | `nestr_list_users` | List workspace members |
 | `nestr_get_user` | Get user details |
+| `nestr_add_workspace_user` | Add a user to the workspace |
+
+### Tensions
+
+| Tool | Description |
+|------|-------------|
+| `nestr_create_tension` | Create a tension on a circle or role |
+| `nestr_get_tension` | Get tension details |
+| `nestr_list_tensions` | List tensions on a circle or role |
+| `nestr_update_tension` | Update a tension |
+| `nestr_delete_tension` | Delete a tension |
+| `nestr_get_tension_parts` | Get proposal parts of a tension |
+| `nestr_add_tension_part` | Add a proposal part (new/changed governance item) |
+| `nestr_modify_tension_part` | Modify a proposal part |
+| `nestr_remove_tension_part` | Remove a proposal part |
+| `nestr_get_tension_part_children` | Get children (accountabilities/domains) of a proposal part |
+| `nestr_create_tension_part_child` | Add a child to a proposal part |
+| `nestr_update_tension_part_child` | Update a proposal part child |
+| `nestr_delete_tension_part_child` | Delete a proposal part child |
+| `nestr_get_tension_changes` | Preview the diff a proposal part would apply |
+| `nestr_get_tension_status` | Get voting status for a tension |
+| `nestr_update_tension_status` | Submit for voting or retract to draft |
+
+### Graph Links
+
+| Tool | Description |
+|------|-------------|
+| `nestr_get_graph_links` | Get nests linked via a named relation (e.g., meeting agenda items) |
+| `nestr_add_graph_link` | Create a bidirectional link between two nests |
+| `nestr_remove_graph_link` | Remove a link between two nests |
 
 ### Labels & Projects
 
@@ -130,6 +165,7 @@ Ask your AI assistant things like:
 
 | Tool | Description |
 |------|-------------|
+| `nestr_get_me` | Get current user identity and workspaces |
 | `nestr_list_inbox` | List items in user's inbox |
 | `nestr_create_inbox_item` | Quick capture to inbox |
 | `nestr_get_inbox_item` | Get inbox item details |
@@ -138,6 +174,10 @@ Ask your AI assistant things like:
 | `nestr_list_personal_labels` | List user's personal labels |
 | `nestr_create_personal_label` | Create a personal label |
 | `nestr_get_daily_plan` | Get items marked for today |
+| `nestr_add_to_daily_plan` | Add items to today's focus |
+| `nestr_remove_from_daily_plan` | Remove items from today's focus |
+| `nestr_list_my_tensions` | List tensions authored by or assigned to you |
+| `nestr_list_tensions_awaiting_consent` | List governance proposals needing your vote |
 
 ## MCP Apps (Interactive UI)
 
