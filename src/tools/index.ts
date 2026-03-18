@@ -2050,17 +2050,30 @@ async function _handleToolCall(
       case "nestr_get_me": {
         const parsed = schemas.getMe.parse(args);
         try {
-          const user = await client.getCurrentUser({
+          let user = await client.getCurrentUser({
             fullWorkspaces: parsed.fullWorkspaces,
           });
-          return formatResult({
+          // Guard against oversized responses (e.g. many workspaces with large adminUsers arrays).
+          // If the serialized user exceeds 50KB, retry without fullWorkspaces to avoid
+          // blowing past MCP client token limits.
+          const MAX_USER_RESPONSE_BYTES = 50_000;
+          let droppedFullWorkspaces = false;
+          if (parsed.fullWorkspaces && JSON.stringify(user).length > MAX_USER_RESPONSE_BYTES) {
+            user = await client.getCurrentUser({ fullWorkspaces: false });
+            droppedFullWorkspaces = true;
+          }
+          const result: Record<string, unknown> = {
             authMode: "oauth",
             user,
             mode: user.bot ? "role-filler" : "assistant",
             hint: user.bot
               ? "You are a bot energizing roles. You have no authority as an agent — only through the roles you fill. Act autonomously within your roles' accountabilities. Process tensions proactively."
               : "You are assisting a human who energizes roles. Defer to them for decisions. Help them articulate tensions and navigate governance.",
-          });
+          };
+          if (droppedFullWorkspaces) {
+            result.warning = "fullWorkspaces was dropped because the response exceeded the size limit. Use nestr_list_workspaces to browse workspaces individually.";
+          }
+          return formatResult(result);
         } catch (err) {
           // If the error is from the tokenProvider (expired OAuth session),
           // surface it instead of silently falling back to workspace mode.
