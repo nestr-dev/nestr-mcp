@@ -360,7 +360,7 @@ export const schemas = {
 
   // Tension tools
   createTension: z.object({
-    nestId: z.string().describe("ID of the circle or role to create the tension on"),
+    nestId: z.string().describe("ID of the role or circle to create the tension on. Use a role ID when that role is sensing the tension. Use a circle ID for cross-role, governance, or personally sensed tensions."),
     title: z.string().describe("The gap you're sensing — what is the difference between current reality and desired state (plain text)"),
     description: z.string().optional().describe("The observable facts — what you see/hear/experience that creates this tension (supports HTML)"),
     feeling: z.string().optional().describe("The feeling this tension evokes in you — separated from the facts to keep the organizational response clean (plain text)"),
@@ -1234,11 +1234,11 @@ export const toolDefinitions = [
   // Tension tools
   {
     name: "nestr_create_tension",
-    description: "Create a new tension — the fundamental unit of inter-role communication. Tensions represent a gap between current reality and potential. Use for ALL cross-role communication: requesting information, sharing information, requesting outcomes/projects, requesting actions/tasks, or setting expectations (governance). The parent nest must be a role, circle, or anchor-circle.",
+    description: "Create a new tension — the fundamental unit of inter-role communication. Tensions represent a gap between current reality and potential. Use for ALL cross-role communication: requesting information, sharing information, requesting outcomes/projects, requesting actions/tasks, or setting expectations (governance). Placement matters: use a role ID as nestId when that role is sensing the tension, or a circle ID for cross-role, governance, or personally sensed tensions.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        nestId: { type: "string", description: "ID of the circle or role to create the tension on" },
+        nestId: { type: "string", description: "ID of the role or circle to create the tension on. Place on a role to indicate that role is sensing the tension. Place on a circle for cross-role or governance tensions (use individual-action label if sensed personally without role authority)." },
         title: { type: "string", description: "The gap — what is the difference between current reality and desired state (plain text)" },
         description: { type: "string", description: "The observable facts — what you see/hear/experience (supports HTML)" },
         feeling: { type: "string", description: "The feeling this tension evokes — separated to keep the organizational response clean (plain text)" },
