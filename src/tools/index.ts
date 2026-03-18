@@ -117,12 +117,14 @@ export const schemas = {
   getNest: z.object({
     nestId: z.string().describe("Nest ID. Supports comma-separated IDs to fetch multiple nests in one call (e.g., 'id1,id2,id3') — returns an array instead of a single object. Keep total URL under 2000 chars to avoid HTTP limits."),
     fieldsMetaData: z.boolean().optional().describe("Set to true to include field schema metadata (e.g., available options for project.status)"),
+    hints: z.boolean().optional().describe("Include contextual hints on each nest (default: true). Hints surface actionable signals like unassigned roles, stale projects, or unread comments. Set to false for bulk lookups where you only need structural data, not contextual guidance."),
   }),
 
   getNestChildren: z.object({
     nestId: z.string().describe("Parent nest ID"),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
+    hints: z.boolean().optional().describe("Include contextual hints on each child nest (default: true). Set to false for large result sets or bulk operations where contextual signals aren't needed."),
     _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Tasks for Website Redesign\"). Omit for default."),
   }),
 
@@ -602,6 +604,7 @@ export const toolDefinitions = [
       properties: {
         nestId: { type: "string", description: "Nest ID, or comma-separated IDs to fetch multiple nests at once (e.g., 'id1,id2,id3'). Keep total URL under 2000 chars." },
         fieldsMetaData: { type: "boolean", description: "Set to true to include field schema metadata (available options, field types)" },
+        hints: { type: "boolean", description: "Include contextual hints (default: true). Set to false for bulk lookups where you only need structural data." },
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
       },
       required: ["nestId"],
@@ -617,6 +620,7 @@ export const toolDefinitions = [
         nestId: { type: "string", description: "Parent nest ID" },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
+        hints: { type: "boolean", description: "Include contextual hints (default: true). Set to false for large result sets or bulk operations." },
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for bulk/index operations." },
         _listTitle: { type: "string", description: "Short descriptive title for the list UI header (e.g., \"Tasks for Website Redesign\", \"API project sub-tasks\"). Include the parent name for context." },
       },
@@ -1657,6 +1661,7 @@ async function _handleToolCall(
         const nest = await client.getNest(parsed.nestId, {
           cleanText: true,
           fieldsMetaData: parsed.fieldsMetaData,
+          hints: parsed.hints !== false,
         });
         return formatResult(nest);
       }
@@ -1667,6 +1672,7 @@ async function _handleToolCall(
           limit: parsed.limit,
           page: parsed.page,
           cleanText: true,
+          hints: parsed.hints !== false,
         });
         return formatResult(completableResponse(compactResponse(children), "children", parsed._listTitle || "Sub-items"));
       }
