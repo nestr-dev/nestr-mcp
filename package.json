@@ -18,8 +18,9 @@
     "build": "tsc",
     "start": "node build/index.js",
     "start:http": "node build/http.js",
-    "dev": "tsx src/index.ts",
-    "dev:http": "tsx src/http.ts",
+    "dev": "tsc && node build/index.js",
+    "dev:http": "tsc && node --env-file-if-exists=.env.local build/http.js",
+    "dev:watch": "tsc -w",
     "inspect": "npx @modelcontextprotocol/inspector node build/index.js",
     "prepublishOnly": "npm run build"
   },
@@ -65,13 +66,14 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.2",
     "express": "^5.0.1",
-    "mcpcat": "^0.1.12",
+    "express-rate-limit": "^8.3.1",
+    "helmet": "^8.1.0",
+    "mcpcat": "^0.1.13",
     "zod": "^3.25.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }
 }
