@@ -483,6 +483,42 @@ Use this when you need to know what values are valid for a field, especially bef
 
 **Example**: A workspace might customize the global \`project\` label to add a \`project.department\` field, and a sub-circle might further customize it to add \`project.sprint\` - both would appear on projects within that sub-circle.
 
+#### Hints (Contextual Signals)
+
+Add \`hints=true\` to \`nestr_get_nest\` or \`nestr_get_nest_children\` to get server-computed contextual signals about each nest. Hints surface actionable information without requiring extra API calls — e.g., unassigned roles, stale projects, or unread comments.
+
+\`\`\`
+GET /nests/{nestId}?hints=true
+GET /nests/{nestId}/children?hints=true
+\`\`\`
+
+Each hint object has:
+- \`type\` — machine-readable identifier (e.g., \`unassigned_role\`, \`stale_project\`, \`unread_comments\`)
+- \`label\` — human/LLM-readable description of the hint
+- \`severity\` — \`info\` (neutral context) | \`suggestion\` (improvement opportunity) | \`warning\` (needs attention) | \`alert\` (urgent)
+- \`count\` — numeric value where applicable (otherwise absent)
+- \`url\` — relative API URL to drill into the related resource (starts with \`/nests/\`)
+- \`lastPost\` — (comments hints only) ISO timestamp of the most recent comment
+- \`readAt\` — (comments hints only, user-scoped auth only) ISO timestamp of when the user last read comments. Compare \`lastPost > readAt\` to detect unread comments.
+
+Example response with hints:
+\`\`\`json
+{
+  "_id": "roleId",
+  "title": "Developer",
+  "hints": [
+    {
+      "type": "unassigned_role",
+      "label": "This role has no users assigned to energize it...",
+      "severity": "warning",
+      "url": "/nests/roleId"
+    }
+  ]
+}
+\`\`\`
+
+Use hints to proactively surface issues to the user — for example, when reviewing a circle's roles, hints can reveal which roles need attention without separate queries.
+
 ## Important Labels
 
 Labels define what type a nest is. The API strips the "circleplus-" prefix, so use labels without it.

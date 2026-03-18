@@ -394,11 +394,12 @@ export class NestrClient {
 
   async getNest(
     nestId: string,
-    options?: { cleanText?: boolean; fieldsMetaData?: boolean }
+    options?: { cleanText?: boolean; fieldsMetaData?: boolean; hints?: boolean }
   ): Promise<(Nest & { fieldsMetaData?: Record<string, unknown> }) | (Nest & { fieldsMetaData?: Record<string, unknown> })[]> {
     const params = new URLSearchParams();
     if (options?.cleanText) params.set("cleanText", "true");
     if (options?.fieldsMetaData) params.set("fieldsMetaData", "true");
+    if (options?.hints) params.set("hints", "true");
 
     const query = params.toString();
     // Comma-separated IDs return an array from the API
@@ -409,12 +410,13 @@ export class NestrClient {
 
   async getNestChildren(
     nestId: string,
-    options?: { limit?: number; page?: number; cleanText?: boolean }
+    options?: { limit?: number; page?: number; cleanText?: boolean; hints?: boolean }
   ): Promise<Nest[]> {
     const params = new URLSearchParams();
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
+    if (options?.hints) params.set("hints", "true");
 
     const query = params.toString();
     return this.fetch<Nest[]>(`/nests/${nestId}/children${query ? `?${query}` : ""}`);
