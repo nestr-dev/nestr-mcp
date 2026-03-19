@@ -284,7 +284,7 @@ Nestr uses different formats for different fields:
 - **\`purpose\`**: The aspirational future state this nest is working towards. **Most important for workspaces, circles, and roles** — it defines the north star and context boundary for the organization, circle, or role. Everything within that container should serve its purpose. For other nests (tasks, projects, etc.), prefer \`description\` or \`fields\` for detailed information — but purpose can be set if it serves the user. Supports HTML.
 - **\`description\`**: The primary field for detailed information about a nest. Use for project details, task context, acceptance criteria, Definition of Done, and any persistent information about the nest. Supports HTML.
 - **\`fields\`**: Structured data defined by labels (e.g., \`fields['project.status']\`, \`fields['metric.frequency']\`). Use for structured, label-specific information.
-- **Comment \`body\`**: HTML supported (same tags as above, including base64 images). Use \`@username\` for mentions. **Use comments for progress updates**, status changes, and conversation — not purpose or description.
+- **Comment \`body\`**: HTML supported (same tags as above, including base64 images). Supports @mentions using the format \`@{userId|email|circle|everyone}\`: \`@{userId}\` mentions by user ID, \`@{email}\` mentions by any email the user is registered with in Nestr, \`@{circle}\` notifies all role fillers in the nearest ancestor circle, \`@{everyone}\` is available in the UI but not yet via the API. **Use comments for progress updates**, status changes, and conversation — not purpose or description.
 - **\`data\`**: Generic key-value store. Also used internally by Nestr and other integrations — **never overwrite or remove existing keys**. When adding your own data, namespace it under \`mcp.\` (e.g., \`{ "mcp.lastSync": "2025-01-01" }\`) to avoid conflicts. Not rendered in UI.
 
 **Where to put information:**
@@ -383,7 +383,7 @@ This cascades through the entire hierarchy, which may be many layers deep. When 
 1. **Start by listing workspaces** to get the workspace ID and check if it has the "anchor-circle" label
 2. **Use search** to find specific items rather than browsing through hierarchies
 3. **Check labels** to understand what type of nest you're working with
-4. **Use @mentions** in comments to notify team members
+4. **Use @mentions** in comments to notify team members: \`@{userId}\`, \`@{email}\`, or \`@{circle}\` for all role fillers
 5. **Respect the hierarchy**: nests live under parents (workspace → circle → role/project → task)
 6. **Maintain skills on roles and circles** for AI knowledge persistence:
    - Before doing work from a role, check for existing skills under that role or its circle — they contain processes, patterns, and domain knowledge from prior sessions
@@ -493,13 +493,42 @@ GET /nests/{nestId}/children?hints=true
 \`\`\`
 
 Each hint object has:
-- \`type\` — machine-readable identifier (e.g., \`unassigned_role\`, \`stale_project\`, \`unread_comments\`)
+- \`type\` — machine-readable identifier (e.g., \`unassigned_role\`, \`stale_project\`, \`comments\`)
 - \`label\` — human/LLM-readable description of the hint
 - \`severity\` — \`info\` (neutral context) | \`suggestion\` (improvement opportunity) | \`warning\` (needs attention) | \`alert\` (urgent)
 - \`count\` — numeric value where applicable (otherwise absent)
-- \`url\` — relative API URL to drill into the related resource (starts with \`/nests/\`)
+- \`toolCall\` — pre-mapped tool call to drill into the hint: \`{ tool: "nestr_search", params: { workspaceId: "...", query: "..." } }\`. Call the specified tool with the given params to investigate.
 - \`lastPost\` — (comments hints only) ISO timestamp of the most recent comment
 - \`readAt\` — (comments hints only, user-scoped auth only) ISO timestamp of when the user last read comments. Compare \`lastPost > readAt\` to detect unread comments.
+
+**Available hint types:**
+
+| Type | Severity | Applies to | Meaning |
+|------|----------|-----------|---------|
+| \`open_work\` | info | all | Count of incomplete child work items |
+| \`comments\` | info | all | Comment count (check \`lastPost > readAt\` for unread) |
+| \`individual_action\` | warning | all | Work not assigned to an organizational role |
+| \`stale_work\` | warning | all | No activity in 30+ days |
+| \`no_purpose\` | warning | role, circle | Missing purpose statement |
+| \`unassigned_role\` | warning | role | No users assigned to energize role |
+| \`no_accountabilities\` | warning | role | Role has no accountabilities defined |
+| \`skills\` | info | role | Count of skill documents |
+| \`no_active_work\` | suggestion | role | Has accountabilities but no active projects |
+| \`overloaded_role\` | warning | role | 5+ active concurrent projects |
+| \`pending_tensions\` | info | role, circle | Count of unresolved tensions |
+| \`election_overdue\` | alert | role | Re-election due date has passed |
+| \`election_due_soon\` | warning | role | Re-election due within 30 days |
+| \`no_facilitator\` | warning | circle | Facilitator role not assigned |
+| \`no_rep_link\` | suggestion | circle | Rep-link role not assigned (non-anchor only) |
+| \`stale_governance\` | suggestion | circle | No governance changes in 6+ months |
+| \`no_strategy\` | suggestion | circle | Circle missing strategy |
+| \`unfilled_roles\` | info | circle | Count of roles with no assigned users |
+| \`project_waiting\` | info | project | Blocked with documented reason |
+| \`project_waiting_no_reason\` | warning | project | Waiting without documented reason |
+| \`project_no_breakdown\` | suggestion | project | Active project with no task breakdown |
+| \`project_no_acceptance_criteria\` | suggestion | project | Missing description/acceptance criteria |
+| \`project_overdue\` | warning | project | Past due date |
+| \`no_proposed_output\` | suggestion | tension | Tension has no proposed output yet |
 
 Example response with hints:
 \`\`\`json
@@ -511,13 +540,19 @@ Example response with hints:
       "type": "unassigned_role",
       "label": "This role has no users assigned to energize it...",
       "severity": "warning",
-      "url": "/nests/roleId"
+      "toolCall": { "tool": "nestr_get_nest", "params": { "nestId": "roleId" } }
+    },
+    {
+      "type": "no_active_work",
+      "label": "Role has accountabilities but no active projects",
+      "severity": "suggestion",
+      "toolCall": { "tool": "nestr_search", "params": { "workspaceId": "wsId", "query": "in:roleId label:project completed:false" } }
     }
   ]
 }
 \`\`\`
 
-Use hints to proactively surface issues to the user — for example, when reviewing a circle's roles, hints can reveal which roles need attention without separate queries.
+Use hints to proactively surface issues to the user — for example, when reviewing a circle's roles, hints can reveal which roles need attention without separate queries. Use the \`toolCall\` to drill into any hint directly.
 
 ## Important Labels
 
@@ -1030,9 +1065,13 @@ An interactive list for displaying and managing completable items (tasks and pro
 
 #### When to Use
 
+**Default to text output. Only use this app when you are certain the results are completable items.**
+
+The decision to use the app must be made AFTER you have fetched the data and confirmed the results contain completable items. Do not decide to use the app before seeing what the data looks like.
+
 Only use the completable list app when **ALL** of these conditions are met:
 1. The user **explicitly asks to see or manage a list** as the primary goal of their request
-2. The results are **completable items** — tasks, projects, todos, or inbox items
+2. You have **already fetched the results** and confirmed they are **completable items** — tasks, projects, todos, or inbox items
 3. The results are **not empty** — there must be at least one item to display
 
 Examples where you SHOULD use the app:
@@ -1043,8 +1082,9 @@ Examples where you SHOULD use the app:
 #### When NOT to Use
 
 Do NOT use the app when:
-- **The results are not completable items.** Roles, circles, metrics, policies, accountabilities, domains, and any other structural nests must NEVER be shown in the completable list app. Always respond in text for these.
+- **The results are not completable items.** Roles, circles, metrics, policies, accountabilities, domains, and any other structural or governance nests must NEVER be shown in the completable list app. Always respond in text for these. A list of roles should be printed as text, never rendered in the app.
 - **The search returns no results.** Never render an empty completable list — just tell the user no items were found.
+- **The results are mixed types.** If a search returns a mix of completable and non-completable items (e.g., roles and tasks), respond in text.
 - **Searching as part of processing a larger request** (e.g., finding roles to determine where work belongs, looking up a project to add a task to it, gathering context for a question). In these cases, just use the search results internally and respond in text.
 - **The user asked a question**, not for a list (e.g., "What's the status of project X?" — answer in text, don't show a list with one item).
 - **You are in the middle of a multi-step workflow** and the search is an intermediate step, not the final output.
@@ -1236,10 +1276,10 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
       },
       instructions: [
         SERVER_INSTRUCTIONS,
+        SERVER_INSTRUCTIONS_REFERENCE,
         DOING_WORK_INSTRUCTIONS,
         TENSION_PROCESSING_INSTRUCTIONS,
         WORKSPACE_SETUP_INSTRUCTIONS,
-        SERVER_INSTRUCTIONS_REFERENCE,
       ].join("\n\n"),
     }
   );

@@ -36,7 +36,7 @@ function completableResponse(
 // Fields to keep for compact list responses (reduces token usage)
 const COMPACT_FIELDS = {
   // Common fields for all nests (includes fields needed by the completable list app)
-  base: ["_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description", "due"],
+  base: ["_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description", "due", "hints"],
   // Additional fields for roles
   role: ["accountabilities", "domains"],
   // Additional fields for users
@@ -80,6 +80,87 @@ function compactResponse<T>(
     }
     return compact;
   });
+}
+
+// URL-to-tool mapping for hint enrichment.
+// The Nestr API returns hints with relative URLs (e.g., "/nests/abc123/children?search=...").
+// This maps those URL patterns to MCP tool calls so models can act on hints directly.
+// Note: patterns are tried in order — more specific patterns must come before catch-alls.
+const HINT_URL_PATTERNS: Array<{
+  pattern: RegExp;
+  tool: string;
+  params: (match: RegExpMatchArray, searchParams: URLSearchParams, workspaceId?: string) => Record<string, string>;
+}> = [
+  // /nests/{id}/children?search=... → nestr_search with in:{id} scoped query
+  {
+    pattern: /^\/nests\/([^/]+)\/children$/,
+    tool: "nestr_search",
+    params: (m, sp, workspaceId) => {
+      const search = sp.get("search") || "";
+      const result: Record<string, string> = { query: `in:${m[1]} ${search}`.trim() };
+      if (workspaceId) result.workspaceId = workspaceId;
+      return result;
+    },
+  },
+  // /nests/{id}/posts → nestr_get_comments
+  { pattern: /^\/nests\/([^/]+)\/posts$/, tool: "nestr_get_comments", params: (m) => ({ nestId: m[1] }) },
+  // /nests/{id}/tensions → nestr_list_tensions
+  { pattern: /^\/nests\/([^/]+)\/tensions$/, tool: "nestr_list_tensions", params: (m) => ({ nestId: m[1] }) },
+  // /nests/{id} → nestr_get_nest (must be last — catches all /nests/{id} patterns)
+  { pattern: /^\/nests\/([^/]+)$/, tool: "nestr_get_nest", params: (m) => ({ nestId: m[1] }) },
+];
+
+interface Hint {
+  type: string;
+  label: string;
+  severity: string;
+  count?: number;
+  url?: string;
+  lastPost?: string;
+  readAt?: string;
+  toolCall?: { tool: string; params: Record<string, string> };
+}
+
+// Enrich hints with tool call parameters so models can act on hints directly.
+// Extracts workspaceId from nest ancestors (last element) for search-based hints.
+function enrichHints<T>(data: T): T {
+  if (!data || typeof data !== "object") return data;
+
+  // Handle arrays (e.g., from getNestChildren)
+  if (Array.isArray(data)) {
+    return data.map((item) => enrichHints(item)) as T;
+  }
+
+  // Handle wrapped responses { data: [...] }
+  if ("data" in data && Array.isArray((data as Record<string, unknown>).data)) {
+    return { ...data, data: enrichHints((data as Record<string, unknown>).data) } as T;
+  }
+
+  // Enrich hints on this nest
+  const record = data as Record<string, unknown>;
+  if (Array.isArray(record.hints)) {
+    // Extract workspaceId from ancestors (last element is always the workspace)
+    const ancestors = record.ancestors as string[] | undefined;
+    const workspaceId = ancestors?.length ? ancestors[ancestors.length - 1] : undefined;
+
+    record.hints = (record.hints as Hint[]).map((hint) => {
+      if (!hint.url) return hint;
+      // Parse URL and query params
+      const [path, queryString] = hint.url.split("?");
+      const searchParams = new URLSearchParams(queryString || "");
+      for (const { pattern, tool, params } of HINT_URL_PATTERNS) {
+        const match = path.match(pattern);
+        if (match) {
+          return { ...hint, toolCall: { tool, params: params(match, searchParams, workspaceId) } };
+        }
+      }
+      // Log unrecognized hint URLs so we can add mappings when the API adds new patterns
+      console.error(`[nestr-mcp] Unrecognized hint URL pattern: "${hint.url}" (hint type: ${hint.type})`);
+      return hint;
+    });
+  }
+
+  return data;
 }
 
 // Tool input schemas using Zod
@@ -163,12 +244,12 @@ export const schemas = {
 
   addComment: z.object({
     nestId: z.string().describe("Nest ID to comment on"),
-    body: z.string().describe("Comment text (supports HTML and @mentions)"),
+    body: z.string().describe("Comment text (supports HTML and @mentions: @{userId}, @{email}, @{circle})"),
   }),
 
   updateComment: z.object({
     commentId: z.string().describe("Comment ID to update"),
-    body: z.string().describe("Updated comment text (supports HTML and @mentions)"),
+    body: z.string().describe("Updated comment text (supports HTML and @mentions: @{userId}, @{email}, @{circle})"),
   }),
 
   deleteComment: z.object({
@@ -580,7 +661,27 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_search",
-    description: "Search for nests within a workspace. Supports operators: label:, parent-label:, assignee: (me/userId/!userId/none), admin:, createdby:, completed:, type:, has: (due/pastdue/children/incompletechildren), depth:, mindepth:, in:, updated-date:, limit:, template:, data.property:, fields.{label}.{property}: to search any value in a nest's fields object (supports partial match, e.g., fields.project.status:Current — use nestr_get_nest with fieldsMetaData=true to discover available fields), label->field:value. Use ! prefix for negation. IMPORTANT: Use completed:false when searching for work to exclude old completed items. Response includes meta.total showing total matching count. IMPORTANT UI RULE: The completable list app must ONLY be used when results contain completable items (tasks, projects, todos) AND there are results to show. When searching for roles, circles, metrics, policies, or any non-completable type, you MUST omit the _listTitle parameter and respond in plain text instead — never render these in the app. Also never render empty results in the app.",
+    description: `Search for nests within a workspace. IMPORTANT: Use completed:false when searching for work to exclude old completed items.
+
+Operators (combine with spaces for AND; commas within operator for OR; ! prefix for negation):
+- label:role / label:!project — Filter/exclude by label
+- parent-label:circle — Parent has this label
+- assignee:me / assignee:userId / assignee:none / assignee:!userId — Filter by assignee
+- completed:false / completed:true / completed:past_7_days / completed:this_month / completed:YYYY-MM-DD_YYYY-MM-DD
+- in:nestId — Scope to descendants of a specific nest
+- depth:1 / depth:2 — Limit depth (1=direct children, 2=children+grandchildren)
+- mindepth:N — Minimum depth from context
+- has:due / has:pastdue / has:children / has:incompletechildren (supports ! prefix)
+- project->status:Current,Future / project->status:!Done — Field value search (label->field:value)
+- fields.label.property:value — Search any field value (supports partial match)
+- data.property:value — Search data properties
+- updated-date:past_7_days / updated-date:!past_30_days — Filter by update recency
+- sort:title / sort:due / sort:updatedAt / sort:createdAt + sort-order:asc/desc
+- createdby:me / admin:me / type:comment / limit:N / template:id
+
+Examples: label:role → all roles | assignee:me completed:false → my active work | in:circleId label:role depth:1 → roles in circle | label:project project->status:Current → active projects | in:roleId label:project → role's projects | has:pastdue completed:false → overdue items | label:accountability customer → accountabilities matching keyword
+
+Response includes meta.total showing total matching count. IMPORTANT UI RULE: The completable list app must ONLY be used when results are confirmed to contain completable items (tasks, projects, todos) AND there are results to show. When searching for roles, circles, metrics, policies, or any non-completable type, you MUST omit the _listTitle parameter and respond in plain text instead. Never render empty results in the app.`,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -593,7 +694,8 @@ export const toolDefinitions = [
       },
       required: ["workspaceId", "query"],
     },
-    _meta: completableListUi,
+    // No _meta: completableListUi — search returns all types of nests (roles, circles, etc.).
+    // The completable list app should only be used when results are confirmed to be completable items.
     ...readOnly,
   },
   {
@@ -626,12 +728,13 @@ export const toolDefinitions = [
       },
       required: ["nestId"],
     },
-    _meta: completableListUi,
+    // No _meta: completableListUi — children can be any type (roles, accountabilities, etc.).
+    // The completable list app should only be used when results are confirmed to be completable items.
     ...readOnly,
   },
   {
     name: "nestr_create_nest",
-    description: "Create a new nest (task, project, role, circle, etc.) under a parent. Set users to assign to people - placing under a role does NOT auto-assign. For roles and circles: include accountabilities and domains arrays to create them inline (requires workspaceId). The API auto-routes to the self-organization endpoint when governance labels are detected with accountabilities/domains.",
+    description: "Create a new nest (task, project, role, circle, etc.) under a parent. Set users to assign to people - placing under a role does NOT auto-assign. For roles and circles: include accountabilities and domains arrays to create them inline (requires workspaceId). The API auto-routes to the self-organization endpoint when governance labels are detected with accountabilities/domains. GOVERNANCE RULE: Only create roles, circles, accountabilities, domains, or policies directly during workspace/circle setup mode (new or sparsely populated workspace). In established workspaces with multiple users, governance changes MUST go through the tension/proposal flow (nestr_create_tension + nestr_add_tension_part) so circle members can consent.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -670,7 +773,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_nest",
-    description: "Update properties of an existing nest. Use parentId to move a nest (e.g., inbox item to a project). For roles and circles: include accountabilities and domains arrays to update them inline (requires workspaceId). For AI knowledge persistence, create skill-labeled nests under roles/circles instead of using data fields.",
+    description: "Update properties of an existing nest. Use parentId to move a nest (e.g., inbox item to a project). For roles and circles: include accountabilities and domains arrays to update them inline (requires workspaceId). For AI knowledge persistence, create skill-labeled nests under roles/circles instead of using data fields. GOVERNANCE RULE: Only modify governance items (roles, circles, accountabilities, domains, policies) directly during setup mode. In established workspaces, governance changes MUST go through tensions (nestr_create_tension + nestr_add_tension_part).",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -726,7 +829,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_delete_nest",
-    description: "Delete a nest (use with caution)",
+    description: "Delete a nest (use with caution). GOVERNANCE RULE: To remove governance items (roles, accountabilities, domains, policies) in established workspaces, use nestr_remove_tension_part to propose deletion through the consent process instead.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -738,12 +841,12 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_comment",
-    description: "Add a comment to a nest. Use @username to mention someone.",
+    description: "Add a comment to a nest. Supports @mentions using the format @{userId|email|circle|everyone}: @{userId} mentions by user ID, @{email} mentions by any email the user is registered with in Nestr, @{circle} notifies all role fillers in the nearest ancestor circle, @{everyone} is available in the UI but not yet via the API.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID to comment on" },
-        body: { type: "string", description: "Comment text (supports HTML and @mentions)" },
+        body: { type: "string", description: "Comment text (supports HTML and @mentions: @{userId}, @{email}, @{circle})" },
       },
       required: ["nestId", "body"],
     },
@@ -751,12 +854,12 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_comment",
-    description: "Update an existing comment's text.",
+    description: "Update an existing comment's text. Supports @mentions using the format @{userId|email|circle|everyone}: @{userId} mentions by user ID, @{email} mentions by any email the user is registered with in Nestr, @{circle} notifies all role fillers in the nearest ancestor circle, @{everyone} is available in the UI but not yet via the API.",
     inputSchema: {
       type: "object" as const,
       properties: {
         commentId: { type: "string", description: "Comment ID to update" },
-        body: { type: "string", description: "Updated comment text (supports HTML and @mentions)" },
+        body: { type: "string", description: "Updated comment text (supports HTML and @mentions: @{userId}, @{email}, @{circle})" },
       },
       required: ["commentId", "body"],
     },
@@ -1663,7 +1766,7 @@ async function _handleToolCall(
           fieldsMetaData: parsed.fieldsMetaData,
           hints: parsed.hints !== false,
         });
-        return formatResult(nest);
+        return formatResult(enrichHints(nest));
       }
 
       case "nestr_get_nest_children": {
@@ -1674,7 +1777,7 @@ async function _handleToolCall(
           cleanText: true,
           hints: parsed.hints !== false,
         });
-        return formatResult(completableResponse(compactResponse(children), "children", parsed._listTitle || "Sub-items"));
+        return formatResult(completableResponse(compactResponse(enrichHints(children)), "children", parsed._listTitle || "Sub-items"));
       }
 
       case "nestr_create_nest": {
