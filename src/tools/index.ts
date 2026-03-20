@@ -163,6 +163,16 @@ function enrichHints<T>(data: T): T {
   return data;
 }
 
+// Coerce JSON-stringified arrays/objects before Zod validation.
+// Some MCP clients send array/object params as JSON strings (e.g., "[\"project\"]" instead of ["project"]).
+const coerceFromJson = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((val) => {
+    if (typeof val === 'string') {
+      try { return JSON.parse(val); } catch { return val; }
+    }
+    return val;
+  }, schema) as z.ZodEffects<T, z.output<T>, unknown>;
+
 // Tool input schemas using Zod
 export const schemas = {
   listWorkspaces: z.object({
@@ -181,7 +191,7 @@ export const schemas = {
     type: z.enum(['personal', 'collaborative']).optional().describe("'personal' for individual use (free forever), 'collaborative' for team use (free trial, then paid). Defaults to 'collaborative'."),
     governance: z.enum(['holacracy', 'sociocracy', 'roles_circles']).optional().describe("Self-organization model. Defaults to 'roles_circles' (generic role-based)."),
     plan: z.enum(['starter', 'pro']).optional().describe("Subscription plan for collaborative workspaces. Defaults to 'pro' (17-day trial)."),
-    apps: z.array(z.enum(['okr', 'feedback', 'insights'])).optional().describe("Apps to enable (e.g., ['okr', 'feedback']). 'insights' requires pro plan."),
+    apps: coerceFromJson(z.array(z.enum(['okr', 'feedback', 'insights']))).optional().describe("Apps to enable (e.g., ['okr', 'feedback']). 'insights' requires pro plan."),
     layout: z.enum(['board', 'list']).optional().describe("Layout style for personal workspaces. 'board' creates kanban columns (Todo, Doing, Done)."),
 
 
@@ -214,10 +224,10 @@ export const schemas = {
     title: z.string().describe("Title of the new nest (plain text, HTML stripped)"),
     purpose: z.string().optional().describe("Purpose — the aspirational future state this nest is working towards. Most important for workspaces, circles, and roles where it defines the north star and context boundary. For other nests, prefer description or fields for detailed information — but purpose can be set if meaningful. Supports HTML."),
     description: z.string().optional().describe("Detailed description — the primary field for storing information about a nest. Use for project details, task context, acceptance criteria, Definition of Done, etc. Supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>."),
-    labels: z.array(z.string()).optional().describe("Label IDs to apply"),
-    users: z.array(z.string()).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
-    accountabilities: z.array(z.string()).optional().describe("Accountability titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes an accountability child nest."),
-    domains: z.array(z.string()).optional().describe("Domain titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes a domain child nest."),
+    labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to apply"),
+    users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
+    accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes an accountability child nest."),
+    domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes a domain child nest."),
     workspaceId: z.string().optional().describe("Workspace ID. Required when creating roles/circles with accountabilities or domains (used to route to the self-organization API)."),
   }),
 
@@ -227,14 +237,14 @@ export const schemas = {
     purpose: z.string().optional().describe("New purpose — the aspirational future state. Most important for workspaces, circles, and roles. For other nests, prefer description or fields — but purpose can be set if meaningful. Supports HTML."),
     description: z.string().optional().describe("New description — the primary field for detailed information. Use for project details, task context, acceptance criteria, etc. Supports HTML."),
     parentId: z.string().optional().describe("New parent ID (move nest to different location, e.g., move inbox item to a role or project)"),
-    labels: z.array(z.string()).optional().describe("Label IDs to set (e.g., ['project'] to convert an item into a project)"),
-    fields: z.record(z.unknown()).optional().describe("Field updates (e.g., { 'project.status': 'Current' })"),
-    users: z.array(z.string()).optional().describe("User IDs to assign"),
-    data: z.record(z.unknown()).optional().describe("Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead."),
+    labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to set (e.g., ['project'] to convert an item into a project)"),
+    fields: coerceFromJson(z.record(z.unknown())).optional().describe("Field updates (e.g., { 'project.status': 'Current' })"),
+    users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign"),
+    data: coerceFromJson(z.record(z.unknown())).optional().describe("Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead."),
     due: z.string().optional().describe("Due date (ISO format). For projects/tasks: deadline. For roles: re-election date. For meetings: start time."),
     completed: z.boolean().optional().describe("Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead."),
-    accountabilities: z.array(z.string()).optional().describe("Accountability titles for roles/circles (replaces existing). Only used when updating a role or circle. Requires workspaceId."),
-    domains: z.array(z.string()).optional().describe("Domain titles for roles/circles (replaces existing). Only used when updating a role or circle. Requires workspaceId."),
+    accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles for roles/circles (replaces existing). Only used when updating a role or circle. Requires workspaceId."),
+    domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles for roles/circles (replaces existing). Only used when updating a role or circle. Requires workspaceId."),
     workspaceId: z.string().optional().describe("Workspace ID. Required when updating accountabilities or domains on roles/circles."),
   }),
 
@@ -359,11 +369,11 @@ export const schemas = {
     title: z.string().optional().describe("Updated title (plain text, HTML stripped)"),
     description: z.string().optional().describe("Updated description (supports HTML)"),
     completed: z.boolean().optional().describe("Mark as completed (processed)"),
-    data: z.record(z.unknown()).optional().describe("Custom data storage"),
+    data: coerceFromJson(z.record(z.unknown())).optional().describe("Custom data storage"),
   }),
 
   reorderInbox: z.object({
-    nestIds: z.array(z.string()).describe("Array of inbox item IDs in the desired order"),
+    nestIds: coerceFromJson(z.array(z.string())).describe("Array of inbox item IDs in the desired order"),
   }),
 
   reorderInboxItem: z.object({
@@ -384,11 +394,11 @@ export const schemas = {
   }),
 
   addToDailyPlan: z.object({
-    nestIds: z.array(z.string()).describe("Array of nest IDs to add to the daily plan"),
+    nestIds: coerceFromJson(z.array(z.string())).describe("Array of nest IDs to add to the daily plan"),
   }),
 
   removeFromDailyPlan: z.object({
-    nestIds: z.array(z.string()).describe("Array of nest IDs to remove from the daily plan"),
+    nestIds: coerceFromJson(z.array(z.string())).describe("Array of nest IDs to remove from the daily plan"),
   }),
 
   // Personal labels (require OAuth token)
@@ -410,7 +420,7 @@ export const schemas = {
 
   bulkReorder: z.object({
     workspaceId: z.string().describe("Workspace ID"),
-    nestIds: z.array(z.string()).describe("Array of nest IDs in the desired order"),
+    nestIds: coerceFromJson(z.array(z.string())).describe("Array of nest IDs in the desired order"),
   }),
 
   // Daily plan (requires OAuth token)
@@ -486,14 +496,14 @@ export const schemas = {
     tensionId: z.string().describe("Tension ID"),
     _id: z.string().optional().describe("ID of an existing governance item to change or remove. Omit to propose a new item."),
     title: z.string().optional().describe("Title for the governance item"),
-    labels: z.array(z.string()).optional().describe("Labels defining the item type (e.g., ['role'], ['circle'], ['policy'], ['accountability'], ['domain'])"),
+    labels: coerceFromJson(z.array(z.string())).optional().describe("Labels defining the item type (e.g., ['role'], ['circle'], ['policy'], ['accountability'], ['domain'])"),
     purpose: z.string().optional().describe("Purpose — aspirational future state. Most important for roles/circles where it defines the north star. Supports HTML."),
     description: z.string().optional().describe("Description — detailed information about the item. Supports HTML."),
     parentId: z.string().optional().describe("Parent ID — use to move/restructure items (e.g., move role to different circle)"),
-    users: z.array(z.string()).optional().describe("User IDs to assign (e.g., for role elections: assign the elected user to the role)"),
+    users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign (e.g., for role elections: assign the elected user to the role)"),
     due: z.string().optional().describe("Due date / re-election date (ISO format)"),
-    accountabilities: z.array(z.string()).optional().describe("Accountability titles to set on a role (replaces all — use children endpoint for individual management)"),
-    domains: z.array(z.string()).optional().describe("Domain titles to set on a role (replaces all — use children endpoint for individual management)"),
+    accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles to set on a role (replaces all — use children endpoint for individual management)"),
+    domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles to set on a role (replaces all — use children endpoint for individual management)"),
   }),
 
   modifyTensionPart: z.object({
@@ -503,12 +513,12 @@ export const schemas = {
     title: z.string().optional().describe("Updated title"),
     purpose: z.string().optional().describe("Updated purpose — aspirational future state. Most important for roles/circles. Supports HTML."),
     description: z.string().optional().describe("Updated description — detailed information. Supports HTML."),
-    labels: z.array(z.string()).optional().describe("Updated labels"),
+    labels: coerceFromJson(z.array(z.string())).optional().describe("Updated labels"),
     parentId: z.string().optional().describe("Updated parent ID"),
-    users: z.array(z.string()).optional().describe("Updated user assignments"),
+    users: coerceFromJson(z.array(z.string())).optional().describe("Updated user assignments"),
     due: z.string().optional().describe("Updated due date (ISO format)"),
-    accountabilities: z.array(z.string()).optional().describe("Updated accountabilities (replaces all — use children endpoint for individual management)"),
-    domains: z.array(z.string()).optional().describe("Updated domains (replaces all — use children endpoint for individual management)"),
+    accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Updated accountabilities (replaces all — use children endpoint for individual management)"),
+    domains: coerceFromJson(z.array(z.string())).optional().describe("Updated domains (replaces all — use children endpoint for individual management)"),
   }),
 
   removeTensionPart: z.object({
@@ -528,7 +538,7 @@ export const schemas = {
     tensionId: z.string().describe("Tension ID"),
     partId: z.string().describe("Part ID"),
     title: z.string().describe("Title for the new accountability or domain"),
-    labels: z.array(z.string()).describe("Labels defining the type: ['accountability'] or ['domain']"),
+    labels: coerceFromJson(z.array(z.string())).describe("Labels defining the type: ['accountability'] or ['domain']"),
   }),
 
   updateTensionPartChild: z.object({
