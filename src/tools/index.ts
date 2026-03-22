@@ -355,7 +355,7 @@ export const schemas = {
 
   // Inbox tools (require OAuth token)
   listInbox: z.object({
-    completedAfter: z.string().optional().describe("Include completed items from this date (ISO format). If omitted, only non-completed items are returned."),
+    completedAfter: z.string().optional().describe("Include completed items from this date (ISO format). If omitted, only non-completed items are returned. For reordering, this default is usually sufficient — nestr_reorder_inbox only requires the IDs of items you want to reposition."),
   }),
 
   createInboxItem: z.object({
@@ -1104,7 +1104,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
     inputSchema: {
       type: "object" as const,
       properties: {
-        completedAfter: { type: "string", description: "Include completed items from this date (ISO format). If omitted, only non-completed items are returned." },
+        completedAfter: { type: "string", description: "Include completed items from this date (ISO format). If omitted, only non-completed items are returned. For reordering, this default is usually sufficient — nestr_reorder_inbox only requires the IDs of items you want to reposition." },
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
       },
     },
@@ -1155,7 +1155,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_reorder_inbox",
-    description: "Reorder inbox items by providing an array of item IDs in the desired order. You can provide a subset of items - they will be placed at the top in the given order, with remaining items unchanged below. Requires OAuth token.",
+    description: "Reorder inbox items by providing an array of item IDs in the desired order. You can provide a subset of items — they will be placed at the top in the given order, while all other items retain their existing order below them. To move non-completed items to the top, simply pass their IDs — there is no need to fetch completed items. Requires OAuth token.",
     inputSchema: {
       type: "object" as const,
       properties: {
