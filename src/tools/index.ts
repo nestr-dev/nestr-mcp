@@ -145,8 +145,11 @@ function enrichHints<T>(data: T): T {
 
     record.hints = (record.hints as Hint[]).map((hint) => {
       if (!hint.url) return hint;
-      // Parse URL and query params
-      const [path, queryString] = hint.url.split("?");
+      // Parse URL and query params — strip absolute URL prefix if present
+      let rawUrl = hint.url;
+      const apiPrefixMatch = rawUrl.match(/^https?:\/\/[^/]+\/api(\/.*)/);
+      if (apiPrefixMatch) rawUrl = apiPrefixMatch[1];
+      const [path, queryString] = rawUrl.split("?");
       const searchParams = new URLSearchParams(queryString || "");
       for (const { pattern, tool, params } of HINT_URL_PATTERNS) {
         const match = path.match(pattern);
