@@ -939,6 +939,31 @@ interface SessionData {
 const sessions: Record<string, SessionData> = {};
 
 /**
+ * Cache resolved identities by auth token to avoid repeated /users/me calls.
+ * Cursor-vscode reconnects every ~60s, and workspace API keys sent as Bearer tokens
+ * would otherwise 403 on /users/me every time. This cache ensures we resolve once
+ * and reuse across sessions with the same token.
+ * TTL: 10 minutes — long enough to survive reconnection storms, short enough to
+ * pick up token changes (e.g., after OAuth refresh).
+ */
+const identityCache = new Map<string, { userId: string; userName?: string; expiresAt: number }>();
+const IDENTITY_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+function getCachedIdentity(token: string): { userId: string; userName?: string } | undefined {
+  const entry = identityCache.get(token);
+  if (!entry) return undefined;
+  if (Date.now() > entry.expiresAt) {
+    identityCache.delete(token);
+    return undefined;
+  }
+  return { userId: entry.userId, userName: entry.userName };
+}
+
+function cacheIdentity(token: string, userId: string, userName?: string) {
+  identityCache.set(token, { userId, userName, expiresAt: Date.now() + IDENTITY_CACHE_TTL_MS });
+}
+
+/**
  * Extract authentication token from request headers
  *
  * Supports two authentication methods:
@@ -1057,10 +1082,14 @@ app.post("/mcp", async (req: Request, res: Response) => {
     let userId: string | undefined;
     let userName: string | undefined;
 
-    if (isApiKey) {
-      // For API keys, resolve identity eagerly by fetching the workspace name.
+    // Check cross-session identity cache first (survives cursor-vscode reconnections)
+    const cached = getCachedIdentity(authToken);
+    if (cached) {
+      userId = cached.userId;
+      userName = cached.userName;
+    } else if (isApiKey) {
+      // For API keys, resolve identity by fetching the workspace name.
       // API keys can't call /users/me, so we identify by workspace instead.
-      // This avoids the MCPCat identify callback needing to make API calls.
       try {
         const tempClient = new NestrClient({ apiKey: authToken });
         const result = await tempClient.listWorkspaces({ limit: 1 });
@@ -1069,21 +1098,50 @@ app.post("/mcp", async (req: Request, res: Response) => {
           const ws = workspaces[0];
           userId = ws._id;
           userName = `${ws.title} (API key)`;
+          cacheIdentity(authToken, ws._id, userName);
         }
       } catch (e) {
         console.log('[Identity] API key workspace lookup failed:', e instanceof Error ? e.message : e);
       }
     } else {
       // For OAuth/Bearer tokens, check if we have a stored session (legacy browser flow).
-      // In the standard MCP OAuth flow, the client gets tokens from /oauth/token
-      // and manages refresh itself — we won't have a stored session, and that's fine.
-      // We only use the stored session for analytics (userId) and server-side refresh.
       try {
         const storedSession = getSession(authToken);
-        if (storedSession) {
+        if (storedSession?.userId) {
           userId = storedSession.userId;
         }
       } catch (e) { console.error("[GA4] Analytics lookup error:", e); }
+
+      // If no stored session, resolve eagerly. This handles both standard MCP OAuth
+      // tokens and workspace API keys sent as Bearer tokens (common with cursor).
+      if (!userId) {
+        try {
+          const tempClient = new NestrClient({ apiKey: authToken, baseUrl: process.env.NESTR_API_BASE });
+          const currentUser = await tempClient.getCurrentUser();
+          const user = (currentUser as any)?.data || currentUser;
+          if (user?._id) {
+            userId = user._id;
+            userName = user.profile?.fullName || user._id;
+            cacheIdentity(authToken, user._id, userName);
+          }
+        } catch {
+          // getCurrentUser failed — likely a workspace API key sent as Bearer token.
+          // Fall back to workspace name, same as the API key path.
+          try {
+            const tempClient = new NestrClient({ apiKey: authToken, baseUrl: process.env.NESTR_API_BASE });
+            const result = await tempClient.listWorkspaces({ limit: 1 });
+            const workspaces = Array.isArray(result) ? result : (result as any)?.data || [];
+            if (Array.isArray(workspaces) && workspaces.length > 0) {
+              const ws = workspaces[0];
+              userId = ws._id;
+              userName = `${ws.title} (Bearer key)`;
+              cacheIdentity(authToken, ws._id, userName);
+            }
+          } catch (wsErr) {
+            console.log('[Identity] Bearer token identity resolution failed:', wsErr instanceof Error ? wsErr.message : wsErr);
+          }
+        }
+      }
     }
 
     // Create analytics context for this MCP session (wrapped to never break MCP)
