@@ -935,8 +935,41 @@ interface SessionData {
   analytics?: AnalyticsContext; // GA4 analytics context
   toolCallCount?: number; // Count of tool calls for session end tracking
   sessionStartTime?: number; // Session start time for duration tracking
+  lastActivityAt: number; // Timestamp of last request (for session coalescing)
+  initCallCount: number; // Number of initialize requests coalesced into this session
 }
 const sessions: Record<string, SessionData> = {};
+
+/**
+ * Session coalescing for poorly-behaved clients that create a new MCP connection per tool call.
+ * If an initialize request arrives with the same auth token + client name as a recent session
+ * (within 10 minutes, fewer than 5 original init requests), reuse the existing session.
+ * The initCallCount limit prevents unbounded coalescing — after 5 inits it's either a
+ * legitimately new session or a client that needs fixing.
+ */
+const SESSION_COALESCE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+const SESSION_COALESCE_MAX_INITS = 5;
+
+function findCoalescableSession(authToken: string, mcpClient: string | undefined): { sessionId: string; session: SessionData } | undefined {
+  const now = Date.now();
+  let bestMatch: { sessionId: string; session: SessionData; lastActivity: number } | undefined;
+
+  for (const [sid, session] of Object.entries(sessions)) {
+    if (
+      session.authToken === authToken &&
+      session.mcpClient === mcpClient &&
+      session.initCallCount < SESSION_COALESCE_MAX_INITS &&
+      (now - session.lastActivityAt) < SESSION_COALESCE_WINDOW_MS
+    ) {
+      // Pick the most recently active session if multiple match
+      if (!bestMatch || session.lastActivityAt > bestMatch.lastActivity) {
+        bestMatch = { sessionId: sid, session, lastActivity: session.lastActivityAt };
+      }
+    }
+  }
+
+  return bestMatch ? { sessionId: bestMatch.sessionId, session: bestMatch.session } : undefined;
+}
 
 /**
  * Cache resolved identities by auth token to avoid repeated /users/me calls.
@@ -1027,6 +1060,7 @@ app.post("/mcp", async (req: Request, res: Response) => {
     // Check for existing session
     if (sessionId && sessions[sessionId]) {
       const session = sessions[sessionId];
+      session.lastActivityAt = Date.now();
       await session.transport.handleRequest(req, res, req.body);
       return;
     }
@@ -1061,6 +1095,9 @@ app.post("/mcp", async (req: Request, res: Response) => {
       return;
     }
 
+    // Extract MCP client info early (needed for coalescing check)
+    const mcpClientName = req.body?.params?.clientInfo?.name as string | undefined;
+
     if (!isInitializeRequest(req.body)) {
       res.status(400).json({
         jsonrpc: "2.0",
@@ -1073,8 +1110,18 @@ app.post("/mcp", async (req: Request, res: Response) => {
       return;
     }
 
-    // Extract MCP client info from initialize request for tracking
-    const mcpClientName = req.body?.params?.clientInfo?.name as string | undefined;
+    // Session coalescing: if a client sends repeated initialize requests with the same
+    // auth token + client name (common with agent frameworks that create a new connection
+    // per tool call), reuse the existing session instead of creating a new one.
+    const coalescable = findCoalescableSession(authToken, mcpClientName);
+    if (coalescable) {
+      const { sessionId: existingSid, session: existingSession } = coalescable;
+      existingSession.initCallCount++;
+      existingSession.lastActivityAt = Date.now();
+      console.log(`Session coalesced: reusing ${existingSid} for ${mcpClientName || "unknown client"} (init #${existingSession.initCallCount})`);
+      await existingSession.transport.handleRequest(req, res, req.body);
+      return;
+    }
     if (mcpClientName) {
       console.log(`MCP client: ${mcpClientName}`);
     }
@@ -1226,6 +1273,8 @@ app.post("/mcp", async (req: Request, res: Response) => {
           analytics: analyticsCtx,
           toolCallCount: 0,
           sessionStartTime,
+          lastActivityAt: Date.now(),
+          initCallCount: 1, // This is the first (original) init
         };
 
         // Set ref for tool call tracking callback
