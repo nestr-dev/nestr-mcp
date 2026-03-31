@@ -269,6 +269,13 @@ export function getClient(clientId: string): RegisteredClient | undefined {
 }
 
 /**
+ * Get the total number of registered clients
+ */
+export function getClientCount(): number {
+  return loadClients().size;
+}
+
+/**
  * Check if a client ID exists
  */
 export function clientExists(clientId: string): boolean {

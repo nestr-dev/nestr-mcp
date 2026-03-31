@@ -51,6 +51,7 @@ import {
 import {
   registerClient,
   getClient,
+  getClientCount,
   validateRedirectUri,
   storePkceForCode,
   consumePkceForCode,
@@ -214,6 +215,16 @@ app.post("/oauth/register", registerLimiter, express.json(), (req: Request, res:
       token_endpoint_auth_method,
       scope,
     } = req.body;
+
+    // Limit total registered clients to prevent unbounded growth
+    const MAX_REGISTERED_CLIENTS = 1000;
+    if (getClientCount() >= MAX_REGISTERED_CLIENTS) {
+      res.status(503).json({
+        error: "server_error",
+        error_description: "Maximum number of registered clients reached",
+      });
+      return;
+    }
 
     // Validate required fields
     if (!redirect_uris || !Array.isArray(redirect_uris) || redirect_uris.length === 0) {
@@ -662,10 +673,18 @@ app.post("/oauth/device", oauthLimiter, express.urlencoded({ extended: true }), 
   try {
     const { client_id, scope, client_consumer } = req.body;
 
-    // Validate client if it's a dynamically registered client
-    // Also capture client_name to use as fallback for client_consumer
+    // Require client_id
+    if (!client_id) {
+      res.status(400).json({
+        error: "invalid_request",
+        error_description: "Missing required parameter: client_id",
+      });
+      return;
+    }
+
+    // Validate client_id: must be a registered dynamic client or the server's own client
     let registeredClientName: string | undefined;
-    if (client_id && client_id.startsWith("mcp-")) {
+    if (client_id.startsWith("mcp-")) {
       const client = getClient(client_id);
       if (!client) {
         res.status(401).json({
@@ -675,6 +694,12 @@ app.post("/oauth/device", oauthLimiter, express.urlencoded({ extended: true }), 
         return;
       }
       registeredClientName = client.client_name;
+    } else if (client_id !== config.clientId) {
+      res.status(401).json({
+        error: "invalid_client",
+        error_description: "Unknown client",
+      });
+      return;
     }
 
     // Use client_consumer from request if provided, otherwise fall back to client_name
@@ -778,16 +803,12 @@ app.post("/oauth/token", tokenLimiter, express.urlencoded({ extended: true }), a
           });
           return;
         }
+      }
 
-        const pkceData = consumePkceForCode(code);
-        if (!pkceData) {
-          res.status(400).json({
-            error: "invalid_grant",
-            error_description: "Authorization code expired or already used",
-          });
-          return;
-        }
-
+      // PKCE verification for all authorization_code grants
+      const pkceData = consumePkceForCode(code);
+      if (pkceData) {
+        // PKCE was stored for this code - verify it
         if (!code_verifier) {
           res.status(400).json({
             error: "invalid_request",
