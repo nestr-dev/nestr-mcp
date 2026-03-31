@@ -825,6 +825,9 @@ app.post("/oauth/token", tokenLimiter, express.urlencoded({ extended: true }), a
           });
           return;
         }
+      } else if (client_id?.startsWith("mcp-")) {
+        // PKCE data missing for an MCP client — code may have been retried or expired
+        console.warn(`PKCE data missing for mcp- client ${client_id} — code may have been retried`);
       }
 
       // Build the request to Nestr's token endpoint (without PKCE - Nestr doesn't support it)
