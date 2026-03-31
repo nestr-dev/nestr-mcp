@@ -54,6 +54,7 @@ import {
   validateRedirectUri,
   storePkceForCode,
   consumePkceForCode,
+  constantTimeCompare,
   type RegisteredClient,
   getSession,
 } from "./oauth/storage.js";
@@ -290,9 +291,12 @@ app.post("/oauth/register", registerLimiter, express.json(), (req: Request, res:
  * Helper to get the server's base URL from the request
  */
 function getServerBaseUrl(req: Request): string {
-  const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-  const host = req.headers["x-forwarded-host"] || req.get("host");
-  return `${protocol}://${host}`;
+  const protocol = req.protocol;
+  const host = req.hostname;
+  // Include port if non-standard
+  const port = req.get("host")?.split(":")[1];
+  const portSuffix = port && !["80", "443"].includes(port) ? `:${port}` : "";
+  return `${protocol}://${host}${portSuffix}`;
 }
 
 /**
@@ -766,8 +770,8 @@ app.post("/oauth/token", tokenLimiter, express.urlencoded({ extended: true }), a
           return;
         }
 
-        // Validate client secret
-        if (client.client_secret && client.client_secret !== client_secret) {
+        // Validate client secret (constant-time comparison to prevent timing attacks)
+        if (client.client_secret && !constantTimeCompare(client.client_secret, client_secret || "")) {
           res.status(401).json({
             error: "invalid_client",
             error_description: "Invalid client credentials",

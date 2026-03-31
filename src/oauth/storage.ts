@@ -8,7 +8,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
+import { randomBytes, createCipheriv, createDecipheriv, timingSafeEqual } from "node:crypto";
 
 // Storage directory - use /data in production (mounted volume), fallback to local .data
 const STORAGE_DIR = process.env.OAUTH_STORAGE_DIR ||
@@ -81,6 +81,21 @@ function decrypt(encryptedData: string, key: Buffer): string {
   let decrypted = decipher.update(data, "base64", "utf8");
   decrypted += decipher.final("utf8");
   return decrypted;
+}
+
+/**
+ * Constant-time string comparison to prevent timing attacks on secrets.
+ * Uses crypto.timingSafeEqual under the hood.
+ */
+export function constantTimeCompare(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+
+  if (bufA.length !== bufB.length) {
+    return false;
+  }
+
+  return timingSafeEqual(bufA, bufB);
 }
 
 /**
@@ -274,8 +289,8 @@ export function validateClientCredentials(
   // If client has no secret (public client), accept
   if (!client.client_secret) return true;
 
-  // Otherwise validate secret
-  return client.client_secret === clientSecret;
+  // Otherwise validate secret using constant-time comparison
+  return constantTimeCompare(client.client_secret, clientSecret || "");
 }
 
 /**
@@ -293,13 +308,20 @@ export function validateRedirectUri(
     if (uri === redirectUri) return true;
 
     // Handle localhost wildcards (common for CLI tools)
+    // Per RFC 8252, localhost redirects should use http: and we treat
+    // localhost and 127.0.0.1 as equivalent.
     try {
       const registered = new URL(uri);
       const requested = new URL(redirectUri);
 
+      const isLocal = (hostname: string) =>
+        hostname === "localhost" || hostname === "127.0.0.1";
+
       if (
-        registered.hostname === "localhost" &&
-        requested.hostname === "localhost" &&
+        isLocal(registered.hostname) &&
+        isLocal(requested.hostname) &&
+        registered.protocol === "http:" &&
+        requested.protocol === "http:" &&
         registered.pathname === requested.pathname
       ) {
         return true;
