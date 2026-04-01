@@ -101,10 +101,13 @@ class RedisStore implements OAuthStore {
 
   async registerClient(client: RegisteredClient): Promise<void> {
     const key = PREFIX.client + client.client_id;
-    const pipeline = this.redis.pipeline();
-    pipeline.set(key, this.serialize(client), "EX", CLIENT_TTL);
-    pipeline.incr(PREFIX.clientCount);
-    await pipeline.exec();
+    // Only increment the counter for genuinely new clients (SET NX returns 1 if key didn't exist).
+    // Without this, the counter drifts upward as clients re-register and eventually blocks
+    // all registrations when it hits MAX_REGISTERED_CLIENTS.
+    const isNew = await this.redis.set(key, this.serialize(client), "EX", CLIENT_TTL, "GET");
+    if (isNew === null) {
+      await this.redis.incr(PREFIX.clientCount);
+    }
     console.log(`Registered OAuth client: ${client.client_id}`);
   }
 
@@ -178,15 +181,15 @@ class RedisStore implements OAuthStore {
   }
 
   async updateSession(sessionId: string, session: StoredOAuthSession): Promise<void> {
-    const exists = await this.redis.exists(PREFIX.session + sessionId);
-    if (exists) {
-      await this.redis.set(
-        PREFIX.session + sessionId,
-        this.serialize(session),
-        "EX",
-        this.sessionTtl(session)
-      );
-    }
+    // Unconditional SET — the EXISTS + SET pattern has a TOCTOU race across pods.
+    // If the session was deleted between the two calls, this would silently re-create it.
+    // Matching FileStore behavior: just overwrite.
+    await this.redis.set(
+      PREFIX.session + sessionId,
+      this.serialize(session),
+      "EX",
+      this.sessionTtl(session)
+    );
   }
 
   async removeSession(sessionId: string): Promise<void> {
