@@ -983,6 +983,19 @@ let shuttingDown = false;
  */
 const SESSION_COALESCE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const SESSION_COALESCE_MAX_INITS = 5;
+const SESSION_STALE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes without activity
+
+// Periodically clean up dead sessions (closed SSE + stale)
+setInterval(() => {
+  const now = Date.now();
+  for (const [sid, session] of Object.entries(sessions)) {
+    const sseAlive = session.sseResponse && !session.sseResponse.writableEnded;
+    const stale = (now - session.lastActivityAt) > SESSION_STALE_TIMEOUT_MS;
+    if (!sseAlive && stale) {
+      delete sessions[sid];
+    }
+  }
+}, 60000);
 
 function findCoalescableSession(authToken: string, mcpClient: string | undefined): { sessionId: string; session: SessionData } | undefined {
   const now = Date.now();
@@ -1074,13 +1087,6 @@ app.post("/mcp", async (req: Request, res: Response) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   const authToken = getAuthToken(req);
   const isApiKey = !!req.headers["x-nestr-api-key"];
-
-  // DEBUG: Log reconnect attempts to diagnose "failed" state on Claude Code restart
-  if (!sessionId && authToken) {
-    const method = req.body?.method;
-    const isInit = method === "initialize";
-    console.log(`POST /mcp: no session ID, hasAuth=true, method=${method}, isInit=${isInit}, accept=${req.headers.accept?.substring(0, 60)}`);
-  }
 
   // Strip sensitive headers so they don't leak into MCP SDK's extra.requestInfo
   // (which MCPCat and other middleware can capture)
