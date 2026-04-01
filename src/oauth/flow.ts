@@ -14,19 +14,14 @@
 import { randomBytes, createHash } from "node:crypto";
 import { getOAuthConfig } from "./config.js";
 import {
-  storePendingAuth as storePendingAuthToDisk,
-  consumePendingAuth as consumePendingAuthFromDisk,
-  storeSession,
-  getSession,
-  updateSession,
-  removeSession,
+  getStore,
   type PendingAuthWithPKCE,
   type StoredOAuthSession,
-} from "./storage.js";
+} from "./store.js";
 
 /**
  * Pending OAuth authorization request
- * @deprecated Use PendingAuthWithPKCE from storage.ts
+ * @deprecated Use PendingAuthWithPKCE from store.ts
  */
 export interface PendingAuth {
   state: string;
@@ -49,7 +44,7 @@ export interface TokenResponse {
 
 /**
  * Stored OAuth session after successful authentication
- * @deprecated Use StoredOAuthSession from storage.ts
+ * @deprecated Use StoredOAuthSession from store.ts
  */
 export type OAuthSession = StoredOAuthSession;
 
@@ -106,18 +101,19 @@ export interface AuthorizationRequestParams {
  * Supports PKCE: We store the code_challenge and verify it when the client
  * exchanges the code. Nestr doesn't support PKCE, so we handle it in our proxy.
  */
-export function createAuthorizationRequest(
+export async function createAuthorizationRequest(
   redirectUri: string,
   finalRedirect?: string
-): { authUrl: string; state: string };
-export function createAuthorizationRequest(
+): Promise<{ authUrl: string; state: string }>;
+export async function createAuthorizationRequest(
   params: AuthorizationRequestParams
-): { authUrl: string; state: string };
-export function createAuthorizationRequest(
+): Promise<{ authUrl: string; state: string }>;
+export async function createAuthorizationRequest(
   redirectUriOrParams: string | AuthorizationRequestParams,
   finalRedirect?: string
-): { authUrl: string; state: string } {
+): Promise<{ authUrl: string; state: string }> {
   const config = getOAuthConfig();
+  const store = getStore();
 
   // Handle legacy signature (redirectUri, finalRedirect)
   if (typeof redirectUriOrParams === "string") {
@@ -129,8 +125,8 @@ export function createAuthorizationRequest(
 
     const state = generateState();
 
-    // Store pending auth with disk persistence
-    storePendingAuthToDisk({
+    // Store pending auth
+    await store.storePendingAuth({
       state,
       redirectUri: redirectUriOrParams,
       clientId: config.clientId,
@@ -156,7 +152,7 @@ export function createAuthorizationRequest(
 
   // Store pending auth with PKCE info
   // redirectUri here is the MCP CLIENT's redirect_uri (where we redirect with the code)
-  storePendingAuthToDisk({
+  await store.storePendingAuth({
     state,
     redirectUri: params.redirectUri, // MCP client's callback URL
     clientId: params.clientId,
@@ -196,8 +192,8 @@ export function createAuthorizationRequest(
 /**
  * Get and remove a pending auth request
  */
-export function getPendingAuth(state: string): PendingAuthWithPKCE | undefined {
-  return consumePendingAuthFromDisk(state);
+export async function getPendingAuth(state: string): Promise<PendingAuthWithPKCE | undefined> {
+  return getStore().consumePendingAuth(state);
 }
 
 /**
@@ -303,17 +299,17 @@ export async function refreshAccessToken(
 }
 
 /**
- * Store an OAuth session (persisted to disk)
+ * Store an OAuth session (persisted to store)
  * @param sessionId - The session identifier (used as key for token lookup)
  * @param tokens - The OAuth token response from Nestr
  * @param userId - Optional Nestr user ID for analytics (GA4 user_id)
  */
-export function storeOAuthSession(
+export async function storeOAuthSession(
   sessionId: string,
   tokens: TokenResponse,
   userId?: string
-): void {
-  storeSession(sessionId, {
+): Promise<void> {
+  await getStore().storeSession(sessionId, {
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token,
     expiresAt: Date.now() + tokens.expires_in * 1000,
@@ -323,12 +319,13 @@ export function storeOAuthSession(
 }
 
 /**
- * Get an OAuth session, refreshing if needed (loaded from disk)
+ * Get an OAuth session, refreshing if needed
  */
 export async function getOAuthSession(
   sessionId: string
 ): Promise<OAuthSession | undefined> {
-  const session = getSession(sessionId);
+  const store = getStore();
+  const session = await store.getSession(sessionId);
 
   if (!session) {
     return undefined;
@@ -340,16 +337,16 @@ export async function getOAuthSession(
     if (session.refreshToken) {
       try {
         const tokens = await refreshAccessToken(session.refreshToken);
-        storeOAuthSession(sessionId, tokens);
-        return getSession(sessionId);
+        await storeOAuthSession(sessionId, tokens);
+        return await store.getSession(sessionId);
       } catch {
         // Refresh failed, remove session
-        removeSession(sessionId);
+        await store.removeSession(sessionId);
         return undefined;
       }
     } else {
       // No refresh token, session expired
-      removeSession(sessionId);
+      await store.removeSession(sessionId);
       return undefined;
     }
   }
@@ -358,9 +355,8 @@ export async function getOAuthSession(
 }
 
 /**
- * Remove an OAuth session (removes from disk)
+ * Remove an OAuth session
  */
-export function removeOAuthSession(sessionId: string): void {
-  removeSession(sessionId);
+export async function removeOAuthSession(sessionId: string): Promise<void> {
+  await getStore().removeSession(sessionId);
 }
-

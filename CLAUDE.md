@@ -49,6 +49,7 @@ npm run start:http
 | `GTM_ID` or `NESTR_GTM_ID` | Google Tag Manager container ID (e.g., `GTM-XXXXXXX`) | No (HTTP only) |
 | `MCPCAT_PROJECT_ID` | MCPcat project ID for analytics (from [mcpcat.io](https://mcpcat.io)) | No |
 | `MCPCAT_ENABLE_REPLAY` | Enable session replay in MCPcat (default: `false`, only metadata tracked) | No |
+| `REDIS_URL` | Redis connection URL (e.g., `redis://localhost:6379`). Enables shared OAuth state for multi-pod deployments. If not set, file-based storage is used. | No (HTTP only) |
 | `OAUTH_ENCRYPTION_KEY` | 32-byte base64-encoded key for encrypting OAuth sessions at rest. If not set, sessions are stored in plaintext. | No |
 | `GA4_MEASUREMENT_ID` | GA4 Measurement ID (e.g., `G-XXXXXXXXXX`) for server-side analytics | No |
 | `GA4_API_SECRET` | GA4 Measurement Protocol API secret (from GA4 Admin → Data Streams) | No |
