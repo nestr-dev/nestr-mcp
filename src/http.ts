@@ -1073,6 +1073,13 @@ app.post("/mcp", async (req: Request, res: Response) => {
   const authToken = getAuthToken(req);
   const isApiKey = !!req.headers["x-nestr-api-key"];
 
+  // DEBUG: Log reconnect attempts to diagnose "failed" state on Claude Code restart
+  if (!sessionId && authToken) {
+    const method = req.body?.method;
+    const isInit = method === "initialize";
+    console.log(`POST /mcp: no session ID, hasAuth=true, method=${method}, isInit=${isInit}, accept=${req.headers.accept?.substring(0, 60)}`);
+  }
+
   // Strip sensitive headers so they don't leak into MCP SDK's extra.requestInfo
   // (which MCPCat and other middleware can capture)
   delete req.headers.authorization;
