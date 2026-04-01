@@ -137,8 +137,12 @@ app.use(express.static(webDir, { index: false }));
 // Redirect /index.html to / for consistent GTM injection
 app.get("/index.html", (_req, res) => res.redirect("/"));
 
-// Health check
+// Health check (returns 503 during shutdown so k8s stops routing traffic)
 app.get("/health", (_req, res) => {
+  if (shuttingDown) {
+    res.status(503).json({ status: "shutting_down", service: "nestr-mcp" });
+    return;
+  }
   res.json({ status: "ok", service: "nestr-mcp" });
 });
 
@@ -967,6 +971,7 @@ interface SessionData {
   initCallCount: number; // Number of initialize requests coalesced into this session
 }
 const sessions: Record<string, SessionData> = {};
+let shuttingDown = false;
 
 /**
  * Session coalescing for poorly-behaved clients that create a new MCP connection per tool call.
@@ -1103,6 +1108,16 @@ app.post("/mcp", async (req: Request, res: Response) => {
           code: -32001,
           message: "Session not found",
         },
+        id: req.body?.id ?? null,
+      });
+      return;
+    }
+
+    // Reject new session creation during shutdown
+    if (shuttingDown) {
+      res.status(503).json({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Server is shutting down, please retry" },
         id: req.body?.id ?? null,
       });
       return;
@@ -1465,13 +1480,23 @@ app.delete("/mcp", async (req: Request, res: Response) => {
   process.exit(1);
 });
 
-// Handle server shutdown
-process.on("SIGINT", async () => {
-  console.log("\nShutting down server...");
+// Graceful shutdown (handles both SIGINT for local dev and SIGTERM from Kubernetes)
+async function shutdown(signal: string) {
+  if (shuttingDown) return; // Prevent double shutdown
+  shuttingDown = true;
+  console.log(`\nReceived ${signal}, draining sessions...`);
 
-  for (const sessionId in sessions) {
+  // Grace period: let in-flight requests complete and give the load balancer
+  // time to stop routing new traffic (k8s endpoint removal).
+  // Use a longer preStop sleep (e.g., 5s) in k8s to complement this.
+  const DRAIN_TIMEOUT_MS = 5000;
+  await new Promise(resolve => setTimeout(resolve, DRAIN_TIMEOUT_MS));
+
+  const sessionIds = Object.keys(sessions);
+  console.log(`Closing ${sessionIds.length} active session(s)...`);
+
+  for (const sessionId of sessionIds) {
     try {
-      console.log(`Closing session: ${sessionId}`);
       await sessions[sessionId].transport.close();
       await sessions[sessionId].server.close();
       delete sessions[sessionId];
@@ -1486,4 +1511,7 @@ process.on("SIGINT", async () => {
 
   console.log("Server shutdown complete");
   process.exit(0);
-});
+}
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
