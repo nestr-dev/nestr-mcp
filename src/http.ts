@@ -969,6 +969,7 @@ interface SessionData {
   sessionStartTime?: number; // Session start time for duration tracking
   lastActivityAt: number; // Timestamp of last request (for session coalescing)
   initCallCount: number; // Number of initialize requests coalesced into this session
+  sseResponse?: Response; // Active SSE stream response (for liveness check)
 }
 const sessions: Record<string, SessionData> = {};
 let shuttingDown = false;
@@ -992,7 +993,8 @@ function findCoalescableSession(authToken: string, mcpClient: string | undefined
       session.authToken === authToken &&
       session.mcpClient === mcpClient &&
       session.initCallCount < SESSION_COALESCE_MAX_INITS &&
-      (now - session.lastActivityAt) < SESSION_COALESCE_WINDOW_MS
+      (now - session.lastActivityAt) < SESSION_COALESCE_WINDOW_MS &&
+      session.sseResponse && !session.sseResponse.writableEnded // Only coalesce if SSE stream is alive
     ) {
       // Pick the most recently active session if multiple match
       if (!bestMatch || session.lastActivityAt > bestMatch.lastActivity) {
@@ -1406,6 +1408,14 @@ app.get("/mcp", async (req: Request, res: Response) => {
 
   console.log(`SSE stream requested for session: ${sessionId}`);
   const session = sessions[sessionId];
+
+  // Track the SSE response for liveness detection (used by session coalescing)
+  session.sseResponse = res;
+  res.on("close", () => {
+    if (session.sseResponse === res) {
+      session.sseResponse = undefined;
+    }
+  });
 
   try {
     await session.transport.handleRequest(req, res);
