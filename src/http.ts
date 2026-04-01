@@ -49,15 +49,13 @@ import {
   getOAuthSession,
 } from "./oauth/flow.js";
 import {
-  registerClient,
-  getClient,
-  getClientCount,
-  validateRedirectUri,
-  storePkceForCode,
-  consumePkceForCode,
-  constantTimeCompare,
+  initStore,
+  getStore,
   type RegisteredClient,
-  getSession,
+} from "./oauth/store.js";
+import {
+  constantTimeCompare,
+  validateRedirectUri,
 } from "./oauth/storage.js";
 import { analytics, type AnalyticsContext } from "./analytics/index.js";
 import "./analytics/ga4.js";
@@ -205,8 +203,9 @@ app.get("/.well-known/oauth-authorization-server", (req, res) => {
  * Allows MCP clients to register themselves without pre-configuration.
  * This enables seamless connection from any MCP client (like Claude Code).
  */
-app.post("/oauth/register", registerLimiter, express.json(), (req: Request, res: Response) => {
+app.post("/oauth/register", registerLimiter, express.json(), async (req: Request, res: Response) => {
   try {
+    const store = getStore();
     const {
       client_name,
       redirect_uris,
@@ -218,7 +217,7 @@ app.post("/oauth/register", registerLimiter, express.json(), (req: Request, res:
 
     // Limit total registered clients to prevent unbounded growth
     const MAX_REGISTERED_CLIENTS = 1000;
-    if (getClientCount() >= MAX_REGISTERED_CLIENTS) {
+    if (await store.getClientCount() >= MAX_REGISTERED_CLIENTS) {
       res.status(503).json({
         error: "server_error",
         error_description: "Maximum number of registered clients reached",
@@ -276,7 +275,7 @@ app.post("/oauth/register", registerLimiter, express.json(), (req: Request, res:
     };
 
     // Store the client
-    registerClient(client);
+    await store.registerClient(client);
 
     // Return registration response (RFC 7591)
     res.status(201).json({
@@ -334,8 +333,9 @@ function getCallbackUrl(req: Request): string {
  *   - client_consumer: (optional) Identifier for the MCP client (e.g., "claude-code", "cursor")
  *   - _ga_client_id: (optional) GA4 client_id for cross-domain analytics
  */
-app.get("/oauth/authorize", oauthLimiter, (req: Request, res: Response) => {
+app.get("/oauth/authorize", oauthLimiter, async (req: Request, res: Response) => {
   const config = getOAuthConfig();
+  const store = getStore();
 
   // Extract OAuth parameters
   const clientId = req.query.client_id as string | undefined;
@@ -354,7 +354,7 @@ app.get("/oauth/authorize", oauthLimiter, (req: Request, res: Response) => {
   // If this is an MCP client request (has client_id), use full OAuth flow
   if (clientId) {
     // Validate client
-    const client = getClient(clientId);
+    const client = await store.getClient(clientId);
     if (!client) {
       res.status(400).json({
         error: "invalid_client",
@@ -372,7 +372,7 @@ app.get("/oauth/authorize", oauthLimiter, (req: Request, res: Response) => {
       return;
     }
 
-    if (!validateRedirectUri(clientId, redirectUri)) {
+    if (!validateRedirectUri(client, redirectUri)) {
       res.status(400).json({
         error: "invalid_redirect_uri",
         error_description: "redirect_uri does not match registered URIs",
@@ -417,7 +417,7 @@ app.get("/oauth/authorize", oauthLimiter, (req: Request, res: Response) => {
       // Normalize to lowercase for consistent matching with API layer.
       const effectiveClientConsumer = (clientConsumer || client.client_name)?.toLowerCase();
 
-      const { authUrl } = createAuthorizationRequest({
+      const { authUrl } = await createAuthorizationRequest({
         clientId,
         redirectUri, // MCP client's redirect_uri (stored for later)
         scope,
@@ -478,7 +478,7 @@ app.get("/oauth/authorize", oauthLimiter, (req: Request, res: Response) => {
     const finalRedirect = redirectUri;
     const callbackUrl = getCallbackUrl(req);
 
-    const { authUrl } = createAuthorizationRequest(callbackUrl, finalRedirect);
+    const { authUrl } = await createAuthorizationRequest(callbackUrl, finalRedirect);
 
     // Add GA4 tracking params to auth URL for browser flow
     const authUrlObj = new URL(authUrl);
@@ -557,7 +557,7 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
   }
 
   // Get pending auth request
-  const pending = getPendingAuth(state as string);
+  const pending = await getPendingAuth(state as string);
   if (!pending) {
     res.status(400).send(`
       <!DOCTYPE html>
@@ -577,7 +577,7 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
     if (pending.codeChallenge && pending.clientId?.startsWith("mcp-")) {
       console.log(`OAuth: Redirecting code to MCP client ${pending.clientId}`);
 
-      storePkceForCode(
+      await getStore().storePkceForCode(
         code as string,
         pending.codeChallenge,
         pending.codeChallengeMethod || "S256"
@@ -608,9 +608,9 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
       console.log("OAuth: Could not fetch user info for analytics:", userError);
     }
 
-    // Generate a session ID for this OAuth session
-    const oauthSessionId = randomUUID();
-    storeOAuthSession(oauthSessionId, tokens, userId);
+    // Key the session by access_token so getSession(authToken) can find it later.
+    // This enables tokenProvider to do server-side token refresh for browser flow users.
+    await storeOAuthSession(tokens.access_token, tokens, userId);
 
     // Track OAuth completion (wrapped to never break OAuth)
     if (pending.gaClientId) {
@@ -622,7 +622,7 @@ app.get("/oauth/callback", async (req: Request, res: Response) => {
       } catch (e) { console.error("[Analytics] Error:", e); }
     }
 
-    console.log(`OAuth: Successfully authenticated, session: ${oauthSessionId}${userId ? ` (user: ${userId})` : ""}`);
+    console.log(`OAuth: Successfully authenticated${userId ? ` (user: ${userId})` : ""}`);
 
     // Redirect to landing page with token in hash fragment (not sent to server logs)
     // The landing page JavaScript will detect this and display the token in context
@@ -685,7 +685,7 @@ app.post("/oauth/device", oauthLimiter, express.urlencoded({ extended: true }), 
     // Validate client_id: must be a registered dynamic client or the server's own client
     let registeredClientName: string | undefined;
     if (client_id.startsWith("mcp-")) {
-      const client = getClient(client_id);
+      const client = await getStore().getClient(client_id);
       if (!client) {
         res.status(401).json({
           error: "invalid_client",
@@ -786,7 +786,7 @@ app.post("/oauth/token", tokenLimiter, express.urlencoded({ extended: true }), a
 
       // If client_id is a dynamically registered client, validate credentials
       if (client_id && client_id.startsWith("mcp-")) {
-        const client = getClient(client_id);
+        const client = await getStore().getClient(client_id);
         if (!client) {
           res.status(401).json({
             error: "invalid_client",
@@ -806,7 +806,7 @@ app.post("/oauth/token", tokenLimiter, express.urlencoded({ extended: true }), a
       }
 
       // PKCE verification for all authorization_code grants
-      const pkceData = consumePkceForCode(code);
+      const pkceData = await getStore().consumePkceForCode(code);
       if (pkceData) {
         // PKCE was stored for this code - verify it
         if (!code_verifier) {
@@ -1179,9 +1179,9 @@ app.post("/mcp", async (req: Request, res: Response) => {
         console.log('[Identity] API key workspace lookup failed:', e instanceof Error ? e.message : e);
       }
     } else {
-      // For OAuth/Bearer tokens, check if we have a stored session (legacy browser flow).
+      // For OAuth/Bearer tokens, check if we have a stored session (browser flow).
       try {
-        const storedSession = getSession(authToken);
+        const storedSession = await getStore().getSession(authToken);
         if (storedSession?.userId) {
           userId = storedSession.userId;
         }
@@ -1235,15 +1235,19 @@ app.post("/mcp", async (req: Request, res: Response) => {
     // after the session is initialized, and to allow tokenProvider to invalidate the session
     let sessionRef: SessionData | undefined;
 
+    // Check if we have a stored session for this token (browser flow).
+    // Standard MCP OAuth clients manage tokens client-side and won't have a stored session.
+    const hasStoredSession = !isApiKey && !!(await getStore().getSession(authToken));
+
     // Create new session with the auth token and MCP client info
     const client = new NestrClient({
       apiKey: authToken,
       baseUrl: process.env.NESTR_API_BASE,
       mcpClient: mcpClientName,
-      // tokenProvider enables server-side token refresh for stored sessions (legacy browser flow).
+      // tokenProvider enables server-side token refresh for stored sessions (browser flow).
       // In the standard MCP OAuth flow, there's no stored session — the client manages refresh.
       // When tokenProvider is undefined, NestrClient lets 401 propagate to the client.
-      tokenProvider: isApiKey ? undefined : (getSession(authToken) ? async () => {
+      tokenProvider: hasStoredSession ? async () => {
         const session = await getOAuthSession(authToken);
         if (!session) {
           // Stored session expired and refresh failed — remove the MCP session
@@ -1259,7 +1263,7 @@ app.post("/mcp", async (req: Request, res: Response) => {
           });
         }
         return session.accessToken;
-      } : undefined),
+      } : undefined,
     });
 
     const server = createServer({
@@ -1439,18 +1443,26 @@ app.delete("/mcp", async (req: Request, res: Response) => {
   }
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Nestr MCP server listening on port ${PORT}`);
-  console.log(`Landing page: http://localhost:${PORT}`);
-  console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
-  console.log(`OAuth login:  http://localhost:${PORT}/oauth/authorize`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
+// Start server (async to initialize store before listening)
+(async () => {
+  // Initialize OAuth store (Redis if REDIS_URL is set, otherwise file-based)
+  await initStore();
 
-  const config = getOAuthConfig();
-  if (!config.clientId) {
-    console.log(`\nNote: OAuth flow disabled (NESTR_OAUTH_CLIENT_ID not set)`);
-  }
+  app.listen(PORT, () => {
+    console.log(`Nestr MCP server listening on port ${PORT}`);
+    console.log(`Landing page: http://localhost:${PORT}`);
+    console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
+    console.log(`OAuth login:  http://localhost:${PORT}/oauth/authorize`);
+    console.log(`Health check: http://localhost:${PORT}/health`);
+
+    const config = getOAuthConfig();
+    if (!config.clientId) {
+      console.log(`\nNote: OAuth flow disabled (NESTR_OAUTH_CLIENT_ID not set)`);
+    }
+  });
+})().catch((err) => {
+  console.error("Failed to start server:", err);
+  process.exit(1);
 });
 
 // Handle server shutdown
@@ -1467,6 +1479,10 @@ process.on("SIGINT", async () => {
       console.error(`Error closing session ${sessionId}:`, error);
     }
   }
+
+  try {
+    await getStore().close();
+  } catch { /* ignore close errors during shutdown */ }
 
   console.log("Server shutdown complete");
   process.exit(0);
