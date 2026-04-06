@@ -28,7 +28,7 @@
  *   initialization request to get plain JSON responses for the entire session.
  */
 
-import express, { Request, Response } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import { randomUUID, randomBytes } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -999,19 +999,24 @@ setInterval(() => {
 
 function findCoalescableSession(authToken: string, mcpClient: string | undefined): { sessionId: string; session: SessionData } | undefined {
   const now = Date.now();
-  let bestMatch: { sessionId: string; session: SessionData; lastActivity: number } | undefined;
+  let bestMatch: { sessionId: string; session: SessionData; lastActivity: number; sseAlive: boolean } | undefined;
 
   for (const [sid, session] of Object.entries(sessions)) {
     if (
       session.authToken === authToken &&
       session.mcpClient === mcpClient &&
       session.initCallCount < SESSION_COALESCE_MAX_INITS &&
-      (now - session.lastActivityAt) < SESSION_COALESCE_WINDOW_MS &&
-      session.sseResponse && !session.sseResponse.writableEnded // Only coalesce if SSE stream is alive
+      (now - session.lastActivityAt) < SESSION_COALESCE_WINDOW_MS
     ) {
-      // Pick the most recently active session if multiple match
-      if (!bestMatch || session.lastActivityAt > bestMatch.lastActivity) {
-        bestMatch = { sessionId: sid, session, lastActivity: session.lastActivityAt };
+      const sseAlive = !!(session.sseResponse && !session.sseResponse.writableEnded);
+
+      // Pick the best session: prefer live SSE, then most recently active
+      if (
+        !bestMatch ||
+        (sseAlive && !bestMatch.sseAlive) || // prefer live SSE over dead
+        (sseAlive === bestMatch.sseAlive && session.lastActivityAt > bestMatch.lastActivity)
+      ) {
+        bestMatch = { sessionId: sid, session, lastActivity: session.lastActivityAt, sseAlive };
       }
     }
   }
@@ -1479,6 +1484,22 @@ app.delete("/mcp", async (req: Request, res: Response) => {
       });
     }
   }
+});
+
+// Return a proper JSON-RPC error for malformed request bodies instead of Express's default HTML.
+app.use((err: Error & { type?: string; status?: number }, _req: Request, res: Response, next: NextFunction) => {
+  if (err.type === "entity.parse.failed" && err.status === 400) {
+    res.status(400).json({
+      jsonrpc: "2.0",
+      error: {
+        code: -32700,
+        message: "Parse error: request body is not valid JSON. Expected a JSON-RPC object like {\"jsonrpc\":\"2.0\",\"method\":\"initialize\",...}",
+      },
+      id: null,
+    });
+    return;
+  }
+  next(err);
 });
 
 // Start server (async to initialize store before listening)
