@@ -981,8 +981,8 @@ let shuttingDown = false;
  * The initCallCount limit prevents unbounded coalescing — after 5 inits it's either a
  * legitimately new session or a client that needs fixing.
  */
-const SESSION_COALESCE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
-const SESSION_COALESCE_MAX_INITS = 5;
+export const SESSION_COALESCE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+export const SESSION_COALESCE_MAX_INITS = 5;
 const SESSION_STALE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes without activity
 
 // Periodically clean up dead sessions (closed SSE + stale)

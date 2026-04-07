@@ -21,7 +21,7 @@ vi.mock("mcpcat", () => ({
   default: { wrap: (_server: unknown) => _server },
 }));
 
-const { app, sessions, findCoalescableSession } = await import("../src/http.js");
+const { app, sessions, findCoalescableSession, SESSION_COALESCE_MAX_INITS, SESSION_COALESCE_WINDOW_MS } = await import("../src/http.js");
 
 describe("HTTP Server", () => {
   beforeEach(() => {
@@ -245,7 +245,7 @@ describe("HTTP Server", () => {
         authToken: "token-a",
         mcpClient: "client-a",
         lastActivityAt: Date.now(),
-        initCallCount: 5, // SESSION_COALESCE_MAX_INITS
+        initCallCount: SESSION_COALESCE_MAX_INITS,
       } as any;
 
       expect(findCoalescableSession("token-a", "client-a")).toBeUndefined();
@@ -255,7 +255,7 @@ describe("HTTP Server", () => {
       sessions["test-session-1"] = {
         authToken: "token-a",
         mcpClient: "client-a",
-        lastActivityAt: Date.now() - 11 * 60 * 1000, // 11 minutes ago (> 10 min window)
+        lastActivityAt: Date.now() - SESSION_COALESCE_WINDOW_MS - 60_000, // past the window
         initCallCount: 1,
       } as any;
 
