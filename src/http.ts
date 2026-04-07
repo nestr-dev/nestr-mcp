@@ -73,11 +73,11 @@ const GTM_ID = process.env.GTM_ID || process.env.NESTR_GTM_ID;
 
 const GTM_ID_REGEX = /^GTM-[A-Z0-9]+$/;
 
-function isValidGtmId(id: string | undefined): id is string {
+export function isValidGtmId(id: string | undefined): id is string {
   return !!id && GTM_ID_REGEX.test(id);
 }
 
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
   const htmlEscapes: Record<string, string> = {
     "&": "&amp;",
     "<": "&lt;",
@@ -88,7 +88,7 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (char) => htmlEscapes[char]);
 }
 
-const app = express();
+export const app = express();
 
 app.set("trust proxy", 1);
 
@@ -959,7 +959,7 @@ app.post("/oauth/token", tokenLimiter, express.urlencoded({ extended: true }), a
 });
 
 // Store transports and servers by session ID
-interface SessionData {
+export interface SessionData {
   transport: StreamableHTTPServerTransport;
   server: Server;
   authToken: string; // API key or OAuth token
@@ -971,7 +971,7 @@ interface SessionData {
   initCallCount: number; // Number of initialize requests coalesced into this session
   sseResponse?: Response; // Active SSE stream response (for liveness check)
 }
-const sessions: Record<string, SessionData> = {};
+export const sessions: Record<string, SessionData> = {};
 let shuttingDown = false;
 
 /**
@@ -981,11 +981,12 @@ let shuttingDown = false;
  * The initCallCount limit prevents unbounded coalescing — after 5 inits it's either a
  * legitimately new session or a client that needs fixing.
  */
-const SESSION_COALESCE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
-const SESSION_COALESCE_MAX_INITS = 5;
+export const SESSION_COALESCE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+export const SESSION_COALESCE_MAX_INITS = 5;
 const SESSION_STALE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes without activity
 
 // Periodically clean up dead sessions (closed SSE + stale)
+// .unref() so this timer doesn't prevent process exit (tests, graceful shutdown)
 setInterval(() => {
   const now = Date.now();
   for (const [sid, session] of Object.entries(sessions)) {
@@ -995,9 +996,9 @@ setInterval(() => {
       delete sessions[sid];
     }
   }
-}, 60000);
+}, 60000).unref();
 
-function findCoalescableSession(authToken: string, mcpClient: string | undefined): { sessionId: string; session: SessionData } | undefined {
+export function findCoalescableSession(authToken: string, mcpClient: string | undefined): { sessionId: string; session: SessionData } | undefined {
   const now = Date.now();
   let bestMatch: { sessionId: string; session: SessionData; lastActivity: number; sseAlive: boolean } | undefined;
 
@@ -1058,7 +1059,7 @@ function cacheIdentity(token: string, userId: string, userName?: string) {
  *
  * @returns The token (API key or OAuth token) or null if not found
  */
-function getAuthToken(req: Request): string | null {
+export function getAuthToken(req: Request): string | null {
   // Check for API key header first (legacy/simple auth)
   const apiKey = req.headers["x-nestr-api-key"] as string | undefined;
   if (apiKey) {
@@ -1502,27 +1503,30 @@ app.use((err: Error & { type?: string; status?: number }, _req: Request, res: Re
   next(err);
 });
 
-// Start server (async to initialize store before listening)
-(async () => {
-  // Initialize OAuth store (Redis if REDIS_URL is set, otherwise file-based)
-  await initStore();
+// Only start the server when this module is executed directly (not imported by tests)
+const isDirectRun = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
+if (isDirectRun) {
+  (async () => {
+    // Initialize OAuth store (Redis if REDIS_URL is set, otherwise file-based)
+    await initStore();
 
-  app.listen(PORT, () => {
-    console.log(`Nestr MCP server listening on port ${PORT}`);
-    console.log(`Landing page: http://localhost:${PORT}`);
-    console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
-    console.log(`OAuth login:  http://localhost:${PORT}/oauth/authorize`);
-    console.log(`Health check: http://localhost:${PORT}/health`);
+    app.listen(PORT, () => {
+      console.log(`Nestr MCP server listening on port ${PORT}`);
+      console.log(`Landing page: http://localhost:${PORT}`);
+      console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
+      console.log(`OAuth login:  http://localhost:${PORT}/oauth/authorize`);
+      console.log(`Health check: http://localhost:${PORT}/health`);
 
-    const config = getOAuthConfig();
-    if (!config.clientId) {
-      console.log(`\nNote: OAuth flow disabled (NESTR_OAUTH_CLIENT_ID not set)`);
-    }
+      const config = getOAuthConfig();
+      if (!config.clientId) {
+        console.log(`\nNote: OAuth flow disabled (NESTR_OAUTH_CLIENT_ID not set)`);
+      }
+    });
+  })().catch((err) => {
+    console.error("Failed to start server:", err);
+    process.exit(1);
   });
-})().catch((err) => {
-  console.error("Failed to start server:", err);
-  process.exit(1);
-});
+}
 
 // Graceful shutdown (handles both SIGINT for local dev and SIGTERM from Kubernetes)
 async function shutdown(signal: string) {
@@ -1557,5 +1561,7 @@ async function shutdown(signal: string) {
   process.exit(0);
 }
 
-process.on("SIGINT", () => shutdown("SIGINT"));
-process.on("SIGTERM", () => shutdown("SIGTERM"));
+if (isDirectRun) {
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+}

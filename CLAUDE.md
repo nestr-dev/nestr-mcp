@@ -25,6 +25,12 @@ npm run dev:http
 # Build TypeScript
 npm run build
 
+# Run tests
+npm test
+
+# Run tests in watch mode
+npm run test:watch
+
 # Test with MCP Inspector
 npm run inspect
 
@@ -34,6 +40,28 @@ npm start
 # Production (HTTP)
 npm run start:http
 ```
+
+## Testing
+
+Tests use **vitest** + **supertest**. Run `npm test` before pushing — CI runs tests on every PR and on publish.
+
+```
+tests/
+  http-server.test.ts           # HTTP integration tests (supertest against Express app)
+  helpers/
+    mock-store.ts               # In-memory OAuthStore for tests
+  unit/
+    oauth.test.ts               # PKCE, constantTimeCompare, validateRedirectUri
+    http-helpers.test.ts        # getAuthToken, escapeHtml, isValidGtmId
+    tools-helpers.test.ts       # compactResponse, enrichHints, stripDescriptionFields
+    api-client.test.ts          # NestrClient with mocked fetch
+```
+
+**Key conventions:**
+- Mock `getStore()` from `src/oauth/store.js` using the in-memory mock store — never hit Redis/filesystem in tests
+- Mock `globalThis.fetch` with `vi.stubGlobal` for NestrClient and OAuth proxy tests
+- The Express app is exported from `src/http.ts` and the startup IIFE is guarded by `isDirectRun` so importing it for tests doesn't start a server
+- `src/http.ts` exports session helpers (`sessions`, `findCoalescableSession`) for direct unit testing of coalescing logic
 
 ## Environment Variables
 
