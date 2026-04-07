@@ -16,7 +16,7 @@ const completableListUi = { ui: { resourceUri: appResources.completableList.uri 
 type CompletableSource = "inbox" | "daily-plan" | "children" | "projects" | "search";
 
 // Wrap a compacted response with title and source for the completable list app
-function completableResponse(
+export function completableResponse(
   data: unknown,
   source: CompletableSource,
   title: string,
@@ -46,7 +46,7 @@ const COMPACT_FIELDS = {
 };
 
 // Strip verbose fields from API responses for list operations
-function compactResponse<T>(
+export function compactResponse<T>(
   data: T[] | { status: string; meta?: unknown; data: T[] } | T,
   type: "nest" | "role" | "user" | "label" = "nest"
 ): Partial<T>[] | { status: string; meta?: unknown; data: Partial<T>[] } | T {
@@ -123,7 +123,7 @@ interface Hint {
 
 // Enrich hints with tool call parameters so models can act on hints directly.
 // Extracts workspaceId from nest ancestors (last element) for search-based hints.
-function enrichHints<T>(data: T): T {
+export function enrichHints<T>(data: T): T {
   if (!data || typeof data !== "object") return data;
 
   // Handle arrays (e.g., from getNestChildren)
@@ -1680,7 +1680,7 @@ export type ToolResult = {
 };
 
 // Strip description fields from nest objects in response data
-function stripDescriptionFields(data: unknown): unknown {
+export function stripDescriptionFields(data: unknown): unknown {
   if (Array.isArray(data)) {
     return data.map(item => stripDescriptionFields(item));
   }
