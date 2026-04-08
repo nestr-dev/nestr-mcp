@@ -225,7 +225,7 @@ export const schemas = {
   createNest: z.object({
     parentId: z.string().describe("Parent nest ID (workspace, circle, or project)"),
     title: z.string().describe("Title of the new nest (plain text, HTML stripped)"),
-    description: z.string().optional().describe("The primary content field — use for project details, task context, acceptance criteria, Definition of Done, and any detailed information. Supports HTML: <b>, <i>, <code>, <ul>, <li>, <a>."),
+    description: z.string().optional().describe("The primary content field — use for project details, task context, acceptance criteria, Definition of Done, and any detailed information. Supports Markdown and HTML."),
     purpose: z.string().optional().describe("ONLY for workspaces, circles, and roles — a short aspirational statement of the future state this entity serves. Do NOT put project details, task context, or general information here; use description instead. Supports HTML."),
     labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to apply"),
     users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
@@ -237,7 +237,7 @@ export const schemas = {
   updateNest: z.object({
     nestId: z.string().describe("Nest ID to update"),
     title: z.string().optional().describe("New title (plain text, HTML stripped)"),
-    description: z.string().optional().describe("The primary content field — use for project details, task context, acceptance criteria, and any detailed information. Supports HTML."),
+    description: z.string().optional().describe("The primary content field — use for project details, task context, acceptance criteria, and any detailed information. Supports Markdown and HTML."),
     purpose: z.string().optional().describe("ONLY for workspaces, circles, and roles — a short aspirational statement. Do NOT put project details, task context, or general information here; use description instead. Supports HTML."),
     parentId: z.string().optional().describe("New parent ID (move nest to different location, e.g., move inbox item to a role or project)"),
     labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to set (e.g., ['project'] to convert an item into a project)"),
@@ -360,7 +360,7 @@ export const schemas = {
 
   createInboxItem: z.object({
     title: z.string().describe("Title of the inbox item (plain text, HTML stripped)"),
-    description: z.string().optional().describe("Additional details or context (supports HTML)"),
+    description: z.string().optional().describe("Additional details or context (supports Markdown and HTML)"),
   }),
 
   getInboxItem: z.object({
@@ -370,7 +370,7 @@ export const schemas = {
   updateInboxItem: z.object({
     nestId: z.string().describe("Inbox item ID"),
     title: z.string().optional().describe("Updated title (plain text, HTML stripped)"),
-    description: z.string().optional().describe("Updated description (supports HTML)"),
+    description: z.string().optional().describe("Updated description (supports Markdown and HTML)"),
     completed: z.boolean().optional().describe("Mark as completed (processed)"),
     data: coerceFromJson(z.record(z.unknown())).optional().describe("Custom data storage"),
   }),
@@ -458,7 +458,7 @@ export const schemas = {
   createTension: z.object({
     nestId: z.string().describe("ID of the role or circle to create the tension on. Use a role ID when that role is sensing the tension. Use a circle ID for cross-role, governance, or personally sensed tensions."),
     title: z.string().describe("The gap you're sensing — what is the difference between current reality and desired state (plain text)"),
-    description: z.string().optional().describe("The observable facts — what you see/hear/experience that creates this tension (supports HTML)"),
+    description: z.string().optional().describe("The observable facts — what you see/hear/experience that creates this tension (supports Markdown and HTML)"),
     feeling: z.string().optional().describe("The feeling this tension evokes in you — separated from the facts to keep the organizational response clean (plain text)"),
     needs: z.string().optional().describe("The personal or organizational need that is alive — what need is not being met (plain text)"),
   }),
@@ -479,7 +479,7 @@ export const schemas = {
     nestId: z.string().describe("ID of the circle or role the tension belongs to"),
     tensionId: z.string().describe("Tension ID"),
     title: z.string().optional().describe("Updated title — the gap being sensed (plain text)"),
-    description: z.string().optional().describe("Updated description — the observable facts (supports HTML)"),
+    description: z.string().optional().describe("Updated description — the observable facts (supports Markdown and HTML)"),
     feeling: z.string().optional().describe("Updated feeling this tension evokes (plain text)"),
     needs: z.string().optional().describe("Updated need that is alive (plain text)"),
   }),
@@ -500,7 +500,7 @@ export const schemas = {
     _id: z.string().optional().describe("ID of an existing governance item to change or remove. Omit to propose a new item."),
     title: z.string().optional().describe("Title for the governance item"),
     labels: coerceFromJson(z.array(z.string())).optional().describe("Labels defining the item type (e.g., ['role'], ['circle'], ['policy'], ['accountability'], ['domain'])"),
-    description: z.string().optional().describe("The primary content field — detailed information about the item. Supports HTML."),
+    description: z.string().optional().describe("The primary content field — detailed information about the item. Supports Markdown and HTML."),
     purpose: z.string().optional().describe("ONLY for roles/circles — a short aspirational statement. Do NOT put detailed information here; use description instead. Supports HTML."),
     parentId: z.string().optional().describe("Parent ID — use to move/restructure items (e.g., move role to different circle)"),
     users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign (e.g., for role elections: assign the elected user to the role)"),
@@ -514,7 +514,7 @@ export const schemas = {
     tensionId: z.string().describe("Tension ID"),
     partId: z.string().describe("Part ID to modify"),
     title: z.string().optional().describe("Updated title"),
-    description: z.string().optional().describe("Updated description — the primary content field. Supports HTML."),
+    description: z.string().optional().describe("Updated description — the primary content field. Supports Markdown and HTML."),
     purpose: z.string().optional().describe("ONLY for roles/circles — updated aspirational statement. Do NOT put detailed information here; use description instead. Supports HTML."),
     labels: coerceFromJson(z.array(z.string())).optional().describe("Updated labels"),
     parentId: z.string().optional().describe("Updated parent ID"),
@@ -753,7 +753,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
       properties: {
         parentId: { type: "string", description: "Parent nest ID (workspace, circle, or project)" },
         title: { type: "string", description: "Title of the new nest (plain text, HTML tags stripped)" },
-        description: { type: "string", description: "The primary content field — use for project details, task context, acceptance criteria, DoD, and any detailed information. Use fields (e.g., project.status) for structured data and comments for progress updates. Supports HTML." },
+        description: { type: "string", description: "The primary content field — use for project details, task context, acceptance criteria, DoD, and any detailed information. Use fields (e.g., project.status) for structured data and comments for progress updates. Supports Markdown and HTML." },
         purpose: { type: "string", description: "ONLY for workspaces, circles, and roles — a short aspirational statement of the future state this entity serves. Do NOT put project details, task context, or general information here; use description instead. Supports HTML." },
         labels: {
           type: "array",
@@ -792,7 +792,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
       properties: {
         nestId: { type: "string", description: "Nest ID to update" },
         title: { type: "string", description: "New title (plain text, HTML tags stripped)" },
-        description: { type: "string", description: "The primary content field — use for details, context, acceptance criteria, and any information about the nest. Use fields for structured data, comments for progress. Supports HTML." },
+        description: { type: "string", description: "The primary content field — use for details, context, acceptance criteria, and any information about the nest. Use fields for structured data, comments for progress. Supports Markdown and HTML." },
         purpose: { type: "string", description: "ONLY for workspaces, circles, and roles — a short aspirational statement. Do NOT put project details, task context, or general information here; use description instead. Supports HTML." },
         parentId: { type: "string", description: "New parent ID (move nest to different location)" },
         labels: {
@@ -1118,7 +1118,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
       type: "object" as const,
       properties: {
         title: { type: "string", description: "Title of the inbox item (plain text, HTML stripped)" },
-        description: { type: "string", description: "Additional details or context (supports HTML)" },
+        description: { type: "string", description: "Additional details or context (supports Markdown and HTML)" },
       },
       required: ["title"],
     },
@@ -1145,7 +1145,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
       properties: {
         nestId: { type: "string", description: "Inbox item ID" },
         title: { type: "string", description: "Updated title (plain text, HTML stripped)" },
-        description: { type: "string", description: "Updated description (supports HTML)" },
+        description: { type: "string", description: "Updated description (supports Markdown and HTML)" },
         completed: { type: "boolean", description: "Mark as completed (processed)" },
         data: { type: "object", description: "Custom data storage" },
       },
@@ -1381,7 +1381,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
       properties: {
         nestId: { type: "string", description: "ID of the role or circle to create the tension on. Place on a role to indicate that role is sensing the tension. Place on a circle for cross-role or governance tensions (use individual-action label if sensed personally without role authority)." },
         title: { type: "string", description: "The gap — what is the difference between current reality and desired state (plain text)" },
-        description: { type: "string", description: "The observable facts — what you see/hear/experience (supports HTML)" },
+        description: { type: "string", description: "The observable facts — what you see/hear/experience (supports Markdown and HTML)" },
         feeling: { type: "string", description: "The feeling this tension evokes — separated to keep the organizational response clean (plain text)" },
         needs: { type: "string", description: "The need that is alive — what personal or organizational need is not being met (plain text)" },
       },
@@ -1426,7 +1426,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
         nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
         tensionId: { type: "string", description: "Tension ID" },
         title: { type: "string", description: "Updated title — the gap being sensed (plain text)" },
-        description: { type: "string", description: "Updated description — the observable facts (supports HTML)" },
+        description: { type: "string", description: "Updated description — the observable facts (supports Markdown and HTML)" },
         feeling: { type: "string", description: "Updated feeling this tension evokes (plain text)" },
         needs: { type: "string", description: "Updated need that is alive (plain text)" },
       },
@@ -1479,7 +1479,7 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
         _id: { type: "string", description: "ID of an existing governance item to change or remove. Omit to propose a new item." },
         title: { type: "string", description: "Title for the governance item" },
         labels: { type: "array", items: { type: "string" }, description: "Labels defining the item type (e.g., ['role'], ['circle'], ['policy'], ['accountability'], ['domain'])" },
-        description: { type: "string", description: "The primary content field — detailed information about the item. Supports HTML." },
+        description: { type: "string", description: "The primary content field — detailed information about the item. Supports Markdown and HTML." },
         purpose: { type: "string", description: "ONLY for roles/circles — a short aspirational statement. Do NOT put detailed information here; use description instead. Supports HTML." },
         parentId: { type: "string", description: "Parent ID — use to move/restructure items (e.g., move role to different circle)" },
         users: { type: "array", items: { type: "string" }, description: "User IDs to assign (e.g., for elections: assign elected user to the role)" },
@@ -1501,7 +1501,7 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
         tensionId: { type: "string", description: "Tension ID" },
         partId: { type: "string", description: "Part ID to modify" },
         title: { type: "string", description: "Updated title" },
-        description: { type: "string", description: "Updated description — the primary content field. Supports HTML." },
+        description: { type: "string", description: "Updated description — the primary content field. Supports Markdown and HTML." },
         purpose: { type: "string", description: "ONLY for roles/circles — updated aspirational statement. Do NOT put detailed information here; use description instead. Supports HTML." },
         labels: { type: "array", items: { type: "string" }, description: "Updated labels" },
         parentId: { type: "string", description: "Updated parent ID" },
