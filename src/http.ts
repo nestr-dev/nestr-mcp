@@ -104,6 +104,28 @@ app.use(helmet({
   },
 }));
 
+// CORS for browser-based MCP clients (e.g., claude.ai)
+// Placed before express.json() so OPTIONS preflight requests skip body parsing
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const origin = req.headers.origin;
+  const allowedOrigins = [
+    "https://claude.ai",
+    "https://claude.com",
+  ];
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Nestr-API-Key, Mcp-Session-Id");
+    res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
+
 app.use(express.json({ limit: "1mb" }));
 
 const oauthLimiter = rateLimit({
@@ -1545,8 +1567,11 @@ async function shutdown(signal: string) {
 
   for (const sessionId of sessionIds) {
     try {
-      await sessions[sessionId].transport.close();
-      await sessions[sessionId].server.close();
+      const session = sessions[sessionId];
+      if (!session) continue;
+      const { transport, server } = session;
+      await transport.close();
+      await server.close();
       delete sessions[sessionId];
     } catch (error) {
       console.error(`Error closing session ${sessionId}:`, error);

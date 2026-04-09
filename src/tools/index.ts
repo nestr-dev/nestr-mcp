@@ -290,7 +290,15 @@ export const schemas = {
 
   getInsights: z.object({
     workspaceId: z.string().describe("Workspace ID"),
-    includeSubCircles: z.boolean().optional().describe("Include metrics from sub-circles"),
+    includeSubCircles: z.boolean().optional().describe("Include metrics from sub-circles (default: true). Cannot be false when userId is provided."),
+    userId: z.string().optional().describe("Filter metrics for a specific user (Pro plan only). When provided, includes user-specific metrics like feedback_given/received."),
+    nestId: z.string().optional().describe("Filter metrics for a specific circle/nest (Pro plan only). Cannot be combined with userId."),
+    endDate: z.string().optional().describe("End date for metrics query (ISO format)"),
+  }),
+
+  getInsight: z.object({
+    workspaceId: z.string().describe("Workspace ID"),
+    metricId: z.string().describe("Metric ID/type from getInsights (e.g., 'role_count', 'tactical_completed')"),
   }),
 
   listUsers: z.object({
@@ -938,14 +946,30 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_get_insights",
-    description: "Get self-organization and team health metrics. Includes: role-awareness (how well people use their roles), governance participation, circle meeting output, plus task completion rates, overdue items, and activity stats. Pro accounts can access these metrics at circle and user level; other accounts get workspace-level insights only.",
+    description: "Get organizational health and trend metrics. Use this when users ask about trends, patterns, team health, or how things are going. Each metric has currentValue and compareValue (previous period) to show direction. Includes: role-awareness, governance participation, meeting output, task completion rates, overdue items, and activity stats. Requires the Insights app to be enabled (check with nestr_get_workspace_apps). Pro plan required for circle-level (nestId) or user-level (userId) filtering.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
-        includeSubCircles: { type: "boolean", description: "Include metrics from sub-circles" },
+        includeSubCircles: { type: "boolean", description: "Include metrics from sub-circles (default: true). Cannot be false when userId is provided." },
+        userId: { type: "string", description: "Filter metrics for a specific user (Pro plan only). Cannot be combined with nestId." },
+        nestId: { type: "string", description: "Filter metrics for a specific circle/nest (Pro plan only). Cannot be combined with userId." },
+        endDate: { type: "string", description: "End date for metrics query (ISO format)" },
       },
       required: ["workspaceId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_get_insight",
+    description: "Get a single metric with its current and compare values. Use after nestr_get_insights to drill into a specific metric. Requires the Insights app to be enabled.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        metricId: { type: "string", description: "Metric ID/type from getInsights (e.g., 'role_count', 'tactical_completed')" },
+      },
+      required: ["workspaceId", "metricId"],
     },
     ...readOnly,
   },
@@ -1071,7 +1095,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_get_insight_history",
-    description: "Get historical trend data for a specific metric. Use after getInsights to see how metrics like role-awareness, governance participation, or completion rates have changed over time.",
+    description: "Get historical trend data for a specific metric over time. Use this to answer questions about how the organization is trending — e.g., 'Are we getting better at governance?', 'How has team activity changed?'. Returns data points with dates. Use from/to to scope the time range. Requires the Insights app to be enabled.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1946,8 +1970,17 @@ async function _handleToolCall(
         const parsed = schemas.getInsights.parse(args);
         const insights = await client.getInsights(parsed.workspaceId, {
           includeSubCircles: parsed.includeSubCircles,
+          userId: parsed.userId,
+          nestId: parsed.nestId,
+          endDate: parsed.endDate,
         });
         return formatResult(insights);
+      }
+
+      case "nestr_get_insight": {
+        const parsed = schemas.getInsight.parse(args);
+        const insight = await client.getInsight(parsed.workspaceId, parsed.metricId);
+        return formatResult(insight);
       }
 
       case "nestr_list_users": {
