@@ -604,6 +604,10 @@ export const schemas = {
     relation: z.string().describe("Relation name (e.g., 'meeting')"),
     targetId: z.string().describe("Target nest ID to unlink"),
   }),
+
+  help: z.object({
+    topic: z.string().describe("Topic key (e.g., 'search', 'labels', 'tensions'). Use 'topics' for the full list."),
+  }),
 };
 
 // Tool annotations for MCP - hints for clients on tool behavior
@@ -614,8 +618,20 @@ const destructive = { annotations: { readOnlyHint: false, destructiveHint: true 
 // Tool definitions for MCP
 export const toolDefinitions = [
   {
+    name: "nestr_help",
+    description: "Get detailed Nestr documentation by topic. Call before unfamiliar operations. Topics: search, labels, nest-model, inbox, daily-plan, notifications, insights, tensions, governance, skills, mcp-apps, authentication, and more. Use topic 'topics' for the full list.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        topic: { type: "string", description: "Topic key. Use 'topics' for the full list." },
+      },
+      required: ["topic"],
+    },
+    ...readOnly,
+  },
+  {
     name: "nestr_list_workspaces",
-    description: "List and search Nestr workspaces. Use this to find a workspace by name when `nestr_get_me` workspaces cache doesn't have a match, or for paginated browsing. Prefer `nestr_get_me` with `fullWorkspaces: true` as the primary way to discover workspaces at session start. Response includes meta.total showing total count.",
+    description: "List workspaces. Prefer nestr_get_me with fullWorkspaces:true at session start. Paginated with meta.total.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -642,7 +658,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_workspace",
-    description: `Create a new workspace. Requires user-scoped authentication (OAuth token or personal API key). See the "Workspace & Circle Setup Mode" instructions for the full guided flow on when and how to create workspaces.`,
+    description: "Create a new workspace. OAuth only. See nestr_help('workspace-setup') for guided setup.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -682,27 +698,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_search",
-    description: `Search for nests within a workspace. IMPORTANT: Use completed:false when searching for work to exclude old completed items.
-
-Operators (combine with spaces for AND; commas within operator for OR; ! prefix for negation):
-- label:role / label:!project — Filter/exclude by label
-- parent-label:circle — Parent has this label
-- assignee:me / assignee:userId / assignee:none / assignee:!userId — Filter by assignee
-- completed:false / completed:true / completed:past_7_days / completed:this_month / completed:YYYY-MM-DD_YYYY-MM-DD
-- in:nestId — Scope to descendants of a specific nest
-- depth:1 / depth:2 — Limit depth (1=direct children, 2=children+grandchildren)
-- mindepth:N — Minimum depth from context
-- has:due / has:pastdue / has:children / has:incompletechildren (supports ! prefix)
-- project->status:Current,Future / project->status:!Done — Field value search (label->field:value)
-- fields.label.property:value — Search any field value (supports partial match)
-- data.property:value — Search data properties
-- updated-date:past_7_days / updated-date:!past_30_days — Filter by update recency
-- sort:title / sort:due / sort:updatedAt / sort:createdAt + sort-order:asc/desc
-- createdby:me / admin:me / type:comment / limit:N / template:id
-
-Examples: label:role → all roles | assignee:me completed:false → my active work | in:circleId label:role depth:1 → roles in circle | label:project project->status:Current → active projects | in:roleId label:project → role's projects | has:pastdue completed:false → overdue items | label:accountability customer → accountabilities matching keyword
-
-Response includes meta.total showing total matching count. IMPORTANT UI RULE: The completable list app must ONLY be used when results are confirmed to contain completable items (tasks, projects, todos) AND there are results to show. When searching for roles, circles, metrics, policies, or any non-completable type, you MUST omit the _listTitle parameter and respond in plain text instead. Never render empty results in the app.`,
+    description: "Search nests in a workspace. Supports operators like label:, assignee:, completed:, in:, sort:. Always use completed:false for active work. See nestr_help('search') for full syntax.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -721,7 +717,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_get_nest",
-    description: "Get details of a specific nest (task, project, role, etc.). Supports fetching multiple nests in one call by passing comma-separated IDs (returns an array). Use fieldsMetaData=true to get field schema info like available options for project.status.",
+    description: "Get nest details. Supports comma-separated IDs for batch fetch. Add hints=true for contextual signals, fieldsMetaData=true for field schemas.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -736,7 +732,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_get_nest_children",
-    description: "Get child nests (sub-tasks, sub-projects) of a nest. Response includes meta.total showing total matching count. IMPORTANT UI RULE: The completable list app must ONLY be used when results contain completable items (tasks, projects, todos) AND there are results to show. When results are roles, circles, metrics, policies, or any non-completable type, you MUST omit the _listTitle parameter and respond in plain text instead — never render these in the app. Also never render empty results in the app.",
+    description: "Get children of a nest. Paginated. Add hints=true for contextual signals.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -755,7 +751,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_create_nest",
-    description: "Create a new nest (task, project, role, circle, etc.) under a parent. Set users to assign to people - placing under a role does NOT auto-assign. For roles and circles: include accountabilities and domains arrays to create them inline (requires workspaceId). The API auto-routes to the self-organization endpoint when governance labels are detected with accountabilities/domains. GOVERNANCE RULE: Only create roles, circles, accountabilities, domains, or policies directly during workspace/circle setup mode (new or sparsely populated workspace). In established workspaces with multiple users, governance changes MUST go through the tension/proposal flow (nestr_create_tension + nestr_add_tension_part) so circle members can consent.",
+    description: "Create a nest under a parent. Use labels to define type (e.g., ['project'], ['role']). For governance changes in established workspaces, prefer the tension flow. See nestr_help('labels') for available types.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -794,7 +790,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_update_nest",
-    description: "Update properties of an existing nest. Use parentId to move a nest (e.g., inbox item to a project). For roles and circles: include accountabilities and domains arrays to update them inline (requires workspaceId). For AI knowledge persistence, create skill-labeled nests under roles/circles instead of using data fields. GOVERNANCE RULE: Only modify governance items (roles, circles, accountabilities, domains, policies) directly during setup mode. In established workspaces, governance changes MUST go through tensions (nestr_create_tension + nestr_add_tension_part).",
+    description: "Update nest properties. Set parentId to move. Only send fields you want to change. For governance changes, prefer tensions.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -850,7 +846,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_delete_nest",
-    description: "Delete a nest (use with caution). GOVERNANCE RULE: To remove governance items (roles, accountabilities, domains, policies) in established workspaces, use nestr_remove_tension_part to propose deletion through the consent process instead.",
+    description: "Delete a nest. For governance items in established workspaces, use tensions instead.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -862,7 +858,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_add_comment",
-    description: "Add a comment to a nest. Supports @mentions using the format @{userId|email|circle|everyone}: @{userId} mentions by user ID, @{email} mentions by any email the user is registered with in Nestr, @{circle} notifies all role fillers in the nearest ancestor circle, @{everyone} is available in the UI but not yet via the API.",
+    description: "Add a comment to a nest. Supports HTML and @mentions (@{userId}, @{email}, @{circle}). Use for progress updates and discussion.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -875,7 +871,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_update_comment",
-    description: "Update an existing comment's text. Supports @mentions using the format @{userId|email|circle|everyone}: @{userId} mentions by user ID, @{email} mentions by any email the user is registered with in Nestr, @{circle} notifies all role fillers in the nearest ancestor circle, @{everyone} is available in the UI but not yet via the API.",
+    description: "Update an existing comment's body. Supports HTML and @mentions.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -946,7 +942,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_get_insights",
-    description: "Get organizational health and trend metrics. Use this when users ask about trends, patterns, team health, or how things are going. Each metric has currentValue and compareValue (previous period) to show direction. Includes: role-awareness, governance participation, meeting output, task completion rates, overdue items, and activity stats. Requires the Insights app to be enabled (check with nestr_get_workspace_apps). Pro plan required for circle-level (nestId) or user-level (userId) filtering.",
+    description: "Get organizational health metrics and trends. Each metric has currentValue and compareValue for direction. Pro plan: filter by circle (nestId) or user (userId). Requires Insights app. See nestr_help('insights').",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1005,7 +1001,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_get_projects",
-    description: "List all projects in a workspace. Check fields['project.status'] for status: Future (planned), Current (active), Waiting (blocked), Done (completed). The 'due' field contains the project due date. Response includes meta.total showing total matching count.",
+    description: "List all projects in a workspace. Check fields['project.status'] for status (Future/Current/Waiting/Done). Paginated.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1022,7 +1018,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_get_comments",
-    description: "Get comments and discussion history on a nest. Useful for understanding context, decisions made, and team communication around a task or project.",
+    description: "Get comments and discussion history on a nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1035,7 +1031,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_get_circle",
-    description: "Get details of a specific circle including its purpose, domains, and accountabilities. Circles are self-governing teams in Holacracy/Sociocracy.",
+    description: "Get details of a specific circle including purpose, domains, and accountabilities.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1049,7 +1045,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_get_user",
-    description: "Get details of a specific user including their profile, roles, and contact info. Useful for @mentions and understanding who is responsible for what.",
+    description: "Get details of a specific user including profile, roles, and contact info.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1062,12 +1058,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_add_workspace_user",
-    description: `Add a user to a workspace by email address. If the user already has a Nestr account, they are added to the workspace. If not, a new account is created and they receive an invitation email.
-
-**Requirements:**
-- Caller must be a workspace admin (user-scoped key) or use a workspace API key
-- If the user does not yet have a Nestr account, the email domain must be associated with and verified for the workspace — otherwise provisioning will fail with a 405 error
-- If the user already exists in Nestr, they can be added regardless of domain`,
+    description: "Add a user to a workspace by email. Creates account if needed.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1082,7 +1073,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_get_label",
-    description: "Get details of a specific label. Labels define what type a nest is (e.g., 'project', 'todo', 'role', 'circle', 'meeting').",
+    description: "Get details of a specific label.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1095,7 +1086,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_get_insight_history",
-    description: "Get historical trend data for a specific metric over time. Use this to answer questions about how the organization is trending — e.g., 'Are we getting better at governance?', 'How has team activity changed?'. Returns data points with dates. Use from/to to scope the time range. Requires the Insights app to be enabled.",
+    description: "Get historical data points for a metric over time. Use from/to for date range. Requires Insights app.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1111,7 +1102,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_get_workspace_apps",
-    description: "List enabled apps/features in a workspace. Shows which Nestr modules are active (e.g., goals, metrics, notes, feed). Check this before using features - if an app is disabled, its related tools won't return useful data.",
+    description: "List enabled apps/features in a workspace. Check before using features that require specific apps (e.g., Insights).",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1124,7 +1115,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   // Inbox tools (require OAuth token - won't work with workspace API keys)
   {
     name: "nestr_list_inbox",
-    description: "List items in the user's personal inbox. The inbox holds unprocessed 'stuff' — sensed tensions, ideas, and captured items that haven't yet been differentiated into role work or personal projects. Spans all workspaces in scope. Requires OAuth token.",
+    description: "List items in the user's personal inbox. Spans all workspaces. OAuth only.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1137,7 +1128,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_create_inbox_item",
-    description: "Quick capture: add an item to the user's personal inbox for later processing. Use for capturing sensed tensions, thoughts, or ideas before deciding which workspace, role, or personal context they belong to. Requires OAuth token.",
+    description: "Quick capture: add an item to the inbox for later processing. OAuth only.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1163,7 +1154,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_update_inbox_item",
-    description: "Update an inbox item. Set completed:true when processed. To move out of inbox (clarify/organize), use nestr_update_nest to change parentId to a project, role, or other location. Requires OAuth token.",
+    description: "Update an inbox item. Set completed:true when processed. Use nestr_update_nest with parentId to move out of inbox. OAuth only.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1179,7 +1170,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_reorder_inbox",
-    description: "Reorder inbox items by providing an array of item IDs in the desired order. You can provide a subset of items — they will be placed at the top in the given order, while all other items retain their existing order below them. To move non-completed items to the top, simply pass their IDs — there is no need to fetch completed items. Requires OAuth token.",
+    description: "Reorder inbox items. Provide a subset of IDs — they go to the top in given order, rest unchanged. OAuth only.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1210,7 +1201,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   // Personal labels (require OAuth token - user's own labels, not workspace labels)
   {
     name: "nestr_list_personal_labels",
-    description: "List the current user's personal labels. These are labels owned by the user, not workspace labels. Requires OAuth token.",
+    description: "List the current user's personal labels (not workspace labels). OAuth only.",
     inputSchema: {
       type: "object" as const,
       properties: {},
@@ -1219,7 +1210,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_create_personal_label",
-    description: "Create a new personal label for the current user. Personal labels are owned by the user and can be used across workspaces. Requires OAuth token.",
+    description: "Create a personal label. Can be used across workspaces. OAuth only.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1235,7 +1226,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   // Reorder tools
   {
     name: "nestr_reorder_nest",
-    description: "Reorder a nest by positioning it before or after another nest. Updates searchOrder (global sort order) and order (if both nests share the same parent). Use this to change the display order of items.",
+    description: "Reorder a nest by positioning it before or after another nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1249,7 +1240,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_bulk_reorder",
-    description: "Bulk reorder multiple nests by providing an array of nest IDs in the desired order. You can provide a subset of items - they will be placed at the top in the given order, with remaining items unchanged below. Useful for large containers or search results where you only need to reorder a few items. Updates searchOrder for all nests and order for nests sharing the same parent.",
+    description: "Bulk reorder nests. Provide a subset of IDs — they go to the top in given order, rest unchanged.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1267,7 +1258,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   // Daily plan (requires OAuth token)
   {
     name: "nestr_get_daily_plan",
-    description: "Get the user's personal daily plan - items marked for 'today'. Returns todos and projects across all contexts: role work from any workspace, personal projects, errands, or anything else the user has chosen to focus on today. Spans all workspaces in scope. Note: Token scope may limit which workspaces are included. Requires OAuth token.",
+    description: "Get the user's daily plan — items marked for today. Spans all workspaces. OAuth only.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1339,7 +1330,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   // Current user identity and workspace context — primary entry point
   {
     name: "nestr_get_me",
-    description: "CALL THIS FIRST at session start. Returns your identity, operating mode, and accessible workspaces. With `fullWorkspaces: true`, includes full workspace details (purpose, governance type, user access roles) — use this to establish workspace context without a separate list_workspaces call. If only one workspace exists, it is the active workspace. For multiple workspaces, use names to identify the right one. Returns `authMode: 'api-key'` when using a workspace API key (workspace mode, no user identity).",
+    description: "CALL THIS FIRST at session start. Returns identity, operating mode, and workspaces. Use fullWorkspaces:true to include workspace details.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1351,7 +1342,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   // User tension tools (requires OAuth token)
   {
     name: "nestr_list_my_tensions",
-    description: "List tensions created by or assigned to the current user. Tensions are the primary communication mechanism between roles — check at natural breakpoints: session start, after completing work, when user asks what to do next. Returns both authored and assigned tensions across all workspaces. Requires OAuth token.",
+    description: "List tensions created by or assigned to the current user. Check at session start and natural breakpoints. OAuth only.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1362,7 +1353,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_list_tensions_awaiting_consent",
-    description: "List tensions awaiting the current user's consent vote. Returns governance proposals and other tensions that need the user's input. Check proactively — unprocessed tensions block organizational progress. Requires OAuth token.",
+    description: "List tensions awaiting the current user's consent vote. Check proactively. OAuth only.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1374,7 +1365,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   // Notification tools (requires OAuth token)
   {
     name: "nestr_list_notifications",
-    description: "List in-app notifications for the current user. By default returns only unread notifications. Use 'type' to filter: 'all' (default), 'me' (direct — mentions, replies, reactions, DMs), 'relevant' (delayed — updates, governance). Each notification includes a rendered 'title' (e.g. 'Joost changed Project X in Developer') and optional 'details' array with change descriptions (e.g. 'Item was completed', 'Updated Project status from Backlog to Done'). Check at session start alongside tensions and inbox. Requires OAuth token.",
+    description: "List notifications. Use type 'me' for direct (mentions, replies) or 'relevant' for organizational changes. OAuth only.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1399,7 +1390,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   // Tension tools
   {
     name: "nestr_create_tension",
-    description: "Create a new tension — the fundamental unit of inter-role communication. Tensions represent a gap between current reality and potential. Use for ALL cross-role communication: requesting information, sharing information, requesting outcomes/projects, requesting actions/tasks, or setting expectations (governance). Placement matters: use a role ID as nestId when that role is sensing the tension, or a circle ID for cross-role, governance, or personally sensed tensions.",
+    description: "Create a tension on a role or circle. Tensions drive organizational change. See nestr_help('tension-processing') for guidance on placement and pathways.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1415,7 +1406,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_get_tension",
-    description: "Get a single tension including its current status (draft/proposed/accepted/objected). Use nestr_get_tension_status for detailed per-user voting responses.",
+    description: "Get a single tension with its current status. Use nestr_get_tension_status for per-user voting details.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1428,7 +1419,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_list_tensions",
-    description: "List tensions for a circle or role. Supports search query filtering. Use to find existing governance proposals or pending decisions.",
+    description: "List tensions for a circle or role. Supports search filtering.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1443,7 +1434,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_update_tension",
-    description: "Update a tension's title, description, feeling, or needs. Use to refine the tension statement or add personal context before adding proposal parts.",
+    description: "Update a tension's title, description, feeling, or needs.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1460,7 +1451,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_delete_tension",
-    description: "Delete a tension (soft delete). Use when a tension is no longer relevant or was created in error.",
+    description: "Delete a tension (soft delete).",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1473,7 +1464,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_get_tension_parts",
-    description: "Get all parts of a tension. Each part contains items representing proposed governance changes (with action: create/update/delete/role2circle/circle2role). Review parts to understand what a tension proposes before submitting.",
+    description: "Get all parts (proposed changes) of a tension. Review before submitting.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1486,15 +1477,7 @@ Response includes meta.total showing total matching count. IMPORTANT UI RULE: Th
   },
   {
     name: "nestr_add_tension_part",
-    description: `Add a governance change to a tension. Three modes based on input:
-
-**New item** (no _id): Propose creating a new governance item. Provide title and labels (e.g., ["role"], ["circle"], ["policy"], ["accountability"], ["domain"]). For roles, include accountabilities and/or domains as bulk shorthand.
-
-**Change existing item** (_id provided): Propose changes to an existing governance item. Provide the _id of the item plus fields to change. Supports title/purpose changes, restructuring (parentId to move between circles), conversions (labels to convert role↔circle), user assignment changes (for elections), and accountability/domain changes. When updating a role with _id, if accountabilities/domains arrays are not provided, existing children are auto-copied into the proposal — use nestr_get_tension_part_children to list them and manage individually.
-
-**Remove existing item** (_id only, no other fields): Use nestr_remove_tension_part after adding the part, or use DELETE /parts to propose removal.
-
-The accountabilities/domains arrays are bulk shorthand — they replace all children at once. For individual management (rename, add, remove single accountabilities/domains), use the tension part children tools instead.`,
+    description: "Add or modify a governance proposal on a tension. To add new: omit _id. To modify existing: include _id with changed fields. See nestr_help('tension-processing').",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1517,7 +1500,7 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
   },
   {
     name: "nestr_modify_tension_part",
-    description: "Modify an existing proposal part. Use to refine proposed values after initial creation — e.g., adjust a role's title or purpose. For individual accountability/domain changes, prefer the children endpoint (nestr_get_tension_part_children, etc.).",
+    description: "Modify an existing proposal part. For individual accountability/domain changes, use the children tools.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1540,7 +1523,7 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
   },
   {
     name: "nestr_remove_tension_part",
-    description: "Remove a part from the proposal entirely, or propose deletion of a governance item. When used on a part that references an existing item (_id), this proposes removal of that governance item. When used on a part for a new item, it simply removes the proposal part.",
+    description: "Remove a proposal part, or propose deletion of an existing governance item.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1554,7 +1537,7 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
   },
   {
     name: "nestr_get_tension_part_children",
-    description: "List children (accountabilities/domains) of a proposal part. When a part proposes changes to an existing role (_id), existing accountabilities/domains are auto-copied into the proposal. Use this to see them and then manage individually with create/update/delete children tools.",
+    description: "List accountabilities/domains of a proposal part. Use to review before managing individually.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1611,7 +1594,7 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
   },
   {
     name: "nestr_get_tension_changes",
-    description: "Get the namespaced diff for a proposal part. Returns { nestId, variable, newValue, oldValue } entries showing exactly what will change. Variables are namespaced: role.title, accountability.title, domain.title, policy.title, etc. For creates: oldValue is null. For deletes: newValue is null.",
+    description: "Get the diff for a proposal part showing what will change (oldValue vs newValue).",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1625,7 +1608,7 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
   },
   {
     name: "nestr_get_tension_status",
-    description: "Get detailed status of a tension including per-user voting responses. Returns status (draft/proposed/accepted/objected), individual responses with timestamps, and auto-approval date if set. Use this to check who has voted and the current decision state.",
+    description: "Get detailed tension status with per-user voting responses and timestamps.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1638,7 +1621,7 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
   },
   {
     name: "nestr_update_tension_status",
-    description: "Submit a tension for voting (set to 'proposed') or retract it back to draft. Submitting triggers the async consent/voting process — circle members are notified and can accept or object. Retracting returns it to draft for further editing.",
+    description: "Submit a tension for voting ('proposed') or retract to 'draft'. Submitting notifies circle members.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1653,7 +1636,7 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
   // Graph link tools
   {
     name: "nestr_get_graph_links",
-    description: "Get nests linked via a named graph relation. Use relation 'meeting' on a meeting with direction 'incoming' to get its agenda items (linked tensions), or on a tension with direction 'outgoing' to see which meetings it's on. Supports pagination.",
+    description: "Get nests linked via a named graph relation. Use 'meeting' relation to get agenda items or linked meetings.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1669,7 +1652,7 @@ The accountabilities/domains arrays are bulk shorthand — they replace all chil
   },
   {
     name: "nestr_add_graph_link",
-    description: "Create a bidirectional graph link between two nests. Primary use case: link a tension to a meeting as an agenda item using relation 'meeting' (nestId = tension, targetId = meeting). Links are bidirectional — queryable from either side.",
+    description: "Create a bidirectional graph link between two nests. E.g., link a tension to a meeting as an agenda item.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1751,6 +1734,16 @@ async function _handleToolCall(
 ): Promise<ToolResult> {
   try {
     switch (name) {
+      case "nestr_help": {
+        const parsed = schemas.help.parse(args);
+        const { HELP_TOPICS } = await import("../help/topics.js");
+        const content = HELP_TOPICS[parsed.topic];
+        if (!content) {
+          return { content: [{ type: "text", text: `Unknown topic: "${parsed.topic}". Call nestr_help({ topic: "topics" }) to see available topics.` }] };
+        }
+        return { content: [{ type: "text", text: content }] };
+      }
+
       case "nestr_list_workspaces": {
         const parsed = schemas.listWorkspaces.parse(args);
         const workspaces = await client.listWorkspaces({
