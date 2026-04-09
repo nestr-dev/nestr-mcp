@@ -34,6 +34,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createServer } from "./server.js";
+import { toolDefinitions } from "./tools/index.js";
 import { NestrClient, NestrApiError } from "./api/client.js";
 import {
   getProtectedResourceMetadata,
@@ -222,6 +223,17 @@ app.get("/.well-known/oauth-authorization-server", (req, res) => {
   res.setHeader("Content-Type", "application/json");
   res.setHeader("Cache-Control", "public, max-age=3600");
   res.json(metadata);
+});
+
+// OpenAI Apps domain verification challenge
+// Token is set via OPENAI_CHALLENGE_TOKEN env var during app submission
+app.get("/.well-known/openai-apps-challenge", (_req, res) => {
+  const token = process.env.OPENAI_CHALLENGE_TOKEN;
+  if (!token) {
+    res.status(404).json({ error: "Challenge token not configured" });
+    return;
+  }
+  res.type("text/plain").send(token);
 });
 
 /**
@@ -1162,6 +1174,17 @@ app.post("/mcp", async (req: Request, res: Response) => {
       res.status(503).json({
         jsonrpc: "2.0",
         error: { code: -32000, message: "Server is shutting down, please retry" },
+        id: req.body?.id ?? null,
+      });
+      return;
+    }
+
+    // Allow unauthenticated tools/list for tool scanners (e.g., OpenAI app submission)
+    // Tool definitions are public (published on npm/GitHub), no data is exposed
+    if (!authToken && req.body?.method === "tools/list") {
+      res.json({
+        jsonrpc: "2.0",
+        result: { tools: toolDefinitions },
         id: req.body?.id ?? null,
       });
       return;
