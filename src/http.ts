@@ -104,9 +104,8 @@ app.use(helmet({
   },
 }));
 
-app.use(express.json({ limit: "1mb" }));
-
 // CORS for browser-based MCP clients (e.g., claude.ai)
+// Placed before express.json() so OPTIONS preflight requests skip body parsing
 app.use((req: Request, res: Response, next: NextFunction) => {
   const origin = req.headers.origin;
   const allowedOrigins = [
@@ -126,6 +125,8 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   }
   next();
 });
+
+app.use(express.json({ limit: "1mb" }));
 
 const oauthLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -1566,8 +1567,11 @@ async function shutdown(signal: string) {
 
   for (const sessionId of sessionIds) {
     try {
-      await sessions[sessionId].transport.close();
-      await sessions[sessionId].server.close();
+      const session = sessions[sessionId];
+      if (!session) continue;
+      const { transport, server } = session;
+      await transport.close();
+      await server.close();
       delete sessions[sessionId];
     } catch (error) {
       console.error(`Error closing session ${sessionId}:`, error);
