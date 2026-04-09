@@ -76,10 +76,14 @@ export interface Insight {
   type: string;
   workspaceId: string;
   title: string;
+  description?: string;
   currentValue: number;
   compareValue?: number;
+  groupId?: string;
+  subGroupId?: string;
   dataType?: string;
-  goal?: number;
+  goal?: string;
+  userId?: string;
 }
 
 export interface WorkspaceApp {
@@ -740,17 +744,28 @@ export class NestrClient {
 
   async getInsights(
     workspaceId: string,
-    options?: { includeSubCircles?: boolean; userId?: string }
-  ): Promise<{ status: string; metrics: Insight[] }> {
+    options?: { includeSubCircles?: boolean; userId?: string; nestId?: string; endDate?: string }
+  ): Promise<{ status: string; data: Insight[] }> {
     const params = new URLSearchParams();
     if (options?.includeSubCircles !== undefined) {
       params.set("includeSubCircles", options.includeSubCircles.toString());
     }
     if (options?.userId) params.set("userId", options.userId);
+    if (options?.nestId) params.set("nestId", options.nestId);
+    if (options?.endDate) params.set("endDate", options.endDate);
 
     const query = params.toString();
-    return this.fetch<{ status: string; metrics: Insight[] }>(
+    return this.fetch<{ status: string; data: Insight[] }>(
       `/workspaces/${workspaceId}/insights${query ? `?${query}` : ""}`
+    );
+  }
+
+  async getInsight(
+    workspaceId: string,
+    metricId: string
+  ): Promise<{ status: string; data: Insight }> {
+    return this.fetch<{ status: string; data: Insight }>(
+      `/workspaces/${workspaceId}/insights/${metricId}`
     );
   }
 

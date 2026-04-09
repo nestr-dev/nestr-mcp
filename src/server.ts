@@ -1053,6 +1053,37 @@ Once notifications have been reviewed, use \`nestr_mark_notifications_read\` to 
 
 **Note:** Notification tools require OAuth authentication. They are not available in workspace mode.
 
+## Insights (Organizational Health & Trends)
+
+Nestr tracks self-organization and team health metrics that reveal how well the organization is functioning. When users ask about trends, patterns, or the health of their organization, circles, or teams — check if insights can help answer their question.
+
+**Prerequisite:** The Insights app must be enabled on the workspace. Use \`nestr_get_workspace_apps\` to check. If not enabled, the insights endpoints will return an error.
+
+### Available Metrics
+
+Use \`nestr_get_insights\` to discover what metrics are available. Metrics include things like:
+- **Role awareness** — how well people use their roles
+- **Governance participation** — how actively the team evolves its structure
+- **Circle meeting output** — how productive tactical meetings are
+- **Task completion rates**, overdue items, and activity stats
+
+Each metric includes a \`currentValue\` and a \`compareValue\` (previous period) so you can immediately show whether things are improving or declining.
+
+### Answering Trend Questions
+
+When a user asks about trends or patterns (e.g., "Are we getting better at governance?", "How active has the team been?", "What's our completion rate trend?"):
+
+1. **Discover metrics**: Call \`nestr_get_insights\` to see what's available
+2. **Compare periods**: The \`currentValue\` vs \`compareValue\` on each metric already shows recent direction. Use \`endDate\` to compare different time periods.
+3. **Dive into history**: Use \`nestr_get_insight_history\` with \`from\`/\`to\` dates to get detailed historical data points for a specific metric — this reveals the full trend over time.
+4. **Single metric detail**: Use \`nestr_get_insight\` to get the current state of one specific metric.
+
+### Plan Restrictions
+
+- **All plans**: Workspace-level insights (aggregated across the whole organization)
+- **Pro plan only**: Circle-level insights (\`nestId\` parameter) and user-level insights (\`userId\` parameter). If the workspace is not on a Pro plan, these filters will return a 402 error.
+- \`userId\` and \`nestId\` cannot be combined — user metrics are always workspace-level.
+
 ## MCP Apps (Interactive UI)
 
 Nestr provides interactive UI components that can be embedded in MCP clients that support the \`ui://\` resource protocol.
