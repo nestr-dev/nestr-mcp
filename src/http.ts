@@ -106,6 +106,27 @@ app.use(helmet({
 
 app.use(express.json({ limit: "1mb" }));
 
+// CORS for browser-based MCP clients (e.g., claude.ai)
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const origin = req.headers.origin;
+  const allowedOrigins = [
+    "https://claude.ai",
+    "https://claude.com",
+  ];
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Nestr-API-Key, Mcp-Session-Id");
+    res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
+
 const oauthLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
