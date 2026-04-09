@@ -11,6 +11,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { NestrClient, createClientFromEnv } from "./api/client.js";
+import { VERSION } from "./version.js";
 import { toolDefinitions, handleToolCall } from "./tools/index.js";
 import { getCompletableListHtml, appResources } from "./apps/index.js";
 // Skills instructions are now served on-demand via nestr_help tool (see src/help/topics.ts)
@@ -83,7 +84,7 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
   const server = new Server(
     {
       name: "nestr-mcp",
-      version: "0.1.0",
+      version: VERSION,
       description: "Manage tasks, projects, roles, and circles for self-organizing teams. Built for Holacracy, Sociocracy, and Teal organizations practicing role-based governance and distributed authority. AI-native tool for the future of work - automate workflows and run your autonomous team with AI assistants.",
     },
     {

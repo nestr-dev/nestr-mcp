@@ -64,6 +64,7 @@ import rateLimit from "express-rate-limit";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { VERSION } from "./version.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -165,7 +166,7 @@ app.get("/health", (_req, res) => {
     res.status(503).json({ status: "shutting_down", service: "nestr-mcp" });
     return;
   }
-  res.json({ status: "ok", service: "nestr-mcp" });
+  res.json({ status: "ok", service: "nestr-mcp", version: VERSION });
 });
 
 // Landing page (with optional GTM injection)
