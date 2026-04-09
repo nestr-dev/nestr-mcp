@@ -619,7 +619,7 @@ const destructive = { annotations: { readOnlyHint: false, destructiveHint: true 
 export const toolDefinitions = [
   {
     name: "nestr_help",
-    description: "Get detailed Nestr documentation by topic. Call before unfamiliar operations. Topics: search, labels, nest-model, inbox, daily-plan, notifications, insights, tensions, governance, skills, mcp-apps, authentication, and more. Use topic 'topics' for the full list.",
+    description: "Get detailed Nestr documentation by topic. Call before unfamiliar operations. Topics: search, labels, nest-model, inbox, daily-plan, notifications, insights, tension-processing, skills, mcp-apps, authentication, and more. Use topic 'topics' for the full list.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -790,7 +790,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_nest",
-    description: "Update nest properties. Set parentId to move. Only send fields you want to change. For governance changes, prefer tensions.",
+    description: "Update nest properties. Set parentId to move. Only send fields you want to change. For governance changes, prefer tensions. See nestr_help('nest-model') for fields and data namespacing.",
     inputSchema: {
       type: "object" as const,
       properties: {
