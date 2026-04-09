@@ -167,7 +167,7 @@ When in doubt with \`custom\`, explain concepts in plain language rather than as
 - **Workspace**: Top-level container - either an organization's anchor circle or a personal workspace
 - **Nest**: The universal building block - can be a task, project, role, circle, meeting, or any work item
 - **Circle**: A self-governing team with defined purpose, roles, and accountabilities (Holacracy/Sociocracy concept)
-- **Role**: A set of responsibilities (accountabilities) and decision rights (domains) that a person energizes
+- **Role**: A set of responsibilities (accountabilities) and decision rights (domains) that a person energizes. The \`users\` array on a role contains the IDs of people who fill it. Use \`assignee:me label:role\` to find all roles the current user fills, or \`assignee:{userId} label:role\` for any user.
 - **Label**: Tags that define what type of nest something is (e.g., "project", "role", "meeting", "anchor-circle"). A nest without system labels is a todo/action — no "todo" label exists or is needed.
 
 ## Content Format

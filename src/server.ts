@@ -68,6 +68,10 @@ Nestr supports any self-organization approach. When the flavour is clear (check 
 - **purpose, description, comments**: Use HTML, NOT Markdown (\`<b>\` not \`**\`, \`<ul><li>\` not \`-\`)
 - **Linking to nests**: \`https://app.nestr.io/n/{nestId}\` (path is \`/n/\`, NOT \`/nest/\`)
 
+## Role Assignments
+
+The \`users\` array on every nest contains the IDs of assigned users. For roles, \`users\` tells you **who fills (energizes) that role**. To find all roles a user fills, search with \`assignee:me label:role\` or \`assignee:{userId} label:role\`. The \`users\` field is always present in API responses, even when using \`stripDescription: true\`.
+
 ## Best Practices
 
 1. Start with \`nestr_get_me\` to establish context
@@ -76,6 +80,7 @@ Nestr supports any self-organization approach. When the flavour is clear (check 
 4. Check labels to understand nest types — call \`nestr_help({ topic: "labels" })\` for reference
 5. Use hints=true on \`nestr_get_nest\` to surface issues without extra queries
 6. For governance changes in established workspaces, prefer the tension flow
+7. To find who fills a role, check its \`users\` array. To find a user's roles, use \`assignee:{userId} label:role\`
 `.trim();
 
 export function createServer(config: NestrMcpServerConfig = {}): Server {
