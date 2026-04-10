@@ -630,6 +630,33 @@ export const toolDefinitions = [
     ...readOnly,
   },
   {
+    name: "search",
+    description: "Search Nestr for tasks, projects, roles, circles, and more. Returns items with IDs that can be fetched with the fetch tool. Supports operators like label:, assignee:, completed:. Use completed:false for active work. See nestr_help('search') for full syntax.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID to search in" },
+        query: { type: "string", description: "Search query (e.g., 'label:project assignee:me completed:false')" },
+        limit: { type: "number", description: "Max results per page" },
+        page: { type: "number", description: "Page number (1-indexed)" },
+      },
+      required: ["workspaceId", "query"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "fetch",
+    description: "Fetch a Nestr item by ID. Returns full details including title, description, purpose, fields, users, and labels. Use IDs from search results.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest ID to fetch (or comma-separated IDs for batch)" },
+      },
+      required: ["nestId"],
+    },
+    ...readOnly,
+  },
+  {
     name: "nestr_list_workspaces",
     description: "List workspaces. Prefer nestr_get_me with fullWorkspaces:true at session start. Paginated with meta.total.",
     inputSchema: {
@@ -1779,6 +1806,7 @@ async function _handleToolCall(
         return formatResult(workspace);
       }
 
+      case "search":
       case "nestr_search": {
         const parsed = schemas.search.parse(args);
         const results = await client.searchWorkspace(
@@ -1789,6 +1817,7 @@ async function _handleToolCall(
         return formatResult(completableResponse(compactResponse(results), "search", parsed._listTitle || `Search: ${parsed.query}`));
       }
 
+      case "fetch":
       case "nestr_get_nest": {
         const parsed = schemas.getNest.parse(args);
         const nest = await client.getNest(parsed.nestId, {
