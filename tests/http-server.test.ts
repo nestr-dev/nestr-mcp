@@ -37,7 +37,9 @@ describe("HTTP Server", () => {
     it("returns 200 with status ok", async () => {
       const res = await request(app).get("/health");
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ status: "ok", service: "nestr-mcp" });
+      expect(res.body.status).toBe("ok");
+      expect(res.body.service).toBe("nestr-mcp");
+      expect(res.body.version).toBeDefined();
     });
   });
 
