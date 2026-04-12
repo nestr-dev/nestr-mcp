@@ -44,7 +44,13 @@ Strategy is stored in \`fields['circle.strategy']\` for sub-circles, or \`fields
 
 ### Creating Work vs Requesting Work
 
-Only create work directly under a role you (or the human you're assisting) energize. For all other roles, use tensions to request work — this respects role authority.
+**Decision rule — check BEFORE creating anything:**
+1. Identify the accountable role (use \`nestr_get_circle_roles\` or \`nestr_search\`)
+2. Check the role's \`users\` array — does the current user (or the human you're assisting) fill it?
+3. **Yes → use \`nestr_create_nest\`** to create the project/task directly under that role, with \`users: [roleFillerUserId]\`
+4. **No → use \`nestr_create_tension\`** to request the outcome from the accountable role
+
+**Common mistake:** Do NOT create a tension when the user asks you to capture a project or task and they fill the accountable role. Tensions are for inter-role communication, not for creating your own work. If someone says "create a project for X" and they energize the role, use \`nestr_create_nest\` directly.
 
 #### When you energize the role
 
@@ -82,7 +88,10 @@ A project is a desired outcome requiring multiple steps.
 
 **Project status.** Set \`fields: { "project.status": "Current" }\` for active projects. Statuses: \`Future\`, \`Current\`, \`Waiting\`, \`Done\`.
 
-**Creating a project:**
+**Creating a project — \`users\` is required:**
+
+Placing a project under a role does NOT assign it. You MUST include \`users\` with the role filler's user ID, otherwise the project appears unassigned and won't show up in the user's work views.
+
 \`\`\`json
 {
   "parentId": "roleId",
@@ -90,7 +99,7 @@ A project is a desired outcome requiring multiple steps.
   "labels": ["project"],
   "fields": { "project.status": "Current" },
   "description": "<b>Acceptance criteria:</b><ul><li>All endpoints use JWT</li><li>Session-based auth removed</li><li>All tests pass</li><li>API docs updated</li></ul>",
-  "users": ["roleFillerUserId"]
+  "users": ["roleFillerUserId"]  // ← REQUIRED: get from role's users array or nestr_get_me
 }
 \`\`\`
 

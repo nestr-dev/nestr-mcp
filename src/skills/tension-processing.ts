@@ -102,9 +102,9 @@ Then identify the **next physical action** — the very next concrete step.
 
 ### When to Use Tensions vs Nest Tools
 
-**Tension tools** (\`nestr_create_tension\`, \`nestr_add_tension_part\`, etc.): ALL inter-role communication, governance proposals, elections, anything requiring consent.
+**Tension tools** (\`nestr_create_tension\`, \`nestr_add_tension_part\`, etc.): Inter-role communication, governance proposals, elections, anything requiring consent. NEVER use tensions to create operational work (projects, tasks) under roles you or the user energize — that's what nest tools are for.
 
-**Nest tools** (\`nestr_create_nest\`, \`nestr_update_nest\`): Intra-role operational work — tasks, projects, actions within YOUR OWN roles.
+**Nest tools** (\`nestr_create_nest\`, \`nestr_update_nest\`): Operational work — tasks, projects, actions within roles you or the user energize. When the user asks to "capture a project", "create a task", or similar, and they fill the accountable role, always use \`nestr_create_nest\` directly.
 
 ### Tension Workflow
 

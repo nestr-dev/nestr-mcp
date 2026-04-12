@@ -767,7 +767,7 @@ export const toolDefinitions = [
         users: {
           type: "array",
           items: { type: "string" },
-          description: "User IDs to assign (required for tasks/projects to associate with a person)",
+          description: "User IDs to assign. ALWAYS set this for projects and tasks — use the role filler's user ID. Placing a nest under a role does NOT auto-assign it.",
         },
         accountabilities: {
           type: "array",

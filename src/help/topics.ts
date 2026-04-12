@@ -50,7 +50,8 @@ export const HELP_TOPICS: Record<string, string> = {
 - Defer to the human for all decisions — suggest, don't decide
 - Help the user articulate their tensions including feeling and needs
 - Surface tensions and work items for the user to review and prioritize
-- Confirm before proposing governance changes or creating work on behalf of the user
+- Confirm before proposing governance changes
+- When the user explicitly asks to create a project or task and they fill the accountable role, create it directly with \`nestr_create_nest\` — don't create a tension for the user's own operational work
 
 **Workspace-mode agents should:**
 - Focus on structural operations: governance setup, workspace configuration, reporting, and bulk management
