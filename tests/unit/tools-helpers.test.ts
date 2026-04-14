@@ -255,4 +255,16 @@ describe("unescapeRichTextFields", () => {
     const result = unescapeRichTextFields(args);
     expect(result.description).toBe("```js\nconsole.log('hello');\n```");
   });
+
+  it("unescapes Windows-style \\\\r\\\\n line endings", () => {
+    const args = { description: "line1\\r\\nline2\\r\\nline3" };
+    const result = unescapeRichTextFields(args);
+    expect(result.description).toBe("line1\r\nline2\r\nline3");
+  });
+
+  it("unescapes standalone \\\\r", () => {
+    const args = { description: "col1\\rcol2" };
+    const result = unescapeRichTextFields(args);
+    expect(result.description).toBe("col1\rcol2");
+  });
 });

@@ -1726,7 +1726,9 @@ export function unescapeRichTextFields(args: Record<string, unknown>): Record<st
   for (const [key, value] of Object.entries(args)) {
     if (RICH_TEXT_FIELDS.has(key) && typeof value === "string" && value.includes("\\")) {
       result[key] = value
+        .replace(/\\r\\n/g, "\r\n")
         .replace(/\\n/g, "\n")
+        .replace(/\\r/g, "\r")
         .replace(/\\t/g, "\t");
       changed = true;
     } else {
