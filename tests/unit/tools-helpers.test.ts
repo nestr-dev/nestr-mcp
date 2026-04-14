@@ -4,6 +4,7 @@ import {
   enrichHints,
   stripDescriptionFields,
   completableResponse,
+  unescapeRichTextFields,
 } from "../../src/tools/index.js";
 
 // ─── compactResponse ────────────────────────────────────────────────
@@ -204,5 +205,66 @@ describe("completableResponse", () => {
   it("returns empty items for non-array/non-wrapped data", () => {
     const result = completableResponse("not-an-array", "search", "Search");
     expect(result.items).toEqual([]);
+  });
+});
+
+// ─── unescapeRichTextFields ─────────────────────────────────────────
+
+describe("unescapeRichTextFields", () => {
+  it("unescapes \\\\n to real newlines in description", () => {
+    const args = { description: "line1\\nline2\\nline3" };
+    const result = unescapeRichTextFields(args);
+    expect(result.description).toBe("line1\nline2\nline3");
+  });
+
+  it("unescapes \\\\t to real tabs in description", () => {
+    const args = { description: "col1\\tcol2" };
+    const result = unescapeRichTextFields(args);
+    expect(result.description).toBe("col1\tcol2");
+  });
+
+  it("unescapes purpose and body fields", () => {
+    const args = { purpose: "a\\nb", body: "c\\nd" };
+    const result = unescapeRichTextFields(args);
+    expect(result.purpose).toBe("a\nb");
+    expect(result.body).toBe("c\nd");
+  });
+
+  it("does not modify non-rich-text fields", () => {
+    const args = { nestId: "abc\\n123", title: "hello\\nworld", description: "a\\nb" };
+    const result = unescapeRichTextFields(args);
+    expect(result.nestId).toBe("abc\\n123");
+    expect(result.title).toBe("hello\\nworld");
+    expect(result.description).toBe("a\nb");
+  });
+
+  it("returns the same object when no changes needed", () => {
+    const args = { description: "no escapes here", nestId: "123" };
+    const result = unescapeRichTextFields(args);
+    expect(result).toBe(args);
+  });
+
+  it("leaves strings without backslashes untouched", () => {
+    const args = { description: "plain text" };
+    const result = unescapeRichTextFields(args);
+    expect(result).toBe(args);
+  });
+
+  it("handles markdown code blocks correctly", () => {
+    const args = { description: "```js\\nconsole.log('hello');\\n```" };
+    const result = unescapeRichTextFields(args);
+    expect(result.description).toBe("```js\nconsole.log('hello');\n```");
+  });
+
+  it("unescapes Windows-style \\\\r\\\\n line endings", () => {
+    const args = { description: "line1\\r\\nline2\\r\\nline3" };
+    const result = unescapeRichTextFields(args);
+    expect(result.description).toBe("line1\r\nline2\r\nline3");
+  });
+
+  it("unescapes standalone \\\\r", () => {
+    const args = { description: "col1\\rcol2" };
+    const result = unescapeRichTextFields(args);
+    expect(result.description).toBe("col1\rcol2");
   });
 });

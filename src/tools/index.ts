@@ -1707,13 +1707,45 @@ export function stripDescriptionFields(data: unknown): unknown {
 }
 
 // Tool handler - supports stripDescription to reduce response size
+/**
+ * Fix double-escaped newlines in rich-text fields.
+ *
+ * Some MCP clients (LLMs generating JSON tool calls) emit \\n instead of \n
+ * in the JSON string, which after parsing produces the literal two-character
+ * sequence backslash+n rather than a newline. We unescape these so the Nestr
+ * API receives proper newlines/tabs in markdown content.
+ *
+ * Only applied to known rich-text fields to avoid side-effects on IDs or
+ * structured values.
+ */
+const RICH_TEXT_FIELDS = new Set(["description", "purpose", "body"]);
+
+export function unescapeRichTextFields(args: Record<string, unknown>): Record<string, unknown> {
+  let changed = false;
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (RICH_TEXT_FIELDS.has(key) && typeof value === "string" && value.includes("\\")) {
+      result[key] = value
+        .replace(/\\r\\n/g, "\r\n")
+        .replace(/\\n/g, "\n")
+        .replace(/\\r/g, "\r")
+        .replace(/\\t/g, "\t");
+      changed = true;
+    } else {
+      result[key] = value;
+    }
+  }
+  return changed ? result : args;
+}
+
 export async function handleToolCall(
   client: NestrClient,
   name: string,
   args: Record<string, unknown>
 ): Promise<ToolResult> {
-  const shouldStripDescription = args.stripDescription === true;
-  const result = await _handleToolCall(client, name, args);
+  const sanitizedArgs = unescapeRichTextFields(args);
+  const shouldStripDescription = sanitizedArgs.stripDescription === true;
+  const result = await _handleToolCall(client, name, sanitizedArgs);
 
   if (shouldStripDescription && !result.isError) {
     try {
