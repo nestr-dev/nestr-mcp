@@ -1332,13 +1332,13 @@ app.post("/mcp", async (req: Request, res: Response) => {
       tokenProvider: hasStoredSession ? async () => {
         const session = await getOAuthSession(authToken);
         if (!session) {
-          // Stored session expired and refresh failed — remove the MCP session
-          // so the next request triggers re-initialization
+          // Stored session expired and refresh failed — return a 401 error to the client.
+          // Do NOT delete the MCP session here: forcibly removing it from the sessions map
+          // while the MCP protocol is still using it causes "MCP session terminated" errors
+          // and prevents the client from cleanly re-authenticating. Let the client handle
+          // the 401 and reconnect on its own terms.
           const sid = sessionRef?.transport?.sessionId;
-          if (sid && sessions[sid]) {
-            console.log(`OAuth session expired mid-session, removing MCP session: ${sid}`);
-            delete sessions[sid];
-          }
+          console.log(`OAuth session expired mid-session (MCP session: ${sid ?? "unknown"}). Returning 401 to client.`);
           throw new NestrApiError("OAuth session expired", 401, "/", {
             code: "AUTH_FAILED",
             hint: "Your OAuth session has expired or the server was restarted. Reconnect to the MCP server to re-authenticate.",

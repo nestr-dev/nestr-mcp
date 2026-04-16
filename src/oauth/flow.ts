@@ -335,14 +335,23 @@ export async function getOAuthSession(
   if (Date.now() >= session.expiresAt - TOKEN_EXPIRY_BUFFER_MS) {
     // Try to refresh
     if (session.refreshToken) {
-      try {
-        const tokens = await refreshAccessToken(session.refreshToken);
-        await storeOAuthSession(sessionId, tokens);
-        return await store.getSession(sessionId);
-      } catch {
-        // Refresh failed, remove session
-        await store.removeSession(sessionId);
-        return undefined;
+      // Retry once after a short delay to handle transient failures
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const tokens = await refreshAccessToken(session.refreshToken);
+          await storeOAuthSession(sessionId, tokens);
+          return await store.getSession(sessionId);
+        } catch (err) {
+          if (attempt === 0) {
+            console.warn(`Token refresh attempt 1 failed, retrying in 1s:`, err instanceof Error ? err.message : err);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } else {
+            console.error(`Token refresh failed after 2 attempts:`, err instanceof Error ? err.message : err);
+            // Refresh permanently failed, remove session
+            await store.removeSession(sessionId);
+            return undefined;
+          }
+        }
       }
     } else {
       // No refresh token, session expired
