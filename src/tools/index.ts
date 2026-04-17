@@ -228,6 +228,7 @@ export const schemas = {
     description: z.string().optional().describe("The primary content field — use for project details, task context, acceptance criteria, Definition of Done, and any detailed information. Supports Markdown and HTML."),
     purpose: z.string().optional().describe("ONLY for workspaces, circles, and roles — a short aspirational statement of the future state this entity serves. Do NOT put project details, task context, or general information here; use description instead. Supports HTML."),
     labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to apply"),
+    fields: coerceFromJson(z.record(z.unknown())).optional().describe("Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call."),
     users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
     accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes an accountability child nest."),
     domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes a domain child nest."),
@@ -763,6 +764,10 @@ export const toolDefinitions = [
           type: "array",
           items: { type: "string" },
           description: "Label IDs to apply (e.g., 'project', 'role', 'circle')",
+        },
+        fields: {
+          type: "object",
+          description: "Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call.",
         },
         users: {
           type: "array",
@@ -1857,6 +1862,7 @@ async function _handleToolCall(
             purpose: parsed.purpose,
             description: parsed.description,
             labels: parsed.labels,
+            fields: parsed.fields,
             users: parsed.users,
             accountabilities: parsed.accountabilities,
             domains: parsed.domains,
@@ -1885,6 +1891,7 @@ async function _handleToolCall(
           purpose: parsed.purpose,
           description: parsed.description,
           labels: parsed.labels,
+          fields: parsed.fields,
           users: parsed.users,
         });
         return formatResult({ message: "Nest created successfully", nest });

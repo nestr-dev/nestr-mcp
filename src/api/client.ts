@@ -454,6 +454,7 @@ export class NestrClient {
       purpose?: string;
       description?: string;
       labels?: string[];
+      fields?: Record<string, unknown>;
       users?: string[];
       accountabilities?: string[];
       domains?: string[];
@@ -482,6 +483,7 @@ export class NestrClient {
       description?: string;
       parentId?: string;
       labels?: string[];
+      fields?: Record<string, unknown>;
       users?: string[];
       accountabilities?: string[];
       domains?: string[];
