@@ -15,6 +15,7 @@ import type {
   RegisteredClient,
   PendingAuthWithPKCE,
   StoredOAuthSession,
+  StoredMcpSession,
   PkceForCodeData,
 } from "./store.js";
 
@@ -27,6 +28,8 @@ const PENDING_AUTH_FILE = join(STORAGE_DIR, "pending-auth.json");
 const PKCE_FOR_CODE_FILE = join(STORAGE_DIR, "pkce-codes.json");
 const SESSIONS_FILE_ENCRYPTED = join(STORAGE_DIR, "oauth-sessions.enc");
 const SESSIONS_FILE_PLAINTEXT = join(STORAGE_DIR, "oauth-sessions.json");
+const MCP_SESSIONS_FILE_ENCRYPTED = join(STORAGE_DIR, "mcp-sessions.enc");
+const MCP_SESSIONS_FILE_PLAINTEXT = join(STORAGE_DIR, "mcp-sessions.json");
 
 // Encryption constants
 const ALGORITHM = "aes-256-gcm";
@@ -35,6 +38,11 @@ const IV_LENGTH = 16;
 // TTL constants
 const PENDING_AUTH_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const PKCE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const MCP_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+interface McpSessionRecord extends StoredMcpSession {
+  expiresAt: number;
+}
 
 // ============ Encryption helpers ============
 
@@ -106,6 +114,7 @@ class FileStore implements OAuthStore {
   private pendingAuthCache: Map<string, PendingAuthWithPKCE> | null = null;
   private pkceForCodeCache: Map<string, PkceForCodeData> | null = null;
   private sessionsCache: Map<string, StoredOAuthSession> | null = null;
+  private mcpSessionsCache: Map<string, McpSessionRecord> | null = null;
   private cleanupInterval: ReturnType<typeof setInterval>;
 
   constructor() {
@@ -114,6 +123,7 @@ class FileStore implements OAuthStore {
     this.cleanupInterval = setInterval(() => {
       this.cleanupExpiredPendingAuth();
       this.cleanupExpiredSessions();
+      this.cleanupExpiredMcpSessions();
     }, 60000);
   }
 
@@ -389,6 +399,139 @@ class FileStore implements OAuthStore {
     if (cleaned > 0) {
       this.saveSessions();
       console.log(`Cleaned up ${cleaned} expired OAuth sessions`);
+    }
+  }
+
+  // ---- MCP Sessions ----
+
+  private migrateMcpSessionsToEncrypted(key: Buffer): Map<string, McpSessionRecord> | null {
+    if (!existsSync(MCP_SESSIONS_FILE_PLAINTEXT)) return null;
+
+    try {
+      const data = JSON.parse(readFileSync(MCP_SESSIONS_FILE_PLAINTEXT, "utf-8"));
+      const sessions = new Map<string, McpSessionRecord>();
+      const now = Date.now();
+      for (const [sid, record] of Object.entries(data)) {
+        const r = record as McpSessionRecord;
+        if (r.expiresAt > now) sessions.set(sid, r);
+      }
+
+      console.log(`Migrating ${sessions.size} MCP sessions from plaintext to encrypted storage`);
+      const serialized: Record<string, McpSessionRecord> = {};
+      for (const [sid, r] of sessions) serialized[sid] = r;
+      const encrypted = encrypt(JSON.stringify(serialized), key);
+      writeFileSync(MCP_SESSIONS_FILE_ENCRYPTED, encrypted, { mode: 0o600 });
+      unlinkSync(MCP_SESSIONS_FILE_PLAINTEXT);
+      console.log("MCP session migration complete - plaintext file removed");
+
+      return sessions;
+    } catch (error) {
+      console.error("Failed to migrate MCP sessions to encrypted:", error);
+      return null;
+    }
+  }
+
+  private loadMcpSessions(): Map<string, McpSessionRecord> {
+    if (this.mcpSessionsCache) return this.mcpSessionsCache;
+
+    ensureStorageDir();
+    this.mcpSessionsCache = new Map();
+    const now = Date.now();
+    const encryptionKey = getEncryptionKey();
+
+    if (encryptionKey) {
+      if (existsSync(MCP_SESSIONS_FILE_ENCRYPTED)) {
+        try {
+          const encryptedData = readFileSync(MCP_SESSIONS_FILE_ENCRYPTED, "utf-8");
+          const decrypted = decrypt(encryptedData, encryptionKey);
+          const data = JSON.parse(decrypted) as Record<string, McpSessionRecord>;
+          for (const [sid, record] of Object.entries(data)) {
+            if (record.expiresAt > now) this.mcpSessionsCache.set(sid, record);
+          }
+        } catch (error) {
+          console.error("Failed to load encrypted MCP sessions (starting fresh):", error);
+          this.mcpSessionsCache = new Map();
+        }
+      } else {
+        const migrated = this.migrateMcpSessionsToEncrypted(encryptionKey);
+        if (migrated) this.mcpSessionsCache = migrated;
+      }
+    } else {
+      const data = loadJsonFile<McpSessionRecord>(MCP_SESSIONS_FILE_PLAINTEXT);
+      for (const [sid, record] of Object.entries(data)) {
+        if (record.expiresAt > now) this.mcpSessionsCache.set(sid, record);
+      }
+    }
+
+    return this.mcpSessionsCache;
+  }
+
+  private saveMcpSessions(): void {
+    if (!this.mcpSessionsCache) return;
+
+    ensureStorageDir();
+    const data: Record<string, McpSessionRecord> = {};
+    for (const [sid, record] of this.mcpSessionsCache) data[sid] = record;
+
+    const encryptionKey = getEncryptionKey();
+    try {
+      if (encryptionKey) {
+        const encrypted = encrypt(JSON.stringify(data), encryptionKey);
+        writeFileSync(MCP_SESSIONS_FILE_ENCRYPTED, encrypted, { mode: 0o600 });
+      } else {
+        writeFileSync(MCP_SESSIONS_FILE_PLAINTEXT, JSON.stringify(data, null, 2));
+      }
+    } catch (error) {
+      console.error("Failed to save MCP sessions:", error);
+    }
+  }
+
+  async storeMcpSession(sessionId: string, session: StoredMcpSession): Promise<void> {
+    const cache = this.loadMcpSessions();
+    cache.set(sessionId, { ...session, expiresAt: Date.now() + MCP_SESSION_TTL_MS });
+    this.saveMcpSessions();
+  }
+
+  async getMcpSession(sessionId: string): Promise<StoredMcpSession | undefined> {
+    const cache = this.loadMcpSessions();
+    const record = cache.get(sessionId);
+    if (!record) return undefined;
+    if (record.expiresAt <= Date.now()) {
+      cache.delete(sessionId);
+      this.saveMcpSessions();
+      return undefined;
+    }
+    const { expiresAt: _expiresAt, ...session } = record;
+    return session;
+  }
+
+  async touchMcpSession(sessionId: string): Promise<void> {
+    const cache = this.loadMcpSessions();
+    const record = cache.get(sessionId);
+    if (!record) return;
+    record.expiresAt = Date.now() + MCP_SESSION_TTL_MS;
+    this.saveMcpSessions();
+  }
+
+  async removeMcpSession(sessionId: string): Promise<void> {
+    const cache = this.loadMcpSessions();
+    if (cache.delete(sessionId)) {
+      this.saveMcpSessions();
+    }
+  }
+
+  private cleanupExpiredMcpSessions(): void {
+    const cache = this.loadMcpSessions();
+    const now = Date.now();
+    let cleaned = 0;
+    for (const [sid, record] of cache) {
+      if (record.expiresAt <= now) {
+        cache.delete(sid);
+        cleaned++;
+      }
+    }
+    if (cleaned > 0) {
+      this.saveMcpSessions();
     }
   }
 

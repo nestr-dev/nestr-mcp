@@ -999,15 +999,22 @@ export interface SessionData {
   server: Server;
   authToken: string; // API key or OAuth token
   mcpClient?: string; // MCP client name (e.g., "claude-desktop")
+  isApiKey: boolean; // Whether the auth came in via X-Nestr-API-Key
+  wantsJsonOnly: boolean; // Whether the client preferred JSON over SSE at init
+  hasStoredOAuthSession: boolean; // Whether the server holds a refreshable OAuth session for this token
+  userId?: string; // Resolved user ID (or workspace ID for API keys)
+  userName?: string; // Resolved display name
   analytics?: AnalyticsContext; // GA4 analytics context
   toolCallCount?: number; // Count of tool calls for session end tracking
   sessionStartTime?: number; // Session start time for duration tracking
   lastActivityAt: number; // Timestamp of last request (for session coalescing)
   initCallCount: number; // Number of initialize requests coalesced into this session
   sseResponse?: Response; // Active SSE stream response (for liveness check)
+  lastPersistedAt?: number; // Last time we refreshed the Redis TTL (debounced)
 }
 export const sessions: Record<string, SessionData> = {};
 let shuttingDown = false;
+let inFlightRequests = 0;
 
 /**
  * Session coalescing for poorly-behaved clients that create a new MCP connection per tool call.
@@ -1019,8 +1026,13 @@ let shuttingDown = false;
 export const SESSION_COALESCE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 export const SESSION_COALESCE_MAX_INITS = 5;
 const SESSION_STALE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes without activity
+// Debounce for touchMcpSession. We refresh the Redis TTL at most this often
+// so a chatty client doesn't hammer the store.
+const MCP_SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
-// Periodically clean up dead sessions (closed SSE + stale)
+// Periodically clean up dead sessions (closed SSE + stale).
+// We only drop the in-memory entry — the persistent Redis record lives on until
+// its own TTL so a late-returning client can still rehydrate.
 // .unref() so this timer doesn't prevent process exit (tests, graceful shutdown)
 setInterval(() => {
   const now = Date.now();
@@ -1032,6 +1044,22 @@ setInterval(() => {
     }
   }
 }, 60000).unref();
+
+/**
+ * Refresh the Redis TTL of a persisted MCP session, debounced per-session so
+ * an active client doesn't hammer the store.
+ */
+async function maybeTouchMcpSession(sessionId: string, session: SessionData): Promise<void> {
+  const now = Date.now();
+  const last = session.lastPersistedAt ?? 0;
+  if (now - last < MCP_SESSION_TOUCH_INTERVAL_MS) return;
+  session.lastPersistedAt = now;
+  try {
+    await getStore().touchMcpSession(sessionId);
+  } catch (e) {
+    console.error("[McpSession] touch failed:", e instanceof Error ? e.message : e);
+  }
+}
 
 export function findCoalescableSession(authToken: string, mcpClient: string | undefined): { sessionId: string; session: SessionData } | undefined {
   const now = Date.now();
@@ -1086,6 +1114,260 @@ function cacheIdentity(token: string, userId: string, userName?: string) {
 }
 
 /**
+ * Build an in-memory MCP session: NestrClient + MCP server + transport, all
+ * registered in the local sessions map. Used for both fresh sessions (init
+ * request from the client) and rehydrated sessions (sessionId we no longer
+ * hold in memory but exists in Redis from a previous pod).
+ *
+ * For rehydrated sessions, the transport is pre-marked as already initialized
+ * so the SDK skips the init handshake — the client never knows the server
+ * restarted.
+ */
+function buildMcpSession(opts: {
+  authToken: string;
+  isApiKey: boolean;
+  mcpClient?: string;
+  userId?: string;
+  userName?: string;
+  wantsJsonOnly: boolean;
+  hasStoredOAuthSession: boolean;
+  analyticsCtx?: AnalyticsContext;
+  /** When set, skips the init handshake and registers the session immediately under this id. */
+  rehydrateFor?: string;
+}): SessionData {
+  const sessionStartTime = Date.now();
+  let sessionRef: SessionData | undefined;
+
+  const client = new NestrClient({
+    apiKey: opts.authToken,
+    baseUrl: process.env.NESTR_API_BASE,
+    mcpClient: opts.mcpClient,
+    // tokenProvider enables server-side token refresh for stored sessions (browser flow).
+    // In the standard MCP OAuth flow there's no stored session — the client manages refresh.
+    // When tokenProvider is undefined, NestrClient lets 401 propagate to the client.
+    tokenProvider: opts.hasStoredOAuthSession ? async () => {
+      const session = await getOAuthSession(opts.authToken);
+      if (!session) {
+        // Stored session expired and refresh failed — surface a 401 to the
+        // client without ripping the MCP session out from under the protocol.
+        // The HTTP-level pre-check in the POST handler will normally catch
+        // this first; this is the in-flight fallback.
+        const sid = sessionRef?.transport?.sessionId;
+        console.log(`OAuth session expired mid-session (MCP session: ${sid ?? "unknown"}). Returning 401 to client.`);
+        throw new NestrApiError("OAuth session expired", 401, "/", {
+          code: "AUTH_FAILED",
+          hint: "Your OAuth session has expired or the server was restarted. Reconnect to the MCP server to re-authenticate.",
+        });
+      }
+      return session.accessToken;
+    } : undefined,
+  });
+
+  const server = createServer({
+    client,
+    userId: opts.userId,
+    userName: opts.userName,
+    onToolCall: (toolName, args, success, error) => {
+      try {
+        if (sessionRef?.analytics) {
+          if (sessionRef.toolCallCount !== undefined) {
+            sessionRef.toolCallCount++;
+          }
+          analytics.trackToolCall(sessionRef.analytics, {
+            toolName,
+            workspaceId: (args as Record<string, unknown>).workspaceId as string | undefined,
+            success,
+            errorCode: error,
+          });
+        }
+      } catch (e) { console.error("[Analytics] Tool call tracking error:", e); }
+    },
+  });
+
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => opts.rehydrateFor ?? randomUUID(),
+    enableJsonResponse: opts.wantsJsonOnly,
+    onsessioninitialized: (newSessionId) => {
+      // Only fires for fresh sessions — rehydrated transports skip the handshake.
+      console.log(`Session initialized: ${newSessionId}${opts.mcpClient ? ` (client: ${opts.mcpClient})` : ""}`);
+      const sessionData: SessionData = {
+        transport,
+        server,
+        authToken: opts.authToken,
+        mcpClient: opts.mcpClient,
+        isApiKey: opts.isApiKey,
+        wantsJsonOnly: opts.wantsJsonOnly,
+        hasStoredOAuthSession: opts.hasStoredOAuthSession,
+        userId: opts.userId,
+        userName: opts.userName,
+        analytics: opts.analyticsCtx,
+        toolCallCount: 0,
+        sessionStartTime,
+        lastActivityAt: Date.now(),
+        initCallCount: 1,
+        lastPersistedAt: Date.now(),
+      };
+      sessions[newSessionId] = sessionData;
+      sessionRef = sessionData;
+
+      // Persist for rehydration after restart
+      getStore().storeMcpSession(newSessionId, {
+        authToken: opts.authToken,
+        mcpClient: opts.mcpClient,
+        userId: opts.userId,
+        userName: opts.userName,
+        isApiKey: opts.isApiKey,
+        wantsJsonOnly: opts.wantsJsonOnly,
+        hasStoredOAuthSession: opts.hasStoredOAuthSession,
+        createdAt: Date.now(),
+      }).catch(e => console.error("[McpSession] Failed to persist session:", e instanceof Error ? e.message : e));
+
+      if (opts.analyticsCtx) {
+        try {
+          analytics.trackSessionStart(opts.analyticsCtx, {
+            hasToken: true,
+            authMethod: opts.isApiKey ? "api_key" : "oauth",
+          });
+        } catch (e) { console.error("[Analytics] Session start error:", e); }
+      }
+    },
+  });
+
+  transport.onclose = () => {
+    const sid = transport.sessionId;
+    if (sid && sessions[sid]) {
+      const session = sessions[sid];
+      if (session.analytics && session.sessionStartTime) {
+        try {
+          const duration = Math.floor((Date.now() - session.sessionStartTime) / 1000);
+          analytics.trackSessionEnd(session.analytics, {
+            duration,
+            toolCallCount: session.toolCallCount || 0,
+          });
+        } catch (e) { console.error("[Analytics] Session end tracking error:", e); }
+      }
+      console.log(`Session closed: ${sid}`);
+      delete sessions[sid];
+    }
+    // Drop persisted record on explicit close (DELETE /mcp). Pod-shutdown does
+    // NOT call transport.close() so persisted records survive deploys.
+    if (sid) {
+      getStore().removeMcpSession(sid).catch(e =>
+        console.error("[McpSession] Failed to remove persisted session:", e instanceof Error ? e.message : e)
+      );
+    }
+  };
+
+  // For rehydration we mark the transport as already initialized and register
+  // the SessionData immediately. The SDK exposes no public API for this, so
+  // we touch private fields — the alternative is forcing every client to
+  // re-init on every deploy, which is the bug we're fixing.
+  if (opts.rehydrateFor) {
+    const inner = (transport as unknown as { _webStandardTransport: { _initialized: boolean; sessionId?: string } })._webStandardTransport;
+    inner._initialized = true;
+    inner.sessionId = opts.rehydrateFor;
+
+    const sessionData: SessionData = {
+      transport,
+      server,
+      authToken: opts.authToken,
+      mcpClient: opts.mcpClient,
+      isApiKey: opts.isApiKey,
+      wantsJsonOnly: opts.wantsJsonOnly,
+      hasStoredOAuthSession: opts.hasStoredOAuthSession,
+      userId: opts.userId,
+      userName: opts.userName,
+      analytics: opts.analyticsCtx,
+      toolCallCount: 0,
+      sessionStartTime,
+      lastActivityAt: Date.now(),
+      initCallCount: 0,
+      lastPersistedAt: Date.now(),
+    };
+    sessions[opts.rehydrateFor] = sessionData;
+    sessionRef = sessionData;
+    console.log(`[Rehydrate] Rebuilt session ${opts.rehydrateFor} (client: ${opts.mcpClient ?? "unknown"})`);
+    return sessionData;
+  }
+
+  // Fresh session: caller still needs to attach via server.connect(transport)
+  // and call transport.handleRequest() to drive the init handshake.
+  return {
+    transport,
+    server,
+    authToken: opts.authToken,
+    mcpClient: opts.mcpClient,
+    isApiKey: opts.isApiKey,
+    wantsJsonOnly: opts.wantsJsonOnly,
+    hasStoredOAuthSession: opts.hasStoredOAuthSession,
+    userId: opts.userId,
+    userName: opts.userName,
+    analytics: opts.analyticsCtx,
+    lastActivityAt: Date.now(),
+    initCallCount: 0,
+  } as SessionData;
+}
+
+/**
+ * Look up a sessionId in the persistent store and rebuild the in-memory
+ * session if found. Cross-checks the auth token to refuse rehydration when
+ * the request token doesn't match the stored one (defense in depth).
+ *
+ * Returns the rebuilt SessionData (already in `sessions` map) or undefined.
+ */
+async function rehydrateSession(sessionId: string, authToken: string): Promise<SessionData | undefined> {
+  let stored;
+  try {
+    stored = await getStore().getMcpSession(sessionId);
+  } catch (e) {
+    console.error("[Rehydrate] Failed to read MCP session from store:", e instanceof Error ? e.message : e);
+    return undefined;
+  }
+  if (!stored) return undefined;
+
+  // Cross-check token: rotated tokens or hijacking attempts → refuse, force re-init.
+  if (stored.authToken !== authToken) {
+    console.warn(`[Rehydrate] Session ${sessionId} found but token mismatch — refusing rehydration`);
+    return undefined;
+  }
+
+  let analyticsCtx: AnalyticsContext | undefined;
+  try {
+    analyticsCtx = analytics.isEnabled() ? {
+      clientId: analytics.generateClientId(),
+      userId: stored.userId,
+      mcpClient: stored.mcpClient,
+      transport: "http",
+    } : undefined;
+  } catch (e) { console.error("[Analytics] Context creation error:", e); }
+
+  const session = buildMcpSession({
+    authToken: stored.authToken,
+    isApiKey: stored.isApiKey,
+    mcpClient: stored.mcpClient,
+    userId: stored.userId,
+    userName: stored.userName,
+    wantsJsonOnly: stored.wantsJsonOnly,
+    hasStoredOAuthSession: stored.hasStoredOAuthSession,
+    analyticsCtx,
+    rehydrateFor: sessionId,
+  });
+
+  // Wire the protocol layer to the transport. server.connect() doesn't touch
+  // _initialized so our hack stays valid.
+  await session.server.connect(session.transport);
+
+  // Refresh TTL: this session is being actively used.
+  try {
+    await getStore().touchMcpSession(sessionId);
+  } catch (e) {
+    console.error("[McpSession] touch on rehydrate failed:", e instanceof Error ? e.message : e);
+  }
+
+  return session;
+}
+
+/**
  * Extract authentication token from request headers
  *
  * Supports two authentication methods:
@@ -1121,6 +1403,21 @@ function buildWwwAuthenticateHeader(req: Request): string {
   return `Bearer resource_metadata="${metadataUrl}"`;
 }
 
+// In-flight request tracking for /mcp so the shutdown handler can wait for
+// outstanding tool calls to finish before the pod terminates.
+app.use("/mcp", (_req: Request, res: Response, next: NextFunction) => {
+  inFlightRequests++;
+  let decremented = false;
+  const decrement = () => {
+    if (decremented) return;
+    decremented = true;
+    inFlightRequests--;
+  };
+  res.on("finish", decrement);
+  res.on("close", decrement);
+  next();
+});
+
 /**
  * MCP POST endpoint - handles JSON-RPC requests
  */
@@ -1146,18 +1443,44 @@ app.post("/mcp", async (req: Request, res: Response) => {
       req.headers.accept = `${acceptHeader}, text/event-stream`;
     }
 
-    // Check for existing session
-    if (sessionId && sessions[sessionId]) {
-      const session = sessions[sessionId];
-      session.lastActivityAt = Date.now();
-      await session.transport.handleRequest(req, res, req.body);
-      return;
-    }
-
-    // Session ID was provided but not found - return 404 per MCP spec
-    // This signals compliant clients to re-initialize automatically
+    // Check for existing session, or rehydrate from persistent store if the
+    // pod has restarted since this client last connected.
     if (sessionId) {
-      console.log(`Session not found: ${sessionId} (server may have restarted)`);
+      let session: SessionData | undefined = sessions[sessionId];
+      if (!session && authToken) {
+        session = await rehydrateSession(sessionId, authToken) ?? undefined;
+      }
+      if (session) {
+        // For sessions held over from a previous pod, the OAuth token may have
+        // expired. Pre-check before invoking the transport so we can return a
+        // proper HTTP 401 + WWW-Authenticate that triggers MCP client re-auth,
+        // instead of wrapping the failure as a tool error the client ignores.
+        if (session.hasStoredOAuthSession) {
+          const oauthSession = await getOAuthSession(session.authToken);
+          if (!oauthSession) {
+            res.status(401);
+            res.setHeader("WWW-Authenticate", buildWwwAuthenticateHeader(req));
+            res.json({
+              jsonrpc: "2.0",
+              error: {
+                code: -32001,
+                message: "OAuth session expired. Reconnect to re-authenticate.",
+              },
+              id: req.body?.id ?? null,
+            });
+            return;
+          }
+        }
+
+        session.lastActivityAt = Date.now();
+        await maybeTouchMcpSession(sessionId, session);
+        await session.transport.handleRequest(req, res, req.body);
+        return;
+      }
+
+      // Session ID was provided but not found anywhere - return 404 per MCP spec.
+      // Compliant clients will re-initialize automatically.
+      console.log(`Session not found: ${sessionId} (no persisted record either)`);
       res.status(404).json({
         jsonrpc: "2.0",
         error: {
@@ -1312,122 +1635,23 @@ app.post("/mcp", async (req: Request, res: Response) => {
       } : undefined;
     } catch (e) { console.error("[Analytics] Context creation error:", e); }
 
-    // Track tool calls for analytics
-    // We use a mutable ref so the callback can access the session's analytics context
-    // after the session is initialized, and to allow tokenProvider to invalidate the session
-    let sessionRef: SessionData | undefined;
-
     // Check if we have a stored session for this token (browser flow).
     // Standard MCP OAuth clients manage tokens client-side and won't have a stored session.
     const hasStoredSession = !isApiKey && !!(await getStore().getSession(authToken));
 
-    // Create new session with the auth token and MCP client info
-    const client = new NestrClient({
-      apiKey: authToken,
-      baseUrl: process.env.NESTR_API_BASE,
+    const session = buildMcpSession({
+      authToken,
+      isApiKey,
       mcpClient: mcpClientName,
-      // tokenProvider enables server-side token refresh for stored sessions (browser flow).
-      // In the standard MCP OAuth flow, there's no stored session — the client manages refresh.
-      // When tokenProvider is undefined, NestrClient lets 401 propagate to the client.
-      tokenProvider: hasStoredSession ? async () => {
-        const session = await getOAuthSession(authToken);
-        if (!session) {
-          // Stored session expired and refresh failed — return a 401 error to the client.
-          // Do NOT delete the MCP session here: forcibly removing it from the sessions map
-          // while the MCP protocol is still using it causes "MCP session terminated" errors
-          // and prevents the client from cleanly re-authenticating. Let the client handle
-          // the 401 and reconnect on its own terms.
-          const sid = sessionRef?.transport?.sessionId;
-          console.log(`OAuth session expired mid-session (MCP session: ${sid ?? "unknown"}). Returning 401 to client.`);
-          throw new NestrApiError("OAuth session expired", 401, "/", {
-            code: "AUTH_FAILED",
-            hint: "Your OAuth session has expired or the server was restarted. Reconnect to the MCP server to re-authenticate.",
-          });
-        }
-        return session.accessToken;
-      } : undefined,
-    });
-
-    const server = createServer({
-      client,
       userId,
       userName,
-      onToolCall: (toolName, args, success, error) => {
-        try {
-          if (sessionRef?.analytics) {
-            // Increment tool call count
-            if (sessionRef.toolCallCount !== undefined) {
-              sessionRef.toolCallCount++;
-            }
-
-            // Track the tool call
-            analytics.trackToolCall(sessionRef.analytics, {
-              toolName,
-              workspaceId: (args as Record<string, unknown>).workspaceId as string | undefined,
-              success,
-              errorCode: error,
-            });
-          }
-        } catch (e) { console.error("[Analytics] Tool call tracking error:", e); }
-      },
+      wantsJsonOnly,
+      hasStoredOAuthSession: hasStoredSession,
+      analyticsCtx,
     });
 
-    const sessionStartTime = Date.now();
-
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      enableJsonResponse: wantsJsonOnly,
-      onsessioninitialized: (newSessionId) => {
-        console.log(`Session initialized: ${newSessionId}${mcpClientName ? ` (client: ${mcpClientName})` : ""}`);
-        sessions[newSessionId] = {
-          transport,
-          server,
-          authToken,
-          mcpClient: mcpClientName,
-          analytics: analyticsCtx,
-          toolCallCount: 0,
-          sessionStartTime,
-          lastActivityAt: Date.now(),
-          initCallCount: 1, // This is the first (original) init
-        };
-
-        // Set ref for tool call tracking callback
-        sessionRef = sessions[newSessionId];
-
-        // Track session start (wrapped to never break MCP)
-        if (analyticsCtx) {
-          try {
-            analytics.trackSessionStart(analyticsCtx, {
-              hasToken: true,
-              authMethod: isApiKey ? "api_key" : "oauth",
-            });
-          } catch (e) { console.error("[Analytics] Session start error:", e); }
-        }
-      },
-    });
-
-    transport.onclose = () => {
-      const sid = transport.sessionId;
-      if (sid && sessions[sid]) {
-        const session = sessions[sid];
-
-        // Track session end (wrapped to never break MCP)
-        if (session.analytics && session.sessionStartTime) {
-          try {
-            const duration = Math.floor((Date.now() - session.sessionStartTime) / 1000);
-            analytics.trackSessionEnd(session.analytics, {
-              duration,
-              toolCallCount: session.toolCallCount || 0,
-            });
-          } catch (e) { console.error("[Analytics] Session end tracking error:", e); }
-        }
-        console.log(`Session closed: ${sid}`);
-        delete sessions[sid];
-      }
-    };
-
-    await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
+    await session.server.connect(session.transport);
+    await session.transport.handleRequest(req, res, req.body);
   } catch (error) {
     console.error("Error handling MCP POST request:", error);
     if (!res.headersSent) {
@@ -1448,24 +1672,35 @@ app.post("/mcp", async (req: Request, res: Response) => {
  */
 app.get("/mcp", async (req: Request, res: Response) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
+  // Capture auth token before stripping headers, so we can rehydrate.
+  const authToken = getAuthToken(req);
   delete req.headers.authorization;
   delete req.headers["x-nestr-api-key"];
   delete req.headers.cookie;
 
-  if (!sessionId || !sessions[sessionId]) {
+  if (!sessionId) {
     res.status(404).json({
       jsonrpc: "2.0",
-      error: {
-        code: -32001,
-        message: "Session not found",
-      },
+      error: { code: -32001, message: "Session not found" },
+      id: null,
+    });
+    return;
+  }
+
+  let session: SessionData | undefined = sessions[sessionId];
+  if (!session && authToken) {
+    session = await rehydrateSession(sessionId, authToken) ?? undefined;
+  }
+  if (!session) {
+    res.status(404).json({
+      jsonrpc: "2.0",
+      error: { code: -32001, message: "Session not found" },
       id: null,
     });
     return;
   }
 
   console.log(`SSE stream requested for session: ${sessionId}`);
-  const session = sessions[sessionId];
 
   // Track the SSE response for liveness detection (used by session coalescing)
   session.sseResponse = res;
@@ -1497,24 +1732,38 @@ app.get("/mcp", async (req: Request, res: Response) => {
  */
 app.delete("/mcp", async (req: Request, res: Response) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
+  const authToken = getAuthToken(req);
   delete req.headers.authorization;
   delete req.headers["x-nestr-api-key"];
   delete req.headers.cookie;
 
-  if (!sessionId || !sessions[sessionId]) {
+  if (!sessionId) {
     res.status(404).json({
       jsonrpc: "2.0",
-      error: {
-        code: -32001,
-        message: "Session not found",
-      },
+      error: { code: -32001, message: "Session not found" },
+      id: null,
+    });
+    return;
+  }
+
+  let session: SessionData | undefined = sessions[sessionId];
+  if (!session && authToken) {
+    // Rehydrate so we can route the DELETE through the SDK and clean up Redis.
+    session = await rehydrateSession(sessionId, authToken) ?? undefined;
+  }
+  if (!session) {
+    // Even if we can't rehydrate, drop any persisted record so a stale entry
+    // doesn't outlive the client's intent.
+    await getStore().removeMcpSession(sessionId).catch(() => {});
+    res.status(404).json({
+      jsonrpc: "2.0",
+      error: { code: -32001, message: "Session not found" },
       id: null,
     });
     return;
   }
 
   console.log(`Session termination requested: ${sessionId}`);
-  const session = sessions[sessionId];
 
   try {
     await session.transport.handleRequest(req, res);
@@ -1578,28 +1827,33 @@ if (isDirectRun) {
 async function shutdown(signal: string) {
   if (shuttingDown) return; // Prevent double shutdown
   shuttingDown = true;
-  console.log(`\nReceived ${signal}, draining sessions...`);
+  console.log(`\nReceived ${signal}, draining...`);
 
-  // Grace period: let in-flight requests complete and give the load balancer
-  // time to stop routing new traffic (k8s endpoint removal).
-  // Use a longer preStop sleep (e.g., 5s) in k8s to complement this.
-  const DRAIN_TIMEOUT_MS = 5000;
-  await new Promise(resolve => setTimeout(resolve, DRAIN_TIMEOUT_MS));
-
-  const sessionIds = Object.keys(sessions);
-  console.log(`Closing ${sessionIds.length} active session(s)...`);
-
-  for (const sessionId of sessionIds) {
-    try {
-      const session = sessions[sessionId];
-      if (!session) continue;
-      const { transport, server } = session;
-      await transport.close();
-      await server.close();
-      delete sessions[sessionId];
-    } catch (error) {
-      console.error(`Error closing session ${sessionId}:`, error);
+  // Wait for in-flight /mcp requests to finish so the client doesn't see a
+  // mid-tool-call abort. Capped so a stuck request can't block forever.
+  const DRAIN_TIMEOUT_MS = 25000;
+  const POLL_MS = 200;
+  const start = Date.now();
+  while (inFlightRequests > 0 && Date.now() - start < DRAIN_TIMEOUT_MS) {
+    if ((Date.now() - start) % 2000 < POLL_MS) {
+      console.log(`  ${inFlightRequests} request(s) in flight, waiting...`);
     }
+    await new Promise(resolve => setTimeout(resolve, POLL_MS));
+  }
+  if (inFlightRequests > 0) {
+    console.warn(`Drain timeout: ${inFlightRequests} request(s) still in flight, exiting anyway`);
+  }
+
+  // IMPORTANT: do NOT call transport.close() here. That fires onclose, which
+  // removes the session from Redis — and we want persisted sessions to
+  // survive the deploy so clients can rehydrate against the new pod.
+  // Just drop the local map; tcp connections terminate when the pod exits.
+  const count = Object.keys(sessions).length;
+  for (const sid of Object.keys(sessions)) {
+    delete sessions[sid];
+  }
+  if (count > 0) {
+    console.log(`Released ${count} in-memory session handle(s) (persisted records preserved for rehydration)`);
   }
 
   try {

@@ -8,6 +8,7 @@ import type {
   PendingAuthWithPKCE,
   PkceForCodeData,
   StoredOAuthSession,
+  StoredMcpSession,
 } from "../../src/oauth/store.js";
 
 export function createMockStore(): OAuthStore {
@@ -15,6 +16,7 @@ export function createMockStore(): OAuthStore {
   const pendingAuths = new Map<string, PendingAuthWithPKCE>();
   const pkceCodes = new Map<string, PkceForCodeData>();
   const sessions = new Map<string, StoredOAuthSession>();
+  const mcpSessions = new Map<string, StoredMcpSession>();
 
   return {
     async registerClient(client) {
@@ -59,6 +61,19 @@ export function createMockStore(): OAuthStore {
     },
     async removeSession(sessionId) {
       sessions.delete(sessionId);
+    },
+
+    async storeMcpSession(sessionId, session) {
+      mcpSessions.set(sessionId, session);
+    },
+    async getMcpSession(sessionId) {
+      return mcpSessions.get(sessionId);
+    },
+    async touchMcpSession(_sessionId) {
+      // No-op in mock — TTL not modeled
+    },
+    async removeMcpSession(sessionId) {
+      mcpSessions.delete(sessionId);
     },
 
     async close() {},

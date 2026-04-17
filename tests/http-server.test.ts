@@ -345,6 +345,146 @@ describe("HTTP Server", () => {
     });
   });
 
+  // ─── Session Rehydration ──────────────────────────────────────────
+  // Sessions are persisted to the OAuth store on init so they survive a
+  // pod restart. A request with a sessionId not in the local sessions map
+  // should rehydrate from the store transparently.
+
+  describe("POST /mcp — session rehydration", () => {
+    it("rehydrates a persisted session and serves the request", async () => {
+      const sessionId = "rehydrate-target-session";
+      const token = "rehydrate-token";
+
+      // Simulate a session that was created by a previous pod: only the
+      // persisted record exists; the in-memory map is empty.
+      await mockStore.storeMcpSession(sessionId, {
+        authToken: token,
+        mcpClient: "claude-code",
+        userId: "user-123",
+        userName: "Test User",
+        isApiKey: false,
+        wantsJsonOnly: false,
+        hasStoredOAuthSession: false,
+        createdAt: Date.now(),
+      });
+
+      const res = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", `Bearer ${token}`)
+        .set("mcp-session-id", sessionId)
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 1 });
+
+      // Must NOT be 404 — rehydration should make this look like a normal
+      // existing-session request from the SDK's perspective.
+      expect(res.status).not.toBe(404);
+      // Session should now be live in memory.
+      expect(sessions[sessionId]).toBeDefined();
+      expect(sessions[sessionId].authToken).toBe(token);
+      expect(sessions[sessionId].mcpClient).toBe("claude-code");
+    });
+
+    it("refuses rehydration when the request token doesn't match the stored token", async () => {
+      const sessionId = "mismatch-session";
+      await mockStore.storeMcpSession(sessionId, {
+        authToken: "original-token",
+        mcpClient: "claude-code",
+        isApiKey: false,
+        wantsJsonOnly: false,
+        hasStoredOAuthSession: false,
+        createdAt: Date.now(),
+      });
+
+      const res = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", "Bearer different-token")
+        .set("mcp-session-id", sessionId)
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 1 });
+
+      expect(res.status).toBe(404);
+      expect(sessions[sessionId]).toBeUndefined();
+    });
+
+    it("returns 404 when sessionId is unknown to both the local map and the store", async () => {
+      const res = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", "Bearer some-token")
+        .set("mcp-session-id", "totally-unknown-id")
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 1 });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error.message).toMatch(/session not found/i);
+    });
+  });
+
+  // ─── 401 Surfacing for Expired Stored Sessions ────────────────────
+  // When the server holds an OAuth session for a token (browser flow) and
+  // the refresh fails, we must return HTTP 401 + WWW-Authenticate so the
+  // MCP client triggers its re-auth flow — not wrap the failure as a tool
+  // error the client ignores.
+
+  describe("POST /mcp — expired stored OAuth session", () => {
+    it("returns 401 with WWW-Authenticate when the stored OAuth session is gone", async () => {
+      const sessionId = "expired-oauth-session";
+      const token = "expired-token";
+
+      // Persist an MCP session that flagged hasStoredOAuthSession=true.
+      await mockStore.storeMcpSession(sessionId, {
+        authToken: token,
+        mcpClient: "claude-code",
+        isApiKey: false,
+        wantsJsonOnly: false,
+        hasStoredOAuthSession: true,
+        createdAt: Date.now(),
+      });
+      // Deliberately do NOT seed an OAuth session in the store — simulates
+      // an expired/refresh-failed stored session.
+
+      const res = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", `Bearer ${token}`)
+        .set("mcp-session-id", sessionId)
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 1 });
+
+      expect(res.status).toBe(401);
+      expect(res.headers["www-authenticate"]).toMatch(/^Bearer resource_metadata="/);
+    });
+  });
+
+  // ─── DELETE Cleanup ───────────────────────────────────────────────
+
+  describe("DELETE /mcp", () => {
+    it("removes a persisted MCP session from the store even when not in memory", async () => {
+      const sessionId = "delete-me-session";
+      const token = "delete-token";
+
+      await mockStore.storeMcpSession(sessionId, {
+        authToken: token,
+        mcpClient: "claude-code",
+        isApiKey: false,
+        wantsJsonOnly: false,
+        hasStoredOAuthSession: false,
+        createdAt: Date.now(),
+      });
+
+      // No bearer token → can't rehydrate, but we should still drop the
+      // persisted record so it doesn't outlive the client's intent.
+      const res = await request(app)
+        .delete("/mcp")
+        .set("mcp-session-id", sessionId);
+
+      expect(res.status).toBe(404);
+      expect(await mockStore.getMcpSession(sessionId)).toBeUndefined();
+    });
+  });
+
   // ─── OAuth Client Registration ────────────────────────────────────
 
   describe("POST /oauth/register", () => {
