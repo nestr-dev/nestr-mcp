@@ -1446,9 +1446,9 @@ app.post("/mcp", async (req: Request, res: Response) => {
     // Check for existing session, or rehydrate from persistent store if the
     // pod has restarted since this client last connected.
     if (sessionId) {
-      let session = sessions[sessionId];
+      let session: SessionData | undefined = sessions[sessionId];
       if (!session && authToken) {
-        session = await rehydrateSession(sessionId, authToken) ?? undefined as never;
+        session = await rehydrateSession(sessionId, authToken) ?? undefined;
       }
       if (session) {
         // For sessions held over from a previous pod, the OAuth token may have
@@ -1687,9 +1687,9 @@ app.get("/mcp", async (req: Request, res: Response) => {
     return;
   }
 
-  let session = sessions[sessionId];
+  let session: SessionData | undefined = sessions[sessionId];
   if (!session && authToken) {
-    session = await rehydrateSession(sessionId, authToken) ?? undefined as never;
+    session = await rehydrateSession(sessionId, authToken) ?? undefined;
   }
   if (!session) {
     res.status(404).json({
@@ -1746,10 +1746,10 @@ app.delete("/mcp", async (req: Request, res: Response) => {
     return;
   }
 
-  let session = sessions[sessionId];
+  let session: SessionData | undefined = sessions[sessionId];
   if (!session && authToken) {
     // Rehydrate so we can route the DELETE through the SDK and clean up Redis.
-    session = await rehydrateSession(sessionId, authToken) ?? undefined as never;
+    session = await rehydrateSession(sessionId, authToken) ?? undefined;
   }
   if (!session) {
     // Even if we can't rehydrate, drop any persisted record so a stale entry
