@@ -61,6 +61,27 @@ export interface PkceForCodeData {
   createdAt: number;
 }
 
+/**
+ * Persisted MCP session metadata.
+ *
+ * Lets a session survive a pod restart: when a request arrives with a sessionId
+ * we no longer hold in memory, we look it up here and rebuild the in-memory
+ * transport + server so the client never sees a "session terminated" error.
+ *
+ * The transport itself is in-memory only — what we persist is the bag of facts
+ * needed to recreate it (auth, identity, negotiated protocol).
+ */
+export interface StoredMcpSession {
+  authToken: string;
+  mcpClient?: string;
+  userId?: string;
+  userName?: string;
+  isApiKey: boolean;
+  wantsJsonOnly: boolean;
+  hasStoredOAuthSession: boolean;
+  createdAt: number;
+}
+
 // ============ Store Interface ============
 
 export interface OAuthStore {
@@ -83,6 +104,12 @@ export interface OAuthStore {
   getSession(sessionId: string): Promise<StoredOAuthSession | undefined>;
   updateSession(sessionId: string, session: StoredOAuthSession): Promise<void>;
   removeSession(sessionId: string): Promise<void>;
+
+  // MCP Sessions (persisted so sessions survive pod restarts / can be rehydrated)
+  storeMcpSession(sessionId: string, session: StoredMcpSession): Promise<void>;
+  getMcpSession(sessionId: string): Promise<StoredMcpSession | undefined>;
+  touchMcpSession(sessionId: string): Promise<void>;
+  removeMcpSession(sessionId: string): Promise<void>;
 
   // Lifecycle
   close(): Promise<void>;

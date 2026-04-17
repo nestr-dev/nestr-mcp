@@ -17,6 +17,7 @@ import type {
   RegisteredClient,
   PendingAuthWithPKCE,
   StoredOAuthSession,
+  StoredMcpSession,
   PkceForCodeData,
 } from "./store.js";
 
@@ -27,6 +28,7 @@ const PREFIX = {
   pending: "oauth:pending:",
   pkce: "oauth:pkce:",
   session: "oauth:session:",
+  mcpSession: "mcp:session:",
 } as const;
 
 // TTLs in seconds
@@ -34,6 +36,7 @@ const PENDING_AUTH_TTL = 300; // 5 minutes
 const PKCE_TTL = 300; // 5 minutes
 const CLIENT_TTL = 86400; // 24 hours (clients re-register on reconnect)
 const SESSION_REFRESH_TTL = 30 * 86400; // 30 days for sessions with refresh tokens
+const MCP_SESSION_TTL = 7 * 86400; // 7 days — refreshed on every touch
 
 // Encryption constants
 const ALGORITHM = "aes-256-gcm";
@@ -194,6 +197,32 @@ class RedisStore implements OAuthStore {
 
   async removeSession(sessionId: string): Promise<void> {
     await this.redis.del(PREFIX.session + sessionId);
+  }
+
+  // ---- MCP Sessions ----
+
+  async storeMcpSession(sessionId: string, session: StoredMcpSession): Promise<void> {
+    await this.redis.set(
+      PREFIX.mcpSession + sessionId,
+      this.serialize(session),
+      "EX",
+      MCP_SESSION_TTL
+    );
+  }
+
+  async getMcpSession(sessionId: string): Promise<StoredMcpSession | undefined> {
+    const raw = await this.redis.get(PREFIX.mcpSession + sessionId);
+    if (!raw) return undefined;
+    return this.deserialize<StoredMcpSession>(raw);
+  }
+
+  async touchMcpSession(sessionId: string): Promise<void> {
+    // EXPIRE returns 0 if the key doesn't exist — safe no-op for already-evicted sessions
+    await this.redis.expire(PREFIX.mcpSession + sessionId, MCP_SESSION_TTL);
+  }
+
+  async removeMcpSession(sessionId: string): Promise<void> {
+    await this.redis.del(PREFIX.mcpSession + sessionId);
   }
 
   // ---- Lifecycle ----
