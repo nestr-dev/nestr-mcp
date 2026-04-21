@@ -197,6 +197,52 @@ describe("HTTP Server", () => {
       expect(res.status).toBe(200);
       expect(res.headers["mcp-session-id"]).toBeDefined();
     });
+
+    // Regression: Claude Desktop's mcp-remote reconnects after an SSE drop by
+    // sending a fresh `initialize` (no session ID) with the same auth token.
+    // Before the fix, session coalescing routed the new init into the old
+    // already-initialized transport and the SDK returned 400 "Server already
+    // initialized", permanently breaking reconnects until the session idled out.
+    it("replaces a stale same-client session on re-initialize instead of 400ing", async () => {
+      const authHeader = "Bearer reconnect-token";
+      const initBody = {
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-03-26",
+          capabilities: {},
+          clientInfo: { name: "claude-desktop", version: "1.0" },
+        },
+        id: 1,
+      };
+
+      const first = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", authHeader)
+        .send(initBody);
+
+      expect(first.status).toBe(200);
+      const firstSid = first.headers["mcp-session-id"];
+      expect(firstSid).toBeDefined();
+      expect(sessions[firstSid]).toBeDefined();
+
+      // Simulate a reconnect: same auth + client, no session ID.
+      const second = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", authHeader)
+        .send({ ...initBody, id: 2 });
+
+      expect(second.status).toBe(200);
+      const secondSid = second.headers["mcp-session-id"];
+      expect(secondSid).toBeDefined();
+      expect(secondSid).not.toBe(firstSid);
+      expect(sessions[firstSid]).toBeUndefined();
+      expect(sessions[secondSid]).toBeDefined();
+    });
   });
 
   // ─── Session Coalescing ───────────────────────────────────────────
