@@ -1,13 +1,23 @@
-import { describe, it, expect } from "vitest";
-import {
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createMockStore } from "../helpers/mock-store.js";
+
+const mockStore = createMockStore();
+vi.mock("../../src/oauth/store.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/oauth/store.js")>();
+  return {
+    ...actual,
+    getStore: () => mockStore,
+    initStore: vi.fn().mockResolvedValue(mockStore),
+  };
+});
+
+const {
   verifyPKCE,
   generateCodeChallenge,
   generateCodeVerifier,
-} from "../../src/oauth/flow.js";
-import {
-  constantTimeCompare,
-  validateRedirectUri,
-} from "../../src/oauth/storage.js";
+  getOAuthSession,
+} = await import("../../src/oauth/flow.js");
+const { constantTimeCompare, validateRedirectUri } = await import("../../src/oauth/storage.js");
 
 // ─── PKCE ───────────────────────────────────────────────────────────
 
@@ -119,3 +129,87 @@ describe("validateRedirectUri", () => {
     expect(validateRedirectUri(client, "https://example.com:8080/callback")).toBe(false);
   });
 });
+
+// ─── getOAuthSession single-flight refresh ──────────────────────────
+
+describe("getOAuthSession — single-flight refresh", () => {
+  const sessionId = "session-1";
+
+  beforeEach(async () => {
+    await mockStore.removeSession(sessionId);
+    // Need NESTR_OAUTH_CLIENT_ID for refreshAccessToken to proceed
+    process.env.NESTR_OAUTH_CLIENT_ID = "test-client";
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("collapses N concurrent refreshes into a single /token call", async () => {
+    // Store an already-expired session with a refresh token
+    await mockStore.storeSession(sessionId, {
+      accessToken: "old-access-token",
+      refreshToken: "refresh-token-abc",
+      expiresAt: Date.now() - 60_000, // expired 1 min ago
+    });
+
+    let fetchCallCount = 0;
+    const fetchMock = vi.fn(async () => {
+      fetchCallCount++;
+      // Simulate latency so concurrent callers pile up before the first resolves
+      await new Promise((r) => setTimeout(r, 50));
+      return new Response(
+        JSON.stringify({
+          access_token: "new-access-token",
+          refresh_token: "refresh-token-abc",
+          token_type: "Bearer",
+          expires_in: 3600,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Fire 10 concurrent calls
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => getOAuthSession(sessionId))
+    );
+
+    // All callers should get the refreshed session
+    for (const r of results) {
+      expect(r).toBeDefined();
+      expect(r!.accessToken).toBe("new-access-token");
+    }
+
+    // But only ONE network call to /token
+    expect(fetchCallCount).toBe(1);
+  });
+
+  it("allows a fresh refresh after the in-flight one completes", async () => {
+    await mockStore.storeSession(sessionId, {
+      accessToken: "old",
+      refreshToken: "rt",
+      expiresAt: Date.now() - 60_000,
+    });
+
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          access_token: "new",
+          refresh_token: "rt",
+          token_type: "Bearer",
+          expires_in: -60, // still expired — forces next call to refresh again
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getOAuthSession(sessionId);
+    await getOAuthSession(sessionId);
+
+    // Two sequential expired sessions → two refresh calls (the lock released)
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
