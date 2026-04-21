@@ -21,7 +21,7 @@ vi.mock("mcpcat", () => ({
   default: { wrap: (_server: unknown) => _server },
 }));
 
-const { app, sessions, findCoalescableSession, SESSION_COALESCE_MAX_INITS, SESSION_COALESCE_WINDOW_MS } = await import("../src/http.js");
+const { app, sessions, findCoalescableSession, SESSION_COALESCE_WINDOW_MS } = await import("../src/http.js");
 
 describe("HTTP Server", () => {
   beforeEach(() => {
@@ -258,7 +258,6 @@ describe("HTTP Server", () => {
         authToken: "token-a",
         mcpClient: "client-a",
         lastActivityAt: Date.now(),
-        initCallCount: 1,
       } as any;
 
       const result = findCoalescableSession("token-a", "client-a");
@@ -271,7 +270,6 @@ describe("HTTP Server", () => {
         authToken: "token-a",
         mcpClient: "client-a",
         lastActivityAt: Date.now(),
-        initCallCount: 1,
       } as any;
 
       expect(findCoalescableSession("token-b", "client-a")).toBeUndefined();
@@ -282,21 +280,9 @@ describe("HTTP Server", () => {
         authToken: "token-a",
         mcpClient: "client-a",
         lastActivityAt: Date.now(),
-        initCallCount: 1,
       } as any;
 
       expect(findCoalescableSession("token-a", "client-b")).toBeUndefined();
-    });
-
-    it("does not match when initCallCount exceeds limit", () => {
-      sessions["test-session-1"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-        initCallCount: SESSION_COALESCE_MAX_INITS,
-      } as any;
-
-      expect(findCoalescableSession("token-a", "client-a")).toBeUndefined();
     });
 
     it("does not match stale sessions", () => {
@@ -304,7 +290,6 @@ describe("HTTP Server", () => {
         authToken: "token-a",
         mcpClient: "client-a",
         lastActivityAt: Date.now() - SESSION_COALESCE_WINDOW_MS - 60_000, // past the window
-        initCallCount: 1,
       } as any;
 
       expect(findCoalescableSession("token-a", "client-a")).toBeUndefined();
@@ -315,7 +300,6 @@ describe("HTTP Server", () => {
         authToken: "token-a",
         mcpClient: "client-a",
         lastActivityAt: Date.now(),
-        initCallCount: 1,
         sseResponse: { writableEnded: true } as any,
       } as any;
 
@@ -329,7 +313,6 @@ describe("HTTP Server", () => {
         authToken: "token-a",
         mcpClient: "client-a",
         lastActivityAt: Date.now(),
-        initCallCount: 1,
         sseResponse: undefined,
       } as any;
 
@@ -342,7 +325,6 @@ describe("HTTP Server", () => {
         authToken: "token-a",
         mcpClient: "client-a",
         lastActivityAt: Date.now(),
-        initCallCount: 1,
         sseResponse: { writableEnded: false } as any,
       } as any;
 
@@ -355,7 +337,6 @@ describe("HTTP Server", () => {
         authToken: "token-a",
         mcpClient: "client-a",
         lastActivityAt: Date.now(),
-        initCallCount: 1,
         sseResponse: { writableEnded: true } as any,
       } as any;
 
@@ -363,7 +344,6 @@ describe("HTTP Server", () => {
         authToken: "token-a",
         mcpClient: "client-a",
         lastActivityAt: Date.now() - 5000, // older but live SSE
-        initCallCount: 1,
         sseResponse: { writableEnded: false } as any,
       } as any;
 
@@ -376,14 +356,12 @@ describe("HTTP Server", () => {
         authToken: "token-a",
         mcpClient: "client-a",
         lastActivityAt: Date.now() - 5000,
-        initCallCount: 1,
       } as any;
 
       sessions["newer"] = {
         authToken: "token-a",
         mcpClient: "client-a",
         lastActivityAt: Date.now(),
-        initCallCount: 1,
       } as any;
 
       const result = findCoalescableSession("token-a", "client-a");

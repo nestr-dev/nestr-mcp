@@ -1007,8 +1007,7 @@ export interface SessionData {
   analytics?: AnalyticsContext; // GA4 analytics context
   toolCallCount?: number; // Count of tool calls for session end tracking
   sessionStartTime?: number; // Session start time for duration tracking
-  lastActivityAt: number; // Timestamp of last request (for session coalescing)
-  initCallCount: number; // Number of initialize requests coalesced into this session
+  lastActivityAt: number; // Timestamp of last request (for stale-session detection)
   sseResponse?: Response; // Active SSE stream response (for liveness check)
   lastPersistedAt?: number; // Last time we refreshed the Redis TTL (debounced)
 }
@@ -1023,12 +1022,8 @@ let inFlightRequests = 0;
  * init path closes and drops the match so the client gets a fresh, clean
  * session — this prevents "Server already initialized" 400s when a client
  * reconnects after an SSE drop (the transport can only be initialized once).
- *
- * The initCallCount ceiling is a safety net against pathological clients that
- * somehow loop through init without replacing us normally.
  */
 export const SESSION_COALESCE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
-export const SESSION_COALESCE_MAX_INITS = 5;
 const SESSION_STALE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes without activity
 // Debounce for touchMcpSession. We refresh the Redis TTL at most this often
 // so a chatty client doesn't hammer the store.
@@ -1073,7 +1068,6 @@ export function findCoalescableSession(authToken: string, mcpClient: string | un
     if (
       session.authToken === authToken &&
       session.mcpClient === mcpClient &&
-      session.initCallCount < SESSION_COALESCE_MAX_INITS &&
       (now - session.lastActivityAt) < SESSION_COALESCE_WINDOW_MS
     ) {
       const sseAlive = !!(session.sseResponse && !session.sseResponse.writableEnded);
@@ -1208,7 +1202,6 @@ function buildMcpSession(opts: {
         toolCallCount: 0,
         sessionStartTime,
         lastActivityAt: Date.now(),
-        initCallCount: 1,
         lastPersistedAt: Date.now(),
       };
       sessions[newSessionId] = sessionData;
@@ -1285,7 +1278,6 @@ function buildMcpSession(opts: {
       toolCallCount: 0,
       sessionStartTime,
       lastActivityAt: Date.now(),
-      initCallCount: 0,
       lastPersistedAt: Date.now(),
     };
     sessions[opts.rehydrateFor] = sessionData;
@@ -1308,7 +1300,6 @@ function buildMcpSession(opts: {
     userName: opts.userName,
     analytics: opts.analyticsCtx,
     lastActivityAt: Date.now(),
-    initCallCount: 0,
   } as SessionData;
 }
 
