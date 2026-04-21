@@ -319,6 +319,44 @@ export async function storeOAuthSession(
 }
 
 /**
+ * Per-process single-flight map for token refreshes, keyed by sessionId.
+ *
+ * OAuth servers commonly one-shot or rotate refresh tokens, so N concurrent
+ * refreshes for the same session leave N-1 refreshes failing with
+ * invalid_grant and the surviving one sometimes racing into the store. We
+ * coalesce so only the first caller actually hits /token; the rest await the
+ * same promise. Cross-pod races still exist but are much rarer than in-pod
+ * bursts from parallel tool calls.
+ */
+const refreshInFlight = new Map<string, Promise<OAuthSession | undefined>>();
+
+async function refreshAndReload(
+  sessionId: string,
+  refreshToken: string
+): Promise<OAuthSession | undefined> {
+  const store = getStore();
+  // Retry once after a short delay to handle transient failures
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const tokens = await refreshAccessToken(refreshToken);
+      await storeOAuthSession(sessionId, tokens);
+      return await store.getSession(sessionId);
+    } catch (err) {
+      if (attempt === 0) {
+        console.warn(`Token refresh attempt 1 failed, retrying in 1s:`, err instanceof Error ? err.message : err);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } else {
+        console.error(`Token refresh failed after 2 attempts:`, err instanceof Error ? err.message : err);
+        // Refresh permanently failed, remove session
+        await store.removeSession(sessionId);
+        return undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
  * Get an OAuth session, refreshing if needed
  */
 export async function getOAuthSession(
@@ -331,36 +369,27 @@ export async function getOAuthSession(
     return undefined;
   }
 
-  // Check if token is expired (with buffer to allow for refresh)
-  if (Date.now() >= session.expiresAt - TOKEN_EXPIRY_BUFFER_MS) {
-    // Try to refresh
-    if (session.refreshToken) {
-      // Retry once after a short delay to handle transient failures
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const tokens = await refreshAccessToken(session.refreshToken);
-          await storeOAuthSession(sessionId, tokens);
-          return await store.getSession(sessionId);
-        } catch (err) {
-          if (attempt === 0) {
-            console.warn(`Token refresh attempt 1 failed, retrying in 1s:`, err instanceof Error ? err.message : err);
-            await new Promise(resolve => setTimeout(resolve, 1000));
-          } else {
-            console.error(`Token refresh failed after 2 attempts:`, err instanceof Error ? err.message : err);
-            // Refresh permanently failed, remove session
-            await store.removeSession(sessionId);
-            return undefined;
-          }
-        }
-      }
-    } else {
-      // No refresh token, session expired
-      await store.removeSession(sessionId);
-      return undefined;
-    }
+  // Token is still valid — happy path, no refresh needed.
+  if (Date.now() < session.expiresAt - TOKEN_EXPIRY_BUFFER_MS) {
+    return session;
   }
 
-  return session;
+  if (!session.refreshToken) {
+    await store.removeSession(sessionId);
+    return undefined;
+  }
+
+  // Single-flight: if a refresh for this sessionId is already in flight,
+  // await its result instead of kicking off a competing one.
+  const existing = refreshInFlight.get(sessionId);
+  if (existing) {
+    return existing;
+  }
+
+  const promise = refreshAndReload(sessionId, session.refreshToken)
+    .finally(() => refreshInFlight.delete(sessionId));
+  refreshInFlight.set(sessionId, promise);
+  return promise;
 }
 
 /**

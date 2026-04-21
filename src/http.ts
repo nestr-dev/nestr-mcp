@@ -1007,8 +1007,7 @@ export interface SessionData {
   analytics?: AnalyticsContext; // GA4 analytics context
   toolCallCount?: number; // Count of tool calls for session end tracking
   sessionStartTime?: number; // Session start time for duration tracking
-  lastActivityAt: number; // Timestamp of last request (for session coalescing)
-  initCallCount: number; // Number of initialize requests coalesced into this session
+  lastActivityAt: number; // Timestamp of last request (for stale-session detection)
   sseResponse?: Response; // Active SSE stream response (for liveness check)
   lastPersistedAt?: number; // Last time we refreshed the Redis TTL (debounced)
 }
@@ -1017,14 +1016,14 @@ let shuttingDown = false;
 let inFlightRequests = 0;
 
 /**
- * Session coalescing for poorly-behaved clients that create a new MCP connection per tool call.
- * If an initialize request arrives with the same auth token + client name as a recent session
- * (within 10 minutes, fewer than 5 original init requests), reuse the existing session.
- * The initCallCount limit prevents unbounded coalescing — after 5 inits it's either a
- * legitimately new session or a client that needs fixing.
+ * Find a prior session that a re-initializing client is likely trying to replace.
+ *
+ * Matches on (authToken, mcpClient) within a 10-minute window. The POST /mcp
+ * init path closes and drops the match so the client gets a fresh, clean
+ * session — this prevents "Server already initialized" 400s when a client
+ * reconnects after an SSE drop (the transport can only be initialized once).
  */
 export const SESSION_COALESCE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
-export const SESSION_COALESCE_MAX_INITS = 5;
 const SESSION_STALE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes without activity
 // Debounce for touchMcpSession. We refresh the Redis TTL at most this often
 // so a chatty client doesn't hammer the store.
@@ -1069,7 +1068,6 @@ export function findCoalescableSession(authToken: string, mcpClient: string | un
     if (
       session.authToken === authToken &&
       session.mcpClient === mcpClient &&
-      session.initCallCount < SESSION_COALESCE_MAX_INITS &&
       (now - session.lastActivityAt) < SESSION_COALESCE_WINDOW_MS
     ) {
       const sseAlive = !!(session.sseResponse && !session.sseResponse.writableEnded);
@@ -1204,7 +1202,6 @@ function buildMcpSession(opts: {
         toolCallCount: 0,
         sessionStartTime,
         lastActivityAt: Date.now(),
-        initCallCount: 1,
         lastPersistedAt: Date.now(),
       };
       sessions[newSessionId] = sessionData;
@@ -1281,7 +1278,6 @@ function buildMcpSession(opts: {
       toolCallCount: 0,
       sessionStartTime,
       lastActivityAt: Date.now(),
-      initCallCount: 0,
       lastPersistedAt: Date.now(),
     };
     sessions[opts.rehydrateFor] = sessionData;
@@ -1304,7 +1300,6 @@ function buildMcpSession(opts: {
     userName: opts.userName,
     analytics: opts.analyticsCtx,
     lastActivityAt: Date.now(),
-    initCallCount: 0,
   } as SessionData;
 }
 
@@ -1543,17 +1538,25 @@ app.post("/mcp", async (req: Request, res: Response) => {
       return;
     }
 
-    // Session coalescing: if a client sends repeated initialize requests with the same
-    // auth token + client name (common with agent frameworks that create a new connection
-    // per tool call), reuse the existing session instead of creating a new one.
-    const coalescable = findCoalescableSession(authToken, mcpClientName);
-    if (coalescable) {
-      const { sessionId: existingSid, session: existingSession } = coalescable;
-      existingSession.initCallCount++;
-      existingSession.lastActivityAt = Date.now();
-      console.log(`Session coalesced: reusing ${existingSid} for ${mcpClientName || "unknown client"} (init #${existingSession.initCallCount})`);
-      await existingSession.transport.handleRequest(req, res, req.body);
-      return;
+    // Drop any lingering session for the same (auth token, client) before creating a
+    // new one. This happens when a client reconnects after an SSE drop: the old
+    // session is still in memory but its transport is already initialized, so we
+    // can't route a fresh `initialize` through it — the SDK would 400 with
+    // "Server already initialized". Creating a second session alongside the stale
+    // one also leaks memory over time. Close-and-replace is the only safe option.
+    const stale = findCoalescableSession(authToken, mcpClientName);
+    if (stale) {
+      const { sessionId: staleSid, session: staleSession } = stale;
+      console.log(`Replacing stale session ${staleSid} for ${mcpClientName || "unknown client"} on re-init`);
+      try {
+        await staleSession.transport.close();
+      } catch (e) {
+        console.error("[Session] Failed to close stale transport:", e instanceof Error ? e.message : e);
+      }
+      delete sessions[staleSid];
+      await getStore().removeMcpSession(staleSid).catch(e =>
+        console.error("[McpSession] Failed to remove persisted stale session:", e instanceof Error ? e.message : e)
+      );
     }
     if (mcpClientName) {
       console.log(`MCP client: ${mcpClientName}`);
@@ -1707,6 +1710,15 @@ app.get("/mcp", async (req: Request, res: Response) => {
   res.on("close", () => {
     if (session.sseResponse === res) {
       session.sseResponse = undefined;
+    }
+    // Tell the SDK the stream is gone. Without this, its internal
+    // _streamMapping still holds the old entry and the next GET /mcp
+    // for this session returns 409 "Only one SSE stream is allowed".
+    // Safe to call even if the SDK already cleaned up via its own cancel path.
+    try {
+      session.transport.closeStandaloneSSEStream();
+    } catch (e) {
+      console.error("[Session] closeStandaloneSSEStream on socket close failed:", e instanceof Error ? e.message : e);
     }
   });
 
