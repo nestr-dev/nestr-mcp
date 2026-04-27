@@ -1009,6 +1009,7 @@ export interface SessionData {
   sessionStartTime?: number; // Session start time for duration tracking
   lastActivityAt: number; // Timestamp of last request (for stale-session detection)
   sseResponse?: Response; // Active SSE stream response (for liveness check)
+  sseKeepaliveTimer?: NodeJS.Timeout; // Heartbeat timer for the active SSE stream
   lastPersistedAt?: number; // Last time we refreshed the Redis TTL (debounced)
 }
 export const sessions: Record<string, SessionData> = {};
@@ -1024,10 +1025,17 @@ let inFlightRequests = 0;
  * reconnects after an SSE drop (the transport can only be initialized once).
  */
 export const SESSION_COALESCE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
-const SESSION_STALE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes without activity
+// Bumped from 30 → 60min: AI assistants commonly gap 30+ min between Nestr
+// tool bursts (long codebase work between status updates). Keeping the in-memory
+// session avoids a rehydration round-trip on the next call.
+const SESSION_STALE_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes without activity
 // Debounce for touchMcpSession. We refresh the Redis TTL at most this often
 // so a chatty client doesn't hammer the store.
 const MCP_SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+// Keepalive ping interval for standalone SSE streams. Cloud LBs (CloudFlare,
+// AWS ALB, nginx) typically idle-timeout TCP at 60s. Sending a comment line
+// every 25s keeps the connection alive — the SDK doesn't ping on its own.
+const SSE_KEEPALIVE_INTERVAL_MS = 25 * 1000; // 25 seconds
 
 // Periodically clean up dead sessions (closed SSE + stale).
 // We only drop the in-memory entry — the persistent Redis record lives on until
@@ -1039,6 +1047,10 @@ setInterval(() => {
     const sseAlive = session.sseResponse && !session.sseResponse.writableEnded;
     const stale = (now - session.lastActivityAt) > SESSION_STALE_TIMEOUT_MS;
     if (!sseAlive && stale) {
+      if (session.sseKeepaliveTimer) {
+        clearInterval(session.sseKeepaliveTimer);
+        session.sseKeepaliveTimer = undefined;
+      }
       delete sessions[sid];
     }
   }
@@ -1058,6 +1070,36 @@ async function maybeTouchMcpSession(sessionId: string, session: SessionData): Pr
   } catch (e) {
     console.error("[McpSession] touch failed:", e instanceof Error ? e.message : e);
   }
+}
+
+/**
+ * Drop the in-memory + persisted session if the request's auth token differs
+ * from the one the session was created with. The session's NestrClient is bound
+ * to the original token at construction, so calls made under a swapped credential
+ * (user re-authorized, OAuth refresh rotated the access token, switched from
+ * API key to OAuth, etc.) would silently use the stale token and 401 on the
+ * Nestr API. Forcing re-init makes the client present current credentials and
+ * rebuild the session under them.
+ *
+ * Mirrors the token check rehydration already does for cross-pod requests.
+ */
+async function dropSessionOnTokenSwap(
+  sessionId: string,
+  session: SessionData,
+  authToken: string | null,
+): Promise<boolean> {
+  if (!authToken || authToken === session.authToken) return false;
+  console.log(`Token mismatch for session ${sessionId} — closing session, client must re-init`);
+  try {
+    await session.transport.close();
+  } catch (e) {
+    console.error("[Session] Failed to close session on token swap:", e instanceof Error ? e.message : e);
+  }
+  // transport.close() removes from sessions/store via onclose; belt-and-braces
+  // in case the close handler doesn't fire (already-closed transport, etc.).
+  delete sessions[sessionId];
+  await getStore().removeMcpSession(sessionId).catch(() => {});
+  return true;
 }
 
 export function findCoalescableSession(authToken: string, mcpClient: string | undefined): { sessionId: string; session: SessionData } | undefined {
@@ -1234,6 +1276,10 @@ function buildMcpSession(opts: {
     const sid = transport.sessionId;
     if (sid && sessions[sid]) {
       const session = sessions[sid];
+      if (session.sseKeepaliveTimer) {
+        clearInterval(session.sseKeepaliveTimer);
+        session.sseKeepaliveTimer = undefined;
+      }
       if (session.analytics && session.sessionStartTime) {
         try {
           const duration = Math.floor((Date.now() - session.sessionStartTime) / 1000);
@@ -1446,6 +1492,21 @@ app.post("/mcp", async (req: Request, res: Response) => {
         session = await rehydrateSession(sessionId, authToken) ?? undefined;
       }
       if (session) {
+        // Detect credential swap (e.g., user re-OAuthed after using an API key,
+        // OAuth refresh rotated the token). Drop and 404 — the client should
+        // re-initialize under the new credential.
+        if (await dropSessionOnTokenSwap(sessionId, session, authToken)) {
+          res.status(404).json({
+            jsonrpc: "2.0",
+            error: {
+              code: -32001,
+              message: "Session credential changed; re-initialize.",
+            },
+            id: req.body?.id ?? null,
+          });
+          return;
+        }
+
         // For sessions held over from a previous pod, the OAuth token may have
         // expired. Pre-check before invoking the transport so we can return a
         // proper HTTP 401 + WWW-Authenticate that triggers MCP client re-auth,
@@ -1703,11 +1764,48 @@ app.get("/mcp", async (req: Request, res: Response) => {
     return;
   }
 
+  // Drop the session if the auth token has changed under it — same rationale
+  // as the POST handler. The client must re-init before re-opening the SSE.
+  if (await dropSessionOnTokenSwap(sessionId, session, authToken)) {
+    res.status(404).json({
+      jsonrpc: "2.0",
+      error: { code: -32001, message: "Session credential changed; re-initialize." },
+      id: null,
+    });
+    return;
+  }
+
   console.log(`SSE stream requested for session: ${sessionId}`);
 
   // Track the SSE response for liveness detection (used by session coalescing)
   session.sseResponse = res;
+
+  // Heartbeat: SSE comment lines (`:keepalive`) keep the connection alive
+  // through proxies/LBs that would otherwise drop idle TCP after ~60s. The
+  // line is ignored by SSE parsers but produces TCP traffic. Without this,
+  // a dropped SSE forces the client to reconnect (and in some clients, to
+  // tear down and re-init the whole MCP session) on the next tool call.
+  if (session.sseKeepaliveTimer) {
+    clearInterval(session.sseKeepaliveTimer);
+  }
+  session.sseKeepaliveTimer = setInterval(() => {
+    if (res.writableEnded || res.destroyed) {
+      return;
+    }
+    try {
+      res.write(": keepalive\n\n");
+    } catch (e) {
+      console.error("[Session] SSE keepalive write failed:", e instanceof Error ? e.message : e);
+    }
+  }, SSE_KEEPALIVE_INTERVAL_MS);
+  // Don't keep the event loop alive on this timer alone (clean shutdown).
+  session.sseKeepaliveTimer.unref?.();
+
   res.on("close", () => {
+    if (session.sseKeepaliveTimer) {
+      clearInterval(session.sseKeepaliveTimer);
+      session.sseKeepaliveTimer = undefined;
+    }
     if (session.sseResponse === res) {
       session.sseResponse = undefined;
     }
@@ -1767,6 +1865,19 @@ app.delete("/mcp", async (req: Request, res: Response) => {
     // Even if we can't rehydrate, drop any persisted record so a stale entry
     // doesn't outlive the client's intent.
     await getStore().removeMcpSession(sessionId).catch(() => {});
+    res.status(404).json({
+      jsonrpc: "2.0",
+      error: { code: -32001, message: "Session not found" },
+      id: null,
+    });
+    return;
+  }
+
+  // Refuse to terminate someone else's session: DELETE must come from the
+  // same credential that owns the session. Don't drop the session here —
+  // the request isn't authoritative, so just 404.
+  if (authToken && authToken !== session.authToken) {
+    console.log(`DELETE for session ${sessionId} rejected: token mismatch`);
     res.status(404).json({
       jsonrpc: "2.0",
       error: { code: -32001, message: "Session not found" },

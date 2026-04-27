@@ -482,6 +482,85 @@ describe("HTTP Server", () => {
     });
   });
 
+  // ─── Token Swap Detection ─────────────────────────────────────────
+  // The session caches the auth token at construction time and binds its
+  // NestrClient to it. If the request's token differs (user re-OAuthed,
+  // OAuth refresh rotated the token, swapped from API key to OAuth, etc.)
+  // calls would silently use the stale credential. The server must drop the
+  // session and force the client to re-init.
+
+  describe("token swap on existing session", () => {
+    async function initSession(token: string): Promise<string> {
+      const res = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", `Bearer ${token}`)
+        .send({
+          jsonrpc: "2.0",
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "claude-code", version: "1.0" },
+          },
+          id: 1,
+        });
+      expect(res.status).toBe(200);
+      const sid = res.headers["mcp-session-id"];
+      expect(sid).toBeDefined();
+      return sid;
+    }
+
+    it("POST: drops the session and returns 404 when the request token changed", async () => {
+      const sid = await initSession("original-token");
+      expect(sessions[sid]).toBeDefined();
+
+      const res = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", "Bearer rotated-token")
+        .set("mcp-session-id", sid)
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 2 });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error.message).toMatch(/credential changed/i);
+      expect(sessions[sid]).toBeUndefined();
+      // Persisted record should also be cleaned so a rehydrate doesn't revive it.
+      expect(await mockStore.getMcpSession(sid)).toBeUndefined();
+    });
+
+    it("POST: passes through when the request token matches", async () => {
+      const sid = await initSession("steady-token");
+
+      const res = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", "Bearer steady-token")
+        .set("mcp-session-id", sid)
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 2 });
+
+      expect(res.status).not.toBe(404);
+      expect(sessions[sid]).toBeDefined();
+    });
+
+    it("DELETE: refuses when the request token doesn't match (without closing the session)", async () => {
+      const sid = await initSession("owner-token");
+      expect(sessions[sid]).toBeDefined();
+
+      const res = await request(app)
+        .delete("/mcp")
+        .set("Authorization", "Bearer attacker-token")
+        .set("mcp-session-id", sid);
+
+      expect(res.status).toBe(404);
+      // Session must remain intact — a non-owner DELETE is not authoritative.
+      expect(sessions[sid]).toBeDefined();
+    });
+  });
+
   // ─── DELETE Cleanup ───────────────────────────────────────────────
 
   describe("DELETE /mcp", () => {
