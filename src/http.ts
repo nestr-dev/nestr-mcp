@@ -1097,6 +1097,10 @@ async function dropSessionOnTokenSwap(
   }
   // transport.close() removes from sessions/store via onclose; belt-and-braces
   // in case the close handler doesn't fire (already-closed transport, etc.).
+  if (session.sseKeepaliveTimer) {
+    clearInterval(session.sseKeepaliveTimer);
+    session.sseKeepaliveTimer = undefined;
+  }
   delete sessions[sessionId];
   await getStore().removeMcpSession(sessionId).catch(() => {});
   return true;
