@@ -2262,19 +2262,43 @@ async function _handleToolCall(
           }
           return formatResult(result);
         } catch (err) {
-          // If the error is from the tokenProvider (expired OAuth session),
-          // surface it instead of silently falling back to workspace mode.
-          // This prevents get_me from masking expired sessions as "api-key" mode.
-          if (err instanceof NestrApiError && err.message === "OAuth session expired") {
+          // 401 means the token itself is invalid — propagate so callers don't
+          // see a false "success" here while every other tool fails on the
+          // same auth state.
+          if (err instanceof NestrApiError && err.code === "AUTH_FAILED") {
             throw err;
           }
-          // getCurrentUser fails for workspace API keys — no user identity
-          return formatResult({
-            authMode: "api-key",
-            user: null,
-            mode: "workspace",
-            hint: "Using a workspace API key. No user identity — user-scoped features (inbox, daily plan, personal labels, my tensions) are unavailable. You are managing the workspace directly.",
-          });
+          // 403 likely means the token is valid but has no user scope (workspace
+          // API key calling /users/me). Confirm the token actually works on an
+          // endpoint that accepts both OAuth and workspace keys before reporting
+          // "workspace mode" — that way a forbidden coming from anywhere else
+          // (e.g. an unauthorized token that happens to 403) doesn't get masked.
+          if (err instanceof NestrApiError && err.code === "FORBIDDEN") {
+            const workspaceModeResponse = formatResult({
+              authMode: "api-key",
+              user: null,
+              mode: "workspace",
+              hint: "Using a workspace API key. No user identity — user-scoped features (inbox, daily plan, personal labels, my tensions) are unavailable. You are managing the workspace directly.",
+            });
+            try {
+              await client.listWorkspaces({ limit: 1 });
+              return workspaceModeResponse;
+            } catch (verifyErr) {
+              // The verification's job is to rule out "this token is bad". An
+              // explicit auth failure on listWorkspaces does that — propagate.
+              if (verifyErr instanceof NestrApiError && verifyErr.code === "AUTH_FAILED") {
+                throw verifyErr;
+              }
+              // Anything else (5xx, network, rate limit) is a transient hiccup
+              // on a different endpoint, not evidence that the token is bad.
+              // Don't punish a likely-valid workspace key for a momentary
+              // server issue — return the workspace-mode response we'd have
+              // returned if the verification had succeeded.
+              return workspaceModeResponse;
+            }
+          }
+          // Other errors (expired OAuth session, network, server) — propagate.
+          throw err;
         }
       }
 
