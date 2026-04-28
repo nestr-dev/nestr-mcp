@@ -3,6 +3,33 @@
  * Wrapper for the Nestr REST API
  */
 
+import { createHash } from "node:crypto";
+
+/**
+ * Build a non-reversible fingerprint of a token for log correlation.
+ * Format: `<length>:<sha256-prefix-8>:<last-6>`. Lets an operator compare
+ * against the user's configured token (length + tail match) and correlate
+ * logs across calls (sha256 prefix), without ever recording the full token.
+ */
+function tokenFingerprint(token: string | undefined | null): string {
+  if (!token) return "none";
+  const hash = createHash("sha256").update(token).digest("hex").slice(0, 8);
+  const tail = token.slice(-6);
+  return `${token.length}:${hash}:${tail}`;
+}
+
+function logBearerFingerprintOn401(
+  token: string,
+  method: string,
+  endpoint: string,
+  isRetry: boolean,
+): void {
+  const suffix = isRetry ? " (retry after refresh)" : "";
+  console.log(
+    `[Auth] 401 from Nestr ${method} ${endpoint} — bearer fingerprint=${tokenFingerprint(token)}${suffix}`,
+  );
+}
+
 export interface NestrClientConfig {
   apiKey: string;
   baseUrl?: string;
@@ -250,6 +277,15 @@ export class NestrClient {
 
       const errorText = await response.text().catch(() => "Unknown error");
 
+      // Log a non-reversible fingerprint of the bearer on 401s so we can
+      // confirm what's actually reaching Nestr (e.g. when an MCP proxy is
+      // suspected of rewriting the Authorization header). The log format is
+      // `<length>:<sha256-prefix-8>:<last-6>` — enough to compare against the
+      // user's configured token, but not enough to reconstruct it.
+      if (response.status === 401) {
+        logBearerFingerprintOn401(this.apiKey, options.method || "GET", endpoint, isRetry);
+      }
+
       // Try to parse JSON error response for clearer error messages
       let errorMessage = errorText;
       try {
@@ -280,7 +316,11 @@ export class NestrClient {
       // Set hints based on inferred error code
       switch (error.code) {
         case "AUTH_FAILED":
-          error.hint = "Check your API key or OAuth token is valid.";
+          error.hint =
+            "Token rejected by Nestr (not the same as 'wrong scope' — that returns 403, not 401). " +
+            "Verify the token is current: regenerate the workspace API key, or re-run the OAuth flow. " +
+            "If the same token works via direct curl but fails through an MCP proxy, the proxy may be " +
+            "stripping or replacing the Authorization header.";
           break;
         case "APP_DISABLED":
           error.hint = "Enable this app in workspace settings > Apps.";

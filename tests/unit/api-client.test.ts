@@ -197,6 +197,35 @@ describe("NestrClient", () => {
       expect((err as NestrApiError).code).toBe("FORBIDDEN");
     }
   });
+
+  it("logs a bearer fingerprint on 401 (and not on other statuses)", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    mockFetch.mockResolvedValue(mockResponse(401, { message: "You must be logged in" }));
+    const client = createClient({ apiKey: "nestr_abcdef1234567890abcdef" });
+
+    try {
+      await client.listWorkspaces();
+    } catch {
+      // expected
+    }
+
+    const logs = logSpy.mock.calls.map((args) => args.join(" ")).join("\n");
+    expect(logs).toContain("[Auth] 401 from Nestr");
+    expect(logs).toContain("/workspaces");
+    // Fingerprint format: <length>:<sha256-prefix-8>:<last-6>. Token is 28 chars, last 6 are "abcdef".
+    expect(logs).toMatch(/fingerprint=28:[a-f0-9]{8}:abcdef/);
+    // Full token must never appear in logs.
+    expect(logs).not.toContain("nestr_abcdef1234567890abcdef");
+
+    // 200 path: no fingerprint log.
+    logSpy.mockClear();
+    mockFetch.mockResolvedValue(mockResponse(200, []));
+    await client.listWorkspaces();
+    expect(logSpy).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+  });
 });
 
 // ─── NestrApiError ────────────────────────────────────────────────
