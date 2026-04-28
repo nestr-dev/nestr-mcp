@@ -2274,13 +2274,28 @@ async function _handleToolCall(
           // "workspace mode" — that way a forbidden coming from anywhere else
           // (e.g. an unauthorized token that happens to 403) doesn't get masked.
           if (err instanceof NestrApiError && err.code === "FORBIDDEN") {
-            await client.listWorkspaces({ limit: 1 });
-            return formatResult({
+            const workspaceModeResponse = formatResult({
               authMode: "api-key",
               user: null,
               mode: "workspace",
               hint: "Using a workspace API key. No user identity — user-scoped features (inbox, daily plan, personal labels, my tensions) are unavailable. You are managing the workspace directly.",
             });
+            try {
+              await client.listWorkspaces({ limit: 1 });
+              return workspaceModeResponse;
+            } catch (verifyErr) {
+              // The verification's job is to rule out "this token is bad". An
+              // explicit auth failure on listWorkspaces does that — propagate.
+              if (verifyErr instanceof NestrApiError && verifyErr.code === "AUTH_FAILED") {
+                throw verifyErr;
+              }
+              // Anything else (5xx, network, rate limit) is a transient hiccup
+              // on a different endpoint, not evidence that the token is bad.
+              // Don't punish a likely-valid workspace key for a momentary
+              // server issue — return the workspace-mode response we'd have
+              // returned if the verification had succeeded.
+              return workspaceModeResponse;
+            }
           }
           // Other errors (expired OAuth session, network, server) — propagate.
           throw err;

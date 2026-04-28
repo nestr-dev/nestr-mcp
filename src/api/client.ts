@@ -7,15 +7,25 @@ import { createHash } from "node:crypto";
 
 /**
  * Build a non-reversible fingerprint of a token for log correlation.
- * Format: `<length>:<sha256-prefix-8>:<last-6>`. Lets an operator compare
- * against the user's configured token (length + tail match) and correlate
- * logs across calls (sha256 prefix), without ever recording the full token.
+ * Format: `<length>:<sha256-prefix-8>:<last-6>` for full-length tokens, or
+ * `<length>:<sha256-prefix-8>` (no tail) when the token is too short to
+ * safely expose 6 chars without leaking a meaningful fraction of it.
+ *
+ * Lets an operator compare against their configured token (length + tail)
+ * and correlate logs across calls (sha256 prefix), without ever recording
+ * the full token.
  */
 function tokenFingerprint(token: string | undefined | null): string {
   if (!token) return "none";
   const hash = createHash("sha256").update(token).digest("hex").slice(0, 8);
-  const tail = token.slice(-6);
-  return `${token.length}:${hash}:${tail}`;
+  // Real Nestr tokens are 60+ chars. The MIN_LEN_FOR_TAIL guard is for
+  // pathological inputs (short test tokens, malformed values) where a 6-char
+  // tail would be a non-trivial fraction of the token.
+  const MIN_LEN_FOR_TAIL = 16;
+  if (token.length < MIN_LEN_FOR_TAIL) {
+    return `${token.length}:${hash}`;
+  }
+  return `${token.length}:${hash}:${token.slice(-6)}`;
 }
 
 function logBearerFingerprintOn401(

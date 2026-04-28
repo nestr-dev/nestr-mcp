@@ -226,6 +226,28 @@ describe("NestrClient", () => {
 
     logSpy.mockRestore();
   });
+
+  it("omits the fingerprint tail when the token is too short to safely expose 6 chars", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    mockFetch.mockResolvedValue(mockResponse(401, { message: "Unauthorized" }));
+    // 5-char token: well under the 16-char threshold for including the tail.
+    const shortToken = "short";
+    const client = createClient({ apiKey: shortToken });
+
+    try {
+      await client.listWorkspaces();
+    } catch {
+      // expected
+    }
+
+    const logs = logSpy.mock.calls.map((args) => args.join(" ")).join("\n");
+    // Format: <length>:<sha256-prefix-8> with NO trailing :<tail>.
+    expect(logs).toMatch(/fingerprint=5:[a-f0-9]{8}(?!:)/);
+    expect(logs).not.toContain(shortToken);
+
+    logSpy.mockRestore();
+  });
 });
 
 // ─── NestrApiError ────────────────────────────────────────────────

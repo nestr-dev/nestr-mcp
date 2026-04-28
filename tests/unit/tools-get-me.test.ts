@@ -94,6 +94,26 @@ describe("nestr_get_me error handling", () => {
     });
   });
 
+  it("treats transient verification failures as workspace mode (5xx on listWorkspaces)", async () => {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.includes("/users/me")) {
+        return mockResponse(403, { message: "Forbidden" });
+      }
+      if (url.includes("/workspaces")) {
+        return mockResponse(503, { message: "Service unavailable" });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const result = await handleToolCall(client, "nestr_get_me", {});
+    expect(result.isError).toBeFalsy();
+    const parsed = parseResult(result.content[0].text);
+    expect(parsed).toMatchObject({
+      authMode: "api-key",
+      mode: "workspace",
+    });
+  });
+
   it("propagates server errors instead of masking them as workspace mode", async () => {
     mockFetch.mockImplementation(async (url: string) => {
       if (url.includes("/users/me")) {
