@@ -304,11 +304,6 @@ describe("NestrApiError", () => {
       expect(err.retryable).toBe(false);
     });
 
-    it("AUTH_REFRESH_NOT_ATTEMPTED is retryable (server bug, retry once)", () => {
-      const err = new NestrApiError("server bug", 401, "/", { code: "AUTH_REFRESH_NOT_ATTEMPTED" });
-      expect(err.retryable).toBe(true);
-    });
-
     it("AUTH_PROXY_HEADER_DROPPED is retryable (server bug, retry once)", () => {
       const err = new NestrApiError("header missing", 500, "/", { code: "AUTH_PROXY_HEADER_DROPPED" });
       expect(err.retryable).toBe(true);
@@ -335,7 +330,7 @@ describe("NestrApiError", () => {
   // branch by substring without parsing fields. Three buckets:
   //   - "client should refresh"   → token-rejected on Flow B
   //   - "user must re-OAuth"      → refresh failed on Flow A, or generic 401
-  //   - "server bug"              → AUTH_REFRESH_NOT_ATTEMPTED / AUTH_PROXY_HEADER_DROPPED
+  //   - "server bug"              → AUTH_PROXY_HEADER_DROPPED
   describe("hint LLM-branching substrings", () => {
     let mockFetch: ReturnType<typeof vi.fn>;
     beforeEach(() => {
@@ -375,15 +370,16 @@ describe("NestrApiError", () => {
       expect(err.hint).toMatch(/re-?authenticate|re-?OAuth|reconnect/i);
     });
 
-    it("AUTH_REFRESH_NOT_ATTEMPTED hint flags it as a server bug", () => {
-      // We don't have a public API that emits this code yet (HTTP layer is
-      // the place to set it). Construct directly to validate the contract.
-      const err = new NestrApiError("ought to have refreshed", 401, "/", {
-        code: "AUTH_REFRESH_NOT_ATTEMPTED",
-        hint: "Server bug: refresh should have been attempted. Retry once.",
-      });
-      expect(err.hint).toMatch(/server bug/i);
-      expect(err.retryable).toBe(true);
+    it("AUTH_PROXY_HEADER_DROPPED hint flags it as a server bug", async () => {
+      // Empty apiKey triggers the outbound assertion guard.
+      const client = new NestrClient({ apiKey: "", flow: "B", baseUrl: "https://api.test/api" });
+      try {
+        await client.listWorkspaces();
+      } catch (err) {
+        expect((err as NestrApiError).code).toBe("AUTH_PROXY_HEADER_DROPPED");
+        expect((err as NestrApiError).hint).toMatch(/server bug/i);
+        expect((err as NestrApiError).retryable).toBe(true);
+      }
     });
   });
 });

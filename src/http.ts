@@ -1521,7 +1521,7 @@ function isToolCallRequest(body: unknown): boolean {
 }
 
 /**
- * Pre-flight upstream auth check for tool calls.
+ * Pre-flight upstream auth check.
  *
  * Goal: when the bearer is dead, we want to respond with HTTP 401 +
  * WWW-Authenticate (which triggers the MCP SDK's auto-refresh) instead of a
@@ -1530,14 +1530,17 @@ function isToolCallRequest(body: unknown): boolean {
  *
  * Strategy:
  *   1. If `session.authInvalidated` is set, a previous in-flight call already
- *      saw a 401. Return immediately with HTTP 401, then clear the flag so a
+ *      saw a 401. Return HTTP 401 immediately for any method (tools/call,
+ *      tools/list, ping…) so the client knows to re-auth. Clear the flag so a
  *      subsequent request (after the client refreshes) can re-verify.
- *   2. If we verified the bearer recently (within `AUTH_VERIFY_TTL_MS`), skip.
- *   3. Otherwise probe Nestr with a cheap, idempotent call:
+ *   2. Non-tool methods (tools/list, ping, resources/*) don't talk to Nestr.
+ *      Skip the upstream probe entirely — the next tools/call will catch any
+ *      expired session.
+ *   3. For tools/call, probe Nestr with a cheap, idempotent call:
  *        - Flow A (stored OAuth session): refresh-or-return via getOAuthSession.
- *        - Flow B (Bearer, no stored session): GET /users/me.
- *        - API key: GET /workspaces?limit=1 (API keys can't call /users/me).
- *      A 200 → cache verified-at-now. A 401 → return HTTP 401.
+ *        - Flow B (Bearer, no stored session): GET /users/me, cached 60s.
+ *        - API key: GET /workspaces?limit=1, cached 60s.
+ *      A 200 → cache verified-at-now (Flow B/API key). A 401 → return HTTP 401.
  *
  * Skipped for `nestr_diagnose` since that tool's whole purpose is to be
  * callable without auth.
@@ -1577,8 +1580,11 @@ async function preflightAuthCheck(
     });
   };
 
-  // Cheap, always-on: a previous tool call on this session saw upstream 401.
+  // Always-on: a previous tool call on this session saw upstream 401.
   // Whatever method is being called now, fail fast so the client re-auths.
+  // This stays unconditional (cheap — just a flag check) so an in-flight 401
+  // on a tool call surfaces as transport 401 on whatever the *next* request
+  // happens to be, even if it's a `tools/list` or `ping`.
   if (session.authInvalidated) {
     console.log(`${cidTag()}[Preflight] session previously saw upstream 401 → returning HTTP 401`);
     session.authInvalidated = false; // one-shot: clear so a refreshed retry can re-verify
@@ -1587,9 +1593,14 @@ async function preflightAuthCheck(
     return { blocked: true };
   }
 
-  // Cheap, always-on: Flow A — refresh-or-return without an extra network round-trip.
-  // getOAuthSession refreshes if the access token is near expiry; if the refresh
-  // fails the session is wiped and we surface the 401.
+  // Non-tool calls (`tools/list`, `ping`, `resources/*`, etc.) don't talk to
+  // Nestr, so they don't need an upstream auth check. Skip out before any
+  // Redis read. The next `tools/call` will catch any expired session.
+  if (!isToolCall) return { blocked: false };
+
+  // Flow A: refresh-or-return without an extra Nestr round-trip.
+  // getOAuthSession refreshes if the access token is near expiry; if the
+  // refresh fails the session is wiped and we surface the 401.
   if (session.hasStoredOAuthSession) {
     try {
       const oauthSession = await getOAuthSession(session.authToken);
@@ -1602,13 +1613,9 @@ async function preflightAuthCheck(
       replyWith401("Stored OAuth session could not be revalidated");
       return { blocked: true };
     }
-    // Flow A is free of an extra round-trip — no need to track lastAuthVerifiedAt.
+    // Flow A is satisfied without hitting Nestr; no Flow B probe needed.
+    return { blocked: false };
   }
-
-  // The expensive probe (Flow B + API key) is reserved for tool calls.
-  // tools/list / initialize / ping don't need it — they don't talk to Nestr.
-  if (!isToolCall) return { blocked: false };
-  if (session.hasStoredOAuthSession) return { blocked: false };
 
   const now = Date.now();
   if (session.lastAuthVerifiedAt && now - session.lastAuthVerifiedAt < AUTH_VERIFY_TTL_MS) {

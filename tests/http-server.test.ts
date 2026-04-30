@@ -453,7 +453,7 @@ describe("HTTP Server", () => {
   // error the client ignores.
 
   describe("POST /mcp — expired stored OAuth session", () => {
-    it("returns 401 with WWW-Authenticate when the stored OAuth session is gone", async () => {
+    it("returns 401 with WWW-Authenticate on a tool call when the stored OAuth session is gone", async () => {
       const sessionId = "expired-oauth-session";
       const token = "expired-token";
 
@@ -475,10 +475,46 @@ describe("HTTP Server", () => {
         .set("Accept", "application/json, text/event-stream")
         .set("Authorization", `Bearer ${token}`)
         .set("mcp-session-id", sessionId)
-        .send({ jsonrpc: "2.0", method: "tools/list", id: 1 });
+        .send({
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { name: "nestr_list_workspaces", arguments: {} },
+          id: 1,
+        });
 
       expect(res.status).toBe(401);
       expect(res.headers["www-authenticate"]).toMatch(/^Bearer resource_metadata="/);
+    });
+
+    it("does not probe the OAuth store for non-tool methods (tools/list, ping)", async () => {
+      // A `tools/list` against an expired Flow A session is intentionally
+      // allowed through — listing tools doesn't talk to Nestr, and the next
+      // `tools/call` will catch the expiry. This avoids hitting Redis on
+      // every keep-alive ping for chatty clients.
+      const sessionId = "list-tolerant-session";
+      const token = "list-tolerant-token";
+
+      await mockStore.storeMcpSession(sessionId, {
+        authToken: token,
+        mcpClient: "claude-code",
+        isApiKey: false,
+        wantsJsonOnly: false,
+        hasStoredOAuthSession: true,
+        createdAt: Date.now(),
+      });
+      // Note: no OAuth session seeded — Flow A "expired" state.
+
+      const res = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", `Bearer ${token}`)
+        .set("mcp-session-id", sessionId)
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 1 });
+
+      // tools/list passes through; transport returns 200 with the tool list.
+      expect(res.status).toBe(200);
+      expect(res.headers["www-authenticate"]).toBeUndefined();
     });
   });
 

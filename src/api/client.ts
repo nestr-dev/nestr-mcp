@@ -197,9 +197,6 @@ export type ErrorCode =
   // Auth: Flow A only — server held a refresh token but Nestr rejected the
   // refresh. User must re-OAuth.
   | "AUTH_REFRESH_FAILED"
-  // Auth: server bug — token was expired but the refresh code path didn't run.
-  // Retryable: a retry will normally hit the refresh path correctly.
-  | "AUTH_REFRESH_NOT_ATTEMPTED"
   // Auth: server bug — outbound Authorization header was missing despite the
   // server holding a token. Retryable.
   | "AUTH_PROXY_HEADER_DROPPED"
@@ -278,9 +275,9 @@ export class NestrApiError extends Error {
   private inferRetryable(code: ErrorCode): boolean {
     // Transient errors that may succeed on retry.
     if (code === "RATE_LIMITED" || code === "SERVER_ERROR" || code === "NETWORK_ERROR") return true;
-    // Server bugs are retryable: the bug may not reproduce, and at minimum a
+    // Server bug. Retryable: the bug may not reproduce, and at minimum a
     // retry surfaces the bug to ops faster than a wedged client.
-    if (code === "AUTH_REFRESH_NOT_ATTEMPTED" || code === "AUTH_PROXY_HEADER_DROPPED") return true;
+    if (code === "AUTH_PROXY_HEADER_DROPPED") return true;
     return false;
   }
 

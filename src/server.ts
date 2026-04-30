@@ -88,7 +88,7 @@ Tools accept either an OAuth bearer token (user-scoped) or a workspace API key, 
 - \`AUTH_TOKEN_REJECTED_BY_NESTR\` — Flow B clients refresh themselves; Flow A means the user must reconnect.
 - \`AUTH_REFRESH_FAILED\` — server-side refresh failed; user must reconnect.
 - \`AUTH_SCOPE_INSUFFICIENT\` — token is valid but lacks permission for this action; do not retry.
-- \`AUTH_REFRESH_NOT_ATTEMPTED\` / \`AUTH_PROXY_HEADER_DROPPED\` — server bug. Retry once and report the \`correlationId\`.
+- \`AUTH_PROXY_HEADER_DROPPED\` — server bug. Retry once and report the \`correlationId\`.
 
 ## Best Practices
 

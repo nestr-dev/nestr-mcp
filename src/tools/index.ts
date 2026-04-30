@@ -638,7 +638,7 @@ export const toolDefinitions = [
   {
     name: "nestr_diagnose",
     description:
-      "Server-side auth and session diagnostics. Call this FIRST when any other tool returns an auth error (AUTH_TOKEN_REJECTED_BY_NESTR / AUTH_REFRESH_FAILED / AUTH_NO_TOKEN_PRESENTED / AUTH_PROXY_HEADER_DROPPED). Returns: flow (A=server-managed refresh, B=client-managed refresh, unknown=API key), tokenPresented, tokenFingerprint, lastUpstream401At, lastRefreshAttempt, sessionCorrelationId, serverVersion. Auth: none required — works whether or not the bearer is valid.",
+      "Server-side auth and session diagnostics. Call this FIRST when any other tool returns an auth error (AUTH_TOKEN_REJECTED_BY_NESTR / AUTH_REFRESH_FAILED / AUTH_SCOPE_INSUFFICIENT / AUTH_PROXY_HEADER_DROPPED). Returns: flow (A=server-managed refresh, B=client-managed refresh, unknown=API key), tokenPresented, tokenFingerprint, lastUpstream401At, lastRefreshAttempt, sessionCorrelationId, serverVersion. Auth: none required — works whether or not the bearer is valid.",
     inputSchema: {
       type: "object" as const,
       properties: {},
