@@ -35,7 +35,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createServer } from "./server.js";
 import { toolDefinitions } from "./tools/index.js";
-import { NestrClient, NestrApiError } from "./api/client.js";
+import { NestrClient, NestrApiError, tokenFingerprint } from "./api/client.js";
 import {
   getProtectedResourceMetadata,
   getAuthorizationServerMetadata,
@@ -66,6 +66,9 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import { VERSION } from "./version.js";
+import { runWithContext, cidTag } from "./util/request-context.js";
+import { tryDecodeJwtAge } from "./util/diagnose.js";
+import type { AuthFlow } from "./api/client.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1011,7 +1014,29 @@ export interface SessionData {
   sseResponse?: Response; // Active SSE stream response (for liveness check)
   sseKeepaliveTimer?: NodeJS.Timeout; // Heartbeat timer for the active SSE stream
   lastPersistedAt?: number; // Last time we refreshed the Redis TTL (debounced)
+  /**
+   * Last time we confirmed the bearer is accepted by Nestr (any 2xx response).
+   * Used by the pre-flight auth check to skip a redundant probe inside the cache window.
+   */
+  lastAuthVerifiedAt?: number;
+  /**
+   * Set when an in-flight tool call sees a 401 from Nestr. The next request
+   * pre-flight reads this and returns transport-level HTTP 401 +
+   * WWW-Authenticate so the MCP SDK triggers re-auth.
+   */
+  authInvalidated?: boolean;
+  /** Most recent upstream 401 timestamp — surfaced by `nestr_diagnose`. */
+  lastUpstream401At?: number;
+  /** Most recent refresh attempt — surfaced by `nestr_diagnose` for Flow A. */
+  lastRefreshAttempt?: { at: number; success: boolean; error?: string };
+  /** Stable correlation id for the session itself (not per-request). Useful in bug reports. */
+  sessionCorrelationId?: string;
 }
+
+// How long a successful upstream auth check is good for. 60s is enough to
+// amortize the probe across a normal tool burst without letting a freshly
+// revoked token slip past for too long.
+const AUTH_VERIFY_TTL_MS = 60 * 1000;
 export const sessions: Record<string, SessionData> = {};
 let shuttingDown = false;
 let inFlightRequests = 0;
@@ -1182,29 +1207,44 @@ function buildMcpSession(opts: {
   const sessionStartTime = Date.now();
   let sessionRef: SessionData | undefined;
 
+  const flow: AuthFlow = opts.hasStoredOAuthSession ? "A" : opts.isApiKey ? "unknown" : "B";
+
   const client = new NestrClient({
     apiKey: opts.authToken,
     baseUrl: process.env.NESTR_API_BASE,
     mcpClient: opts.mcpClient,
-    // tokenProvider enables server-side token refresh for stored sessions (browser flow).
+    flow,
+    // tokenProvider enables server-side token refresh for stored sessions (Flow A).
     // In the standard MCP OAuth flow there's no stored session — the client manages refresh.
     // When tokenProvider is undefined, NestrClient lets 401 propagate to the client.
     tokenProvider: opts.hasStoredOAuthSession ? async () => {
       const session = await getOAuthSession(opts.authToken);
       if (!session) {
-        // Stored session expired and refresh failed — surface a 401 to the
-        // client without ripping the MCP session out from under the protocol.
-        // The HTTP-level pre-check in the POST handler will normally catch
-        // this first; this is the in-flight fallback.
+        // Stored session expired and refresh failed — surface a typed
+        // AUTH_REFRESH_FAILED so the client can branch on it. The HTTP-level
+        // pre-check in the POST handler normally catches this first; this is
+        // the in-flight fallback.
         const sid = sessionRef?.transport?.sessionId;
-        console.log(`OAuth session expired mid-session (MCP session: ${sid ?? "unknown"}). Returning 401 to client.`);
+        console.log(`${cidTag()}OAuth session expired mid-session (MCP session: ${sid ?? "unknown"}). Returning AUTH_REFRESH_FAILED to client.`);
         throw new NestrApiError("OAuth session expired", 401, "/", {
-          code: "AUTH_FAILED",
-          hint: "Your OAuth session has expired or the server was restarted. Reconnect to the MCP server to re-authenticate.",
+          code: "AUTH_REFRESH_FAILED",
+          flow: "A",
+          hint: "Server-side refresh failed (session expired or server was restarted). User must reconnect Nestr to re-authenticate.",
         });
       }
       return session.accessToken;
     } : undefined,
+    onUpstreamAuthFailure: () => {
+      if (sessionRef) {
+        sessionRef.authInvalidated = true;
+        sessionRef.lastUpstream401At = Date.now();
+      }
+    },
+    onRefreshAttempt: (result) => {
+      if (sessionRef) {
+        sessionRef.lastRefreshAttempt = result;
+      }
+    },
   });
 
   const server = createServer({
@@ -1226,6 +1266,19 @@ function buildMcpSession(opts: {
         }
       } catch (e) { console.error("[Analytics] Tool call tracking error:", e); }
     },
+    getDiagnose: () => ({
+      flow: opts.hasStoredOAuthSession ? "A" : opts.isApiKey ? "unknown" : "B",
+      tokenPresented: !!opts.authToken,
+      tokenFingerprint: tokenFingerprint(opts.authToken),
+      tokenAge: tryDecodeJwtAge(opts.authToken),
+      lastUpstream401At: sessionRef?.lastUpstream401At,
+      lastRefreshAttempt: sessionRef?.lastRefreshAttempt,
+      sessionCorrelationId: sessionRef?.sessionCorrelationId,
+      hasStoredOAuthSession: opts.hasStoredOAuthSession,
+      isApiKey: opts.isApiKey,
+      mcpClient: opts.mcpClient,
+      userId: opts.userId,
+    }),
   });
 
   const transport = new StreamableHTTPServerTransport({
@@ -1233,7 +1286,7 @@ function buildMcpSession(opts: {
     enableJsonResponse: opts.wantsJsonOnly,
     onsessioninitialized: (newSessionId) => {
       // Only fires for fresh sessions — rehydrated transports skip the handshake.
-      console.log(`Session initialized: ${newSessionId}${opts.mcpClient ? ` (client: ${opts.mcpClient})` : ""}`);
+      console.log(`${cidTag()}Session initialized: ${newSessionId}${opts.mcpClient ? ` (client: ${opts.mcpClient})` : ""}`);
       const sessionData: SessionData = {
         transport,
         server,
@@ -1249,6 +1302,7 @@ function buildMcpSession(opts: {
         sessionStartTime,
         lastActivityAt: Date.now(),
         lastPersistedAt: Date.now(),
+        sessionCorrelationId: randomUUID(),
       };
       sessions[newSessionId] = sessionData;
       sessionRef = sessionData;
@@ -1329,10 +1383,11 @@ function buildMcpSession(opts: {
       sessionStartTime,
       lastActivityAt: Date.now(),
       lastPersistedAt: Date.now(),
+      sessionCorrelationId: randomUUID(),
     };
     sessions[opts.rehydrateFor] = sessionData;
     sessionRef = sessionData;
-    console.log(`[Rehydrate] Rebuilt session ${opts.rehydrateFor} (client: ${opts.mcpClient ?? "unknown"})`);
+    console.log(`${cidTag()}[Rehydrate] Rebuilt session ${opts.rehydrateFor} (client: ${opts.mcpClient ?? "unknown"})`);
     return sessionData;
   }
 
@@ -1438,14 +1493,153 @@ export function getAuthToken(req: Request): string | null {
 }
 
 /**
- * Build WWW-Authenticate header for 401 responses
- * Directs MCP clients to the OAuth protected resource metadata
+ * Build WWW-Authenticate header for 401 responses (RFC 6750 + RFC 9728).
+ *
+ * `resource_metadata` points the MCP client at our metadata endpoint so it can
+ * discover the authorization server. `error` / `error_description` follow
+ * RFC 6750 §3 so a SDK that surfaces the header can display a useful reason.
  */
-function buildWwwAuthenticateHeader(req: Request): string {
+function buildWwwAuthenticateHeader(
+  req: Request,
+  options: { error?: string; errorDescription?: string } = {},
+): string {
   const baseUrl = getServerBaseUrl(req);
   const metadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
+  const parts = [`resource_metadata="${metadataUrl}"`];
+  if (options.error) {
+    parts.push(`error="${options.error}"`);
+  }
+  if (options.errorDescription) {
+    // Keep description ASCII-safe; strip quotes to avoid breaking the header.
+    parts.push(`error_description="${options.errorDescription.replace(/"/g, "'")}"`);
+  }
+  return `Bearer ${parts.join(", ")}`;
+}
 
-  return `Bearer resource_metadata="${metadataUrl}"`;
+function isToolCallRequest(body: unknown): boolean {
+  return !!body && typeof body === "object" && (body as { method?: string }).method === "tools/call";
+}
+
+/**
+ * Pre-flight upstream auth check for tool calls.
+ *
+ * Goal: when the bearer is dead, we want to respond with HTTP 401 +
+ * WWW-Authenticate (which triggers the MCP SDK's auto-refresh) instead of a
+ * `tools/call` JSON-RPC result with `isError: true` (which is invisible to
+ * the SDK's auth machinery — that was the original Cowork bug).
+ *
+ * Strategy:
+ *   1. If `session.authInvalidated` is set, a previous in-flight call already
+ *      saw a 401. Return immediately with HTTP 401, then clear the flag so a
+ *      subsequent request (after the client refreshes) can re-verify.
+ *   2. If we verified the bearer recently (within `AUTH_VERIFY_TTL_MS`), skip.
+ *   3. Otherwise probe Nestr with a cheap, idempotent call:
+ *        - Flow A (stored OAuth session): refresh-or-return via getOAuthSession.
+ *        - Flow B (Bearer, no stored session): GET /users/me.
+ *        - API key: GET /workspaces?limit=1 (API keys can't call /users/me).
+ *      A 200 → cache verified-at-now. A 401 → return HTTP 401.
+ *
+ * Skipped for `nestr_diagnose` since that tool's whole purpose is to be
+ * callable without auth.
+ */
+async function preflightAuthCheck(
+  req: Request,
+  res: Response,
+  session: SessionData,
+  toolName: string | undefined,
+  isToolCall: boolean,
+): Promise<{ blocked: true } | { blocked: false }> {
+  if (toolName === "nestr_diagnose") return { blocked: false };
+
+  const replyWith401 = (errorDescription: string) => {
+    res.status(401);
+    res.setHeader(
+      "WWW-Authenticate",
+      buildWwwAuthenticateHeader(req, { error: "invalid_token", errorDescription }),
+    );
+    res.json({
+      jsonrpc: "2.0",
+      error: {
+        code: -32001,
+        message: "Authentication required. Token rejected by Nestr.",
+        data: {
+          flow: session.hasStoredOAuthSession ? "A" : session.isApiKey ? "unknown" : "B",
+          hint:
+            session.hasStoredOAuthSession
+              ? "Server-side refresh failed. Reconnect Nestr to re-authenticate."
+              : session.isApiKey
+                ? "API key was rejected. Regenerate the workspace API key."
+                : "Bearer was rejected by Nestr. Refresh via /oauth/token, or run a fresh OAuth flow if refresh also fails.",
+          correlationId: session.sessionCorrelationId,
+        },
+      },
+      id: req.body?.id ?? null,
+    });
+  };
+
+  // Cheap, always-on: a previous tool call on this session saw upstream 401.
+  // Whatever method is being called now, fail fast so the client re-auths.
+  if (session.authInvalidated) {
+    console.log(`${cidTag()}[Preflight] session previously saw upstream 401 → returning HTTP 401`);
+    session.authInvalidated = false; // one-shot: clear so a refreshed retry can re-verify
+    session.lastAuthVerifiedAt = undefined;
+    replyWith401("Bearer rejected by Nestr on a prior request");
+    return { blocked: true };
+  }
+
+  // Cheap, always-on: Flow A — refresh-or-return without an extra network round-trip.
+  // getOAuthSession refreshes if the access token is near expiry; if the refresh
+  // fails the session is wiped and we surface the 401.
+  if (session.hasStoredOAuthSession) {
+    try {
+      const oauthSession = await getOAuthSession(session.authToken);
+      if (!oauthSession) {
+        replyWith401("Stored OAuth session has expired and could not be refreshed");
+        return { blocked: true };
+      }
+    } catch (e) {
+      console.error(`${cidTag()}[Preflight] Flow A check failed:`, e instanceof Error ? e.message : e);
+      replyWith401("Stored OAuth session could not be revalidated");
+      return { blocked: true };
+    }
+    // Flow A is free of an extra round-trip — no need to track lastAuthVerifiedAt.
+  }
+
+  // The expensive probe (Flow B + API key) is reserved for tool calls.
+  // tools/list / initialize / ping don't need it — they don't talk to Nestr.
+  if (!isToolCall) return { blocked: false };
+  if (session.hasStoredOAuthSession) return { blocked: false };
+
+  const now = Date.now();
+  if (session.lastAuthVerifiedAt && now - session.lastAuthVerifiedAt < AUTH_VERIFY_TTL_MS) {
+    return { blocked: false };
+  }
+
+  // Flow B / API key: probe upstream with a cheap call.
+  try {
+    const probe = new NestrClient({
+      apiKey: session.authToken,
+      baseUrl: process.env.NESTR_API_BASE,
+      flow: session.isApiKey ? "unknown" : "B",
+    });
+    if (session.isApiKey) {
+      await probe.listWorkspaces({ limit: 1 });
+    } else {
+      await probe.getCurrentUser();
+    }
+    session.lastAuthVerifiedAt = now;
+    return { blocked: false };
+  } catch (e) {
+    if (e instanceof NestrApiError && e.status === 401) {
+      session.lastUpstream401At = now;
+      replyWith401(e.message);
+      return { blocked: true };
+    }
+    // Probe couldn't reach Nestr or hit a non-auth error. Don't fail closed —
+    // a 5xx from Nestr or a network blip shouldn't take the user offline.
+    console.warn(`${cidTag()}[Preflight] probe failed (non-401), allowing through:`, e instanceof Error ? e.message : e);
+    return { blocked: false };
+  }
 }
 
 // In-flight request tracking for /mcp so the shutdown handler can wait for
@@ -1467,6 +1661,11 @@ app.use("/mcp", (_req: Request, res: Response, next: NextFunction) => {
  * MCP POST endpoint - handles JSON-RPC requests
  */
 app.post("/mcp", async (req: Request, res: Response) => {
+  const correlationId = randomUUID();
+  await runWithContext({ correlationId }, () => handleMcpPost(req, res));
+});
+
+async function handleMcpPost(req: Request, res: Response): Promise<void> {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   const authToken = getAuthToken(req);
   const isApiKey = !!req.headers["x-nestr-api-key"];
@@ -1511,26 +1710,23 @@ app.post("/mcp", async (req: Request, res: Response) => {
           return;
         }
 
-        // For sessions held over from a previous pod, the OAuth token may have
-        // expired. Pre-check before invoking the transport so we can return a
-        // proper HTTP 401 + WWW-Authenticate that triggers MCP client re-auth,
-        // instead of wrapping the failure as a tool error the client ignores.
-        if (session.hasStoredOAuthSession) {
-          const oauthSession = await getOAuthSession(session.authToken);
-          if (!oauthSession) {
-            res.status(401);
-            res.setHeader("WWW-Authenticate", buildWwwAuthenticateHeader(req));
-            res.json({
-              jsonrpc: "2.0",
-              error: {
-                code: -32001,
-                message: "OAuth session expired. Reconnect to re-authenticate.",
-              },
-              id: req.body?.id ?? null,
-            });
-            return;
-          }
-        }
+        // Pre-flight upstream auth check. For Flow A this leans on the existing
+        // getOAuthSession refresh-or-return logic; for Flow B (Cowork etc.) it
+        // probes Nestr with /users/me on tool calls. Either way, if the bearer
+        // is dead we respond with HTTP 401 + WWW-Authenticate so the MCP SDK
+        // auto-refreshes — instead of wrapping the failure as a tool error the
+        // client ignores.
+        const toolName = isToolCallRequest(req.body)
+          ? (req.body?.params as { name?: string } | undefined)?.name
+          : undefined;
+        const preflight = await preflightAuthCheck(
+          req,
+          res,
+          session,
+          toolName,
+          isToolCallRequest(req.body),
+        );
+        if (preflight.blocked) return;
 
         session.lastActivityAt = Date.now();
         await maybeTouchMcpSession(sessionId, session);
@@ -1721,7 +1917,7 @@ app.post("/mcp", async (req: Request, res: Response) => {
     await session.server.connect(session.transport);
     await session.transport.handleRequest(req, res, req.body);
   } catch (error) {
-    console.error("Error handling MCP POST request:", error);
+    console.error(`${cidTag()}Error handling MCP POST request:`, error);
     if (!res.headersSent) {
       res.status(500).json({
         jsonrpc: "2.0",
@@ -1733,7 +1929,7 @@ app.post("/mcp", async (req: Request, res: Response) => {
       });
     }
   }
-});
+}
 
 /**
  * MCP GET endpoint - handles SSE streams for server-initiated messages

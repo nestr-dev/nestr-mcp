@@ -69,7 +69,7 @@ describe("nestr_get_me error handling", () => {
     const parsed = parseResult(result.content[0].text);
     expect(parsed).toMatchObject({
       error: true,
-      code: "AUTH_FAILED",
+      code: "AUTH_TOKEN_REJECTED_BY_NESTR",
       status: 401,
     });
   });
@@ -90,7 +90,7 @@ describe("nestr_get_me error handling", () => {
     const parsed = parseResult(result.content[0].text);
     expect(parsed).toMatchObject({
       error: true,
-      code: "AUTH_FAILED",
+      code: "AUTH_TOKEN_REJECTED_BY_NESTR",
     });
   });
 

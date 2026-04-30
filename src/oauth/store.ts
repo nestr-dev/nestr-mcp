@@ -50,6 +50,12 @@ export interface StoredOAuthSession {
   scope?: string;
   /** Nestr user ID for analytics (GA4 user_id) */
   userId?: string;
+  /**
+   * Most recent refresh attempt — for `nestr_diagnose`. We persist this so the
+   * answer survives pod restarts and is consistent across the pool. Cleared
+   * (or replaced) whenever a new refresh runs.
+   */
+  lastRefreshAttempt?: { at: number; success: boolean; error?: string };
 }
 
 /**

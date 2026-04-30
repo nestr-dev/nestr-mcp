@@ -118,7 +118,7 @@ describe("NestrClient", () => {
 
   // ─── Error Classification ──────────────────────────────────────
 
-  it("classifies 401 as AUTH_FAILED", async () => {
+  it("classifies 401 as AUTH_TOKEN_REJECTED_BY_NESTR", async () => {
     mockFetch.mockResolvedValue(mockResponse(401, { message: "Unauthorized" }));
     const client = createClient();
 
@@ -126,7 +126,7 @@ describe("NestrClient", () => {
       await client.listWorkspaces();
     } catch (err) {
       expect(err).toBeInstanceOf(NestrApiError);
-      expect((err as NestrApiError).code).toBe("AUTH_FAILED");
+      expect((err as NestrApiError).code).toBe("AUTH_TOKEN_REJECTED_BY_NESTR");
     }
   });
 
@@ -187,14 +187,14 @@ describe("NestrClient", () => {
     }
   });
 
-  it("classifies generic 403 as FORBIDDEN", async () => {
+  it("classifies generic 403 as AUTH_SCOPE_INSUFFICIENT", async () => {
     mockFetch.mockResolvedValue(mockResponse(403, { message: "Access denied" }));
     const client = createClient();
 
     try {
       await client.listWorkspaces();
     } catch (err) {
-      expect((err as NestrApiError).code).toBe("FORBIDDEN");
+      expect((err as NestrApiError).code).toBe("AUTH_SCOPE_INSUFFICIENT");
     }
   });
 
@@ -214,15 +214,19 @@ describe("NestrClient", () => {
     expect(logs).toContain("[Auth] 401 from Nestr");
     expect(logs).toContain("/workspaces");
     // Fingerprint format: <length>:<sha256-prefix-8>:<last-6>. Token is 28 chars, last 6 are "abcdef".
-    expect(logs).toMatch(/fingerprint=28:[a-f0-9]{8}:abcdef/);
+    expect(logs).toMatch(/\[Auth\] 401 from Nestr.*fingerprint=28:[a-f0-9]{8}:abcdef/);
     // Full token must never appear in logs.
     expect(logs).not.toContain("nestr_abcdef1234567890abcdef");
 
-    // 200 path: no fingerprint log.
+    // 200 path: no [Auth] 401 fingerprint log. (The structured [Outbound] /
+    // [Upstream] lines fire on every request — those are intentional and
+    // include only the fingerprint, never the raw token.)
     logSpy.mockClear();
     mockFetch.mockResolvedValue(mockResponse(200, []));
     await client.listWorkspaces();
-    expect(logSpy).not.toHaveBeenCalled();
+    const okLogs = logSpy.mock.calls.map((args) => args.join(" ")).join("\n");
+    expect(okLogs).not.toContain("[Auth] 401 from Nestr");
+    expect(okLogs).not.toContain("nestr_abcdef1234567890abcdef");
 
     logSpy.mockRestore();
   });
@@ -258,6 +262,7 @@ describe("NestrApiError", () => {
       const err = new NestrApiError("Not found", 404, "/nests/abc");
       const toolError = err.toToolError();
 
+      // Outside a request context, correlationId is undefined.
       expect(toolError).toEqual({
         error: true,
         code: "NOT_FOUND",
@@ -265,6 +270,8 @@ describe("NestrApiError", () => {
         status: 404,
         retryable: false,
         hint: undefined,
+        flow: undefined,
+        correlationId: undefined,
       });
     });
 
@@ -273,6 +280,11 @@ describe("NestrApiError", () => {
         hint: "Check your token",
       });
       expect(err.toToolError().hint).toBe("Check your token");
+    });
+
+    it("carries flow through to the tool error", () => {
+      const err = new NestrApiError("Auth failed", 401, "/workspaces", { flow: "B" });
+      expect(err.toToolError().flow).toBe("B");
     });
   });
 
@@ -287,14 +299,91 @@ describe("NestrApiError", () => {
       expect(err.retryable).toBe(true);
     });
 
-    it("AUTH_FAILED is not retryable", () => {
+    it("AUTH_TOKEN_REJECTED_BY_NESTR is not retryable", () => {
       const err = new NestrApiError("Unauthorized", 401, "/");
+      expect(err.retryable).toBe(false);
+    });
+
+    it("AUTH_REFRESH_NOT_ATTEMPTED is retryable (server bug, retry once)", () => {
+      const err = new NestrApiError("server bug", 401, "/", { code: "AUTH_REFRESH_NOT_ATTEMPTED" });
+      expect(err.retryable).toBe(true);
+    });
+
+    it("AUTH_PROXY_HEADER_DROPPED is retryable (server bug, retry once)", () => {
+      const err = new NestrApiError("header missing", 500, "/", { code: "AUTH_PROXY_HEADER_DROPPED" });
+      expect(err.retryable).toBe(true);
+    });
+
+    it("AUTH_REFRESH_FAILED is not retryable (user must reconnect)", () => {
+      const err = new NestrApiError("refresh rejected", 401, "/", { code: "AUTH_REFRESH_FAILED" });
+      expect(err.retryable).toBe(false);
+    });
+
+    it("AUTH_SCOPE_INSUFFICIENT is not retryable", () => {
+      const err = new NestrApiError("forbidden", 403, "/");
+      expect(err.code).toBe("AUTH_SCOPE_INSUFFICIENT");
       expect(err.retryable).toBe(false);
     });
 
     it("NOT_FOUND is not retryable", () => {
       const err = new NestrApiError("Not found", 404, "/");
       expect(err.retryable).toBe(false);
+    });
+  });
+
+  // The hints attached by NestrClient on 401/403 must let an LLM client
+  // branch by substring without parsing fields. Three buckets:
+  //   - "client should refresh"   → token-rejected on Flow B
+  //   - "user must re-OAuth"      → refresh failed on Flow A, or generic 401
+  //   - "server bug"              → AUTH_REFRESH_NOT_ATTEMPTED / AUTH_PROXY_HEADER_DROPPED
+  describe("hint LLM-branching substrings", () => {
+    let mockFetch: ReturnType<typeof vi.fn>;
+    beforeEach(() => {
+      mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    function mockResponse(status: number, body: unknown) {
+      return {
+        ok: status < 400,
+        status,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      };
+    }
+
+    it("Flow B 401 hint tells the client to refresh", async () => {
+      mockFetch.mockResolvedValue(mockResponse(401, { message: "no token" }));
+      const client = new NestrClient({ apiKey: "x", flow: "B", baseUrl: "https://api.test/api" });
+      try {
+        await client.listWorkspaces();
+      } catch (err) {
+        const hint = (err as NestrApiError).hint || "";
+        expect(hint).toMatch(/client.*responsibility|grant_type=refresh_token/i);
+      }
+    });
+
+    it("Flow A refresh-failed hint tells the user to re-OAuth", () => {
+      const err = new NestrApiError("refresh rejected", 401, "/", {
+        code: "AUTH_REFRESH_FAILED",
+        flow: "A",
+        hint: "Server-side refresh failed. User must re-authenticate via /oauth/authorize.",
+      });
+      expect(err.hint).toMatch(/re-?authenticate|re-?OAuth|reconnect/i);
+    });
+
+    it("AUTH_REFRESH_NOT_ATTEMPTED hint flags it as a server bug", () => {
+      // We don't have a public API that emits this code yet (HTTP layer is
+      // the place to set it). Construct directly to validate the contract.
+      const err = new NestrApiError("ought to have refreshed", 401, "/", {
+        code: "AUTH_REFRESH_NOT_ATTEMPTED",
+        hint: "Server bug: refresh should have been attempted. Retry once.",
+      });
+      expect(err.hint).toMatch(/server bug/i);
+      expect(err.retryable).toBe(true);
     });
   });
 });

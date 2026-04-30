@@ -4,8 +4,11 @@
  */
 
 import { z } from "zod";
-import { NestrApiError, type NestrClient, type Nest, type ToolError, type ErrorCode } from "../api/client.js";
+import { NestrApiError, tokenFingerprint, type NestrClient, type Nest, type ToolError, type ErrorCode } from "../api/client.js";
 import { appResources } from "../apps/index.js";
+import { getCorrelationId } from "../util/request-context.js";
+import { VERSION } from "../version.js";
+import type { DiagnoseSnapshot } from "../util/diagnose.js";
 
 // MCP Apps UI metadata for tools that can render in the completable list app.
 // IMPORTANT: Only use for completable items (tasks, projects, todos, inbox items).
@@ -609,6 +612,8 @@ export const schemas = {
   help: z.object({
     topic: z.string().describe("Topic key (e.g., 'search', 'labels', 'tensions'). Use 'topics' for the full list."),
   }),
+
+  diagnose: z.object({}).describe("No arguments — diagnose reads session state from the server."),
 };
 
 // Tool annotations for MCP - hints for clients on tool behavior
@@ -620,13 +625,23 @@ const destructive = { annotations: { readOnlyHint: false, destructiveHint: true 
 export const toolDefinitions = [
   {
     name: "nestr_help",
-    description: "Get detailed Nestr documentation by topic. Call before unfamiliar operations. Topics: search, labels, nest-model, inbox, daily-plan, notifications, insights, tension-processing, skills, mcp-apps, authentication, and more. Use topic 'topics' for the full list.",
+    description: "Get detailed Nestr documentation by topic. Call before unfamiliar operations. Topics: search, labels, nest-model, inbox, daily-plan, notifications, insights, tension-processing, skills, mcp-apps, authentication, and more. Use topic 'topics' for the full list. Auth: none required.",
     inputSchema: {
       type: "object" as const,
       properties: {
         topic: { type: "string", description: "Topic key. Use 'topics' for the full list." },
       },
       required: ["topic"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_diagnose",
+    description:
+      "Server-side auth and session diagnostics. Call this FIRST when any other tool returns an auth error (AUTH_TOKEN_REJECTED_BY_NESTR / AUTH_REFRESH_FAILED / AUTH_NO_TOKEN_PRESENTED / AUTH_PROXY_HEADER_DROPPED). Returns: flow (A=server-managed refresh, B=client-managed refresh, unknown=API key), tokenPresented, tokenFingerprint, lastUpstream401At, lastRefreshAttempt, sessionCorrelationId, serverVersion. Auth: none required — works whether or not the bearer is valid.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
     },
     ...readOnly,
   },
@@ -659,7 +674,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_workspace",
-    description: "Create a new workspace. OAuth only. See nestr_help('workspace-setup') for guided setup.",
+    description: "Create a new workspace. Auth: OAuth only (user-scoped — workspace API keys cannot create new workspaces). On auth failure call nestr_diagnose. See nestr_help('workspace-setup') for guided setup.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1120,7 +1135,7 @@ export const toolDefinitions = [
   // Inbox tools (require OAuth token - won't work with workspace API keys)
   {
     name: "nestr_list_inbox",
-    description: "List items in the user's personal inbox. Spans all workspaces. OAuth only.",
+    description: "List items in the user's personal inbox. Spans all workspaces. Auth: OAuth only (user-scoped — workspace API keys lack user identity). On auth failure call nestr_diagnose.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1133,7 +1148,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_inbox_item",
-    description: "Quick capture: add an item to the inbox for later processing. OAuth only.",
+    description: "Quick capture: add an item to the inbox for later processing. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1146,7 +1161,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_inbox_item",
-    description: "Get details of a specific inbox item. Requires OAuth token.",
+    description: "Get details of a specific inbox item. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1159,7 +1174,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_inbox_item",
-    description: "Update an inbox item. Set completed:true when processed. Use nestr_update_nest with parentId to move out of inbox. OAuth only.",
+    description: "Update an inbox item. Set completed:true when processed. Use nestr_update_nest with parentId to move out of inbox. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1175,7 +1190,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_reorder_inbox",
-    description: "Reorder inbox items. Provide a subset of IDs — they go to the top in given order, rest unchanged. OAuth only.",
+    description: "Reorder inbox items. Provide a subset of IDs — they go to the top in given order, rest unchanged. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1191,7 +1206,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_reorder_inbox_item",
-    description: "Reorder a single inbox item by positioning it before or after another inbox item. Requires OAuth token.",
+    description: "Reorder a single inbox item by positioning it before or after another inbox item. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1206,7 +1221,7 @@ export const toolDefinitions = [
   // Personal labels (require OAuth token - user's own labels, not workspace labels)
   {
     name: "nestr_list_personal_labels",
-    description: "List the current user's personal labels (not workspace labels). OAuth only.",
+    description: "List the current user's personal labels (not workspace labels). Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
     inputSchema: {
       type: "object" as const,
       properties: {},
@@ -1215,7 +1230,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_personal_label",
-    description: "Create a personal label. Can be used across workspaces. OAuth only.",
+    description: "Create a personal label. Can be used across workspaces. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1263,7 +1278,7 @@ export const toolDefinitions = [
   // Daily plan (requires OAuth token)
   {
     name: "nestr_get_daily_plan",
-    description: "Get the user's daily plan — items marked for today. Spans all workspaces. OAuth only.",
+    description: "Get the user's daily plan — items marked for today. Spans all workspaces. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1302,7 +1317,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_to_daily_plan",
-    description: "Add one or more items to the daily plan by applying the 'now' label. Requires OAuth token.",
+    description: "Add one or more items to the daily plan by applying the 'now' label. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1318,7 +1333,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_remove_from_daily_plan",
-    description: "Remove one or more items from the daily plan by removing the 'now' label. Requires OAuth token.",
+    description: "Remove one or more items from the daily plan by removing the 'now' label. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1347,7 +1362,7 @@ export const toolDefinitions = [
   // User tension tools (requires OAuth token)
   {
     name: "nestr_list_my_tensions",
-    description: "List tensions created by or assigned to the current user. Check at session start and natural breakpoints. OAuth only.",
+    description: "List tensions created by or assigned to the current user. Check at session start and natural breakpoints. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1358,7 +1373,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_tensions_awaiting_consent",
-    description: "List tensions awaiting the current user's consent vote. Check proactively. OAuth only.",
+    description: "List tensions awaiting the current user's consent vote. Check proactively. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1370,7 +1385,7 @@ export const toolDefinitions = [
   // Notification tools (requires OAuth token)
   {
     name: "nestr_list_notifications",
-    description: "List notifications. Use type 'me' for direct (mentions, replies) or 'relevant' for organizational changes. OAuth only.",
+    description: "List notifications. Use type 'me' for direct (mentions, replies) or 'relevant' for organizational changes. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1385,7 +1400,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_mark_notifications_read",
-    description: "Mark all unread in-app notifications as read for the current user. Returns { status, data: { markedCount } }. Requires OAuth token.",
+    description: "Mark all unread in-app notifications as read for the current user. Returns { status, data: { markedCount } }. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
     inputSchema: {
       type: "object" as const,
       properties: {},
@@ -1743,14 +1758,24 @@ export function unescapeRichTextFields(args: Record<string, unknown>): Record<st
   return changed ? result : args;
 }
 
+/**
+ * Per-tool-call context. Carries session-level info that diagnose-style
+ * tools need but ordinary tools don't. Optional so tests/callers that don't
+ * have a session (CLI, stdio mode) can still call handleToolCall.
+ */
+export interface ToolCallContext {
+  getDiagnose?: () => DiagnoseSnapshot;
+}
+
 export async function handleToolCall(
   client: NestrClient,
   name: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolCallContext,
 ): Promise<ToolResult> {
   const sanitizedArgs = unescapeRichTextFields(args);
   const shouldStripDescription = sanitizedArgs.stripDescription === true;
-  const result = await _handleToolCall(client, name, sanitizedArgs);
+  const result = await _handleToolCall(client, name, sanitizedArgs, context);
 
   if (shouldStripDescription && !result.isError) {
     try {
@@ -1767,7 +1792,8 @@ export async function handleToolCall(
 async function _handleToolCall(
   client: NestrClient,
   name: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: ToolCallContext,
 ): Promise<ToolResult> {
   try {
     switch (name) {
@@ -1779,6 +1805,37 @@ async function _handleToolCall(
           return { content: [{ type: "text", text: `Unknown topic: "${parsed.topic}". Call nestr_help({ topic: "topics" }) to see available topics.` }] };
         }
         return { content: [{ type: "text", text: content }] };
+      }
+
+      case "nestr_diagnose": {
+        schemas.diagnose.parse(args);
+        const snapshot = context?.getDiagnose?.();
+        const correlationId = getCorrelationId();
+        const result = {
+          serverVersion: VERSION,
+          correlationId,
+          // No request context (e.g. stdio mode): we still report the basic facts.
+          flow: snapshot?.flow ?? "unknown",
+          tokenPresented: snapshot?.tokenPresented ?? false,
+          tokenFingerprint: snapshot?.tokenFingerprint ?? "none",
+          tokenAge: snapshot?.tokenAge ?? null,
+          lastUpstream401At: snapshot?.lastUpstream401At
+            ? new Date(snapshot.lastUpstream401At).toISOString()
+            : null,
+          lastRefreshAttempt: snapshot?.lastRefreshAttempt
+            ? {
+                at: new Date(snapshot.lastRefreshAttempt.at).toISOString(),
+                success: snapshot.lastRefreshAttempt.success,
+                error: snapshot.lastRefreshAttempt.error,
+              }
+            : null,
+          sessionCorrelationId: snapshot?.sessionCorrelationId,
+          authMode: snapshot?.isApiKey ? "api-key" : snapshot?.tokenPresented ? "oauth" : "none",
+          mcpClient: snapshot?.mcpClient,
+          userId: snapshot?.userId,
+          hint: buildDiagnoseHint(snapshot),
+        };
+        return formatResult(result);
       }
 
       case "nestr_list_workspaces": {
@@ -2264,8 +2321,8 @@ async function _handleToolCall(
         } catch (err) {
           // 401 means the token itself is invalid — propagate so callers don't
           // see a false "success" here while every other tool fails on the
-          // same auth state.
-          if (err instanceof NestrApiError && err.code === "AUTH_FAILED") {
+          // same auth state. Match by status (any AUTH_* 401 code).
+          if (err instanceof NestrApiError && err.status === 401) {
             throw err;
           }
           // 403 likely means the token is valid but has no user scope (workspace
@@ -2273,7 +2330,7 @@ async function _handleToolCall(
           // endpoint that accepts both OAuth and workspace keys before reporting
           // "workspace mode" — that way a forbidden coming from anywhere else
           // (e.g. an unauthorized token that happens to 403) doesn't get masked.
-          if (err instanceof NestrApiError && err.code === "FORBIDDEN") {
+          if (err instanceof NestrApiError && err.code === "AUTH_SCOPE_INSUFFICIENT") {
             const workspaceModeResponse = formatResult({
               authMode: "api-key",
               user: null,
@@ -2286,7 +2343,7 @@ async function _handleToolCall(
             } catch (verifyErr) {
               // The verification's job is to rule out "this token is bad". An
               // explicit auth failure on listWorkspaces does that — propagate.
-              if (verifyErr instanceof NestrApiError && verifyErr.code === "AUTH_FAILED") {
+              if (verifyErr instanceof NestrApiError && verifyErr.status === 401) {
                 throw verifyErr;
               }
               // Anything else (5xx, network, rate limit) is a transient hiccup
@@ -2532,7 +2589,9 @@ async function _handleToolCall(
         });
     }
   } catch (error) {
-    // Handle Nestr API errors with structured response
+    // Handle Nestr API errors with structured response. NestrApiError.toToolError
+    // already attaches the correlationId from the active request context, so no
+    // extra wiring is needed here.
     if (error instanceof NestrApiError) {
       return formatError(error.toToolError());
     }
@@ -2545,6 +2604,7 @@ async function _handleToolCall(
         message: error.errors.map(e => `${e.path.join(".")}: ${e.message}`).join("; "),
         retryable: false,
         hint: "Check the tool parameters match the expected schema.",
+        correlationId: getCorrelationId(),
       });
     }
 
@@ -2555,8 +2615,28 @@ async function _handleToolCall(
       code: "UNKNOWN",
       message,
       retryable: false,
+      correlationId: getCorrelationId(),
     });
   }
+}
+
+function buildDiagnoseHint(snapshot: DiagnoseSnapshot | undefined): string {
+  if (!snapshot || !snapshot.tokenPresented) {
+    return "No bearer was presented to the server. The MCP client should run the OAuth flow (or pass an X-Nestr-API-Key header) and retry.";
+  }
+  if (snapshot.lastRefreshAttempt && snapshot.lastRefreshAttempt.success === false) {
+    return "Most recent refresh failed. Tell the user to reconnect Nestr.";
+  }
+  if (snapshot.lastUpstream401At) {
+    if (snapshot.flow === "B") {
+      return "Nestr recently rejected the bearer. For Flow B, refresh is the client's responsibility — the MCP client should call /oauth/token with grant_type=refresh_token, then retry. If refresh also fails, tell the user to reconnect Nestr.";
+    }
+    return "Nestr recently rejected the bearer. Tell the user to reconnect Nestr.";
+  }
+  if (snapshot.tokenAge?.exp && snapshot.tokenAge.exp < snapshot.tokenAge.now) {
+    return "Bearer is expired (exp < now). The client should refresh.";
+  }
+  return "Server-side state looks healthy. If a tool is failing, include sessionCorrelationId in the bug report.";
 }
 
 function formatResult(data: unknown): ToolResult {

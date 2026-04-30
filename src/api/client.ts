@@ -4,6 +4,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { cidTag, getCorrelationId } from "../util/request-context.js";
 
 /**
  * Build a non-reversible fingerprint of a token for log correlation.
@@ -15,7 +16,7 @@ import { createHash } from "node:crypto";
  * and correlate logs across calls (sha256 prefix), without ever recording
  * the full token.
  */
-function tokenFingerprint(token: string | undefined | null): string {
+export function tokenFingerprint(token: string | undefined | null): string {
   if (!token) return "none";
   const hash = createHash("sha256").update(token).digest("hex").slice(0, 8);
   // Real Nestr tokens are 60+ chars. The MIN_LEN_FOR_TAIL guard is for
@@ -36,17 +37,39 @@ function logBearerFingerprintOn401(
 ): void {
   const suffix = isRetry ? " (retry after refresh)" : "";
   console.log(
-    `[Auth] 401 from Nestr ${method} ${endpoint} — bearer fingerprint=${tokenFingerprint(token)}${suffix}`,
+    `${cidTag()}[Auth] 401 from Nestr ${method} ${endpoint} — bearer fingerprint=${tokenFingerprint(token)}${suffix}`,
   );
 }
+
+/** Which auth flow the request is in. Used by the error envelope so an LLM client knows whose responsibility refresh is. */
+export type AuthFlow = "A" | "B" | "unknown";
 
 export interface NestrClientConfig {
   apiKey: string;
   baseUrl?: string;
   /** MCP client name (e.g., "claude-desktop", "cursor") for tracking */
   mcpClient?: string;
-  /** Optional async function to resolve a fresh token before each request (e.g., for OAuth refresh) */
+  /**
+   * Optional async function to resolve a fresh token before each request (Flow A refresh).
+   * Throwing means refresh failed — `NestrClient` rewraps as `AUTH_REFRESH_FAILED`.
+   */
   tokenProvider?: () => Promise<string>;
+  /**
+   * Auth flow this client is operating in. Embedded in error envelopes so consumers know
+   * whether refresh is the server's job (A) or the client's job (B).
+   */
+  flow?: AuthFlow;
+  /**
+   * Called when Nestr rejects the bearer (401) on the in-flight request — including the retry
+   * after a successful refresh. Lets the HTTP layer mark the session as auth-invalidated so the
+   * next request returns transport-level HTTP 401 + WWW-Authenticate.
+   */
+  onUpstreamAuthFailure?: () => void;
+  /**
+   * Called after every refresh attempt (success or failure). The HTTP layer records this on the
+   * session so `nestr_diagnose` can report it.
+   */
+  onRefreshAttempt?: (result: { at: number; success: boolean; error?: string }) => void;
 }
 
 export interface Nest {
@@ -157,18 +180,42 @@ export interface TensionStatus {
   autoapprove?: string;
 }
 
-/** Error codes for structured error handling */
+/**
+ * Structured error codes returned to MCP clients.
+ *
+ * Auth taxonomy splits along two axes: who's at fault (Nestr / server bug / no
+ * credentials at all) and what the client should do next (refresh / re-OAuth /
+ * retry / give up). Each AUTH_* code maps to one branch.
+ */
 export type ErrorCode =
-  | "AUTH_FAILED"      // 401 - Invalid or missing credentials
-  | "FORBIDDEN"        // 403 - Valid auth but no permission
-  | "APP_DISABLED"     // 403 - Feature/app not enabled
-  | "PLAN_REQUIRED"    // 403 - Requires plan upgrade
-  | "NOT_FOUND"        // 404 - Resource doesn't exist
-  | "VALIDATION"       // 400 - Invalid input
-  | "RATE_LIMITED"     // 429 - Too many requests
-  | "SERVER_ERROR"     // 5xx - Server-side issue
-  | "NETWORK_ERROR"    // Connection/timeout issues
-  | "UNKNOWN";         // Unclassified error
+  // Auth: caller never sent a credential. Client must run OAuth.
+  | "AUTH_NO_TOKEN_PRESENTED"
+  // Auth: bearer was forwarded to Nestr and rejected with 401. For Flow A
+  // this fires only after refresh has been attempted; for Flow B refresh is
+  // the client's responsibility.
+  | "AUTH_TOKEN_REJECTED_BY_NESTR"
+  // Auth: Flow A only — server held a refresh token but Nestr rejected the
+  // refresh. User must re-OAuth.
+  | "AUTH_REFRESH_FAILED"
+  // Auth: server bug — token was expired but the refresh code path didn't run.
+  // Retryable: a retry will normally hit the refresh path correctly.
+  | "AUTH_REFRESH_NOT_ATTEMPTED"
+  // Auth: server bug — outbound Authorization header was missing despite the
+  // server holding a token. Retryable.
+  | "AUTH_PROXY_HEADER_DROPPED"
+  // Auth: 403 from Nestr — token is valid but the action isn't allowed.
+  // NOT a token-validity problem; do not refresh, do not re-OAuth.
+  | "AUTH_SCOPE_INSUFFICIENT"
+  // Other 403s with specific semantics (kept distinct from generic scope)
+  | "APP_DISABLED"
+  | "PLAN_REQUIRED"
+  // Non-auth errors
+  | "NOT_FOUND"
+  | "VALIDATION"
+  | "RATE_LIMITED"
+  | "SERVER_ERROR"
+  | "NETWORK_ERROR"
+  | "UNKNOWN";
 
 /** Structured error for MCP tool responses */
 export interface ToolError {
@@ -178,30 +225,38 @@ export interface ToolError {
   status?: number;
   retryable: boolean;
   hint?: string;
+  /** Which auth flow the request was in. Lets an LLM client decide whether refresh is its job. */
+  flow?: AuthFlow;
+  /** Per-request id; matches log lines emitted while serving the request. */
+  correlationId?: string;
 }
 
 export class NestrApiError extends Error {
   public code: ErrorCode;
   public hint?: string;
   public retryable: boolean;
+  public flow?: AuthFlow;
 
   constructor(
     message: string,
     public status: number,
     public endpoint: string,
-    options?: { code?: ErrorCode; hint?: string; retryable?: boolean }
+    options?: { code?: ErrorCode; hint?: string; retryable?: boolean; flow?: AuthFlow }
   ) {
     super(message);
     this.name = "NestrApiError";
     this.code = options?.code ?? this.inferCode(status, message);
     this.hint = options?.hint;
+    this.flow = options?.flow;
     this.retryable = options?.retryable ?? this.inferRetryable(this.code);
   }
 
   private inferCode(status: number, message: string): ErrorCode {
     const lowerMsg = message.toLowerCase();
 
-    if (status === 401) return "AUTH_FAILED";
+    // 401 defaults to "Nestr rejected the bearer." Callers that know better
+    // (refresh failure, no token, header dropped) override via options.code.
+    if (status === 401) return "AUTH_TOKEN_REJECTED_BY_NESTR";
     if (status === 404) return "NOT_FOUND";
     if (status === 429) return "RATE_LIMITED";
     if (status === 400) return "VALIDATION";
@@ -214,15 +269,19 @@ export class NestrApiError extends Error {
       if (lowerMsg.includes("pro") || lowerMsg.includes("plan") || lowerMsg.includes("upgrade")) {
         return "PLAN_REQUIRED";
       }
-      return "FORBIDDEN";
+      return "AUTH_SCOPE_INSUFFICIENT";
     }
 
     return "UNKNOWN";
   }
 
   private inferRetryable(code: ErrorCode): boolean {
-    // Only retry transient errors
-    return code === "RATE_LIMITED" || code === "SERVER_ERROR" || code === "NETWORK_ERROR";
+    // Transient errors that may succeed on retry.
+    if (code === "RATE_LIMITED" || code === "SERVER_ERROR" || code === "NETWORK_ERROR") return true;
+    // Server bugs are retryable: the bug may not reproduce, and at minimum a
+    // retry surfaces the bug to ops faster than a wedged client.
+    if (code === "AUTH_REFRESH_NOT_ATTEMPTED" || code === "AUTH_PROXY_HEADER_DROPPED") return true;
+    return false;
   }
 
   /** Convert to structured error for MCP responses */
@@ -234,6 +293,8 @@ export class NestrApiError extends Error {
       status: this.status,
       retryable: this.retryable,
       hint: this.hint,
+      flow: this.flow,
+      correlationId: getCorrelationId(),
     };
   }
 }
@@ -243,12 +304,18 @@ export class NestrClient {
   private baseUrl: string;
   private mcpClient?: string;
   private tokenProvider?: () => Promise<string>;
+  private flow: AuthFlow;
+  private onUpstreamAuthFailure?: () => void;
+  private onRefreshAttempt?: (result: { at: number; success: boolean; error?: string }) => void;
 
   constructor(config: NestrClientConfig) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl || "https://app.nestr.io/api";
     this.mcpClient = config.mcpClient;
     this.tokenProvider = config.tokenProvider;
+    this.flow = config.flow ?? "unknown";
+    this.onUpstreamAuthFailure = config.onUpstreamAuthFailure;
+    this.onRefreshAttempt = config.onRefreshAttempt;
   }
 
   private async fetch<T>(
@@ -257,6 +324,27 @@ export class NestrClient {
     isRetry = false
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
+
+    // AUTH_PROXY_HEADER_DROPPED guard. We have a token (this.apiKey is required
+    // by the constructor) and we're about to send it as Bearer; if a refactor
+    // ever empties it before this point, fail loudly with a stack trace rather
+    // than silently sending an unauthenticated request.
+    if (!this.apiKey) {
+      const err = new NestrApiError(
+        "Authorization header would be missing (apiKey is empty). This is a server bug.",
+        500,
+        endpoint,
+        {
+          code: "AUTH_PROXY_HEADER_DROPPED",
+          flow: this.flow,
+          hint:
+            "Server bug: token was present at session creation but is empty at outbound time. " +
+            "Retry once. If it persists, file an issue with the correlationId.",
+        },
+      );
+      console.error(`${cidTag()}[Auth] AUTH_PROXY_HEADER_DROPPED ${options.method || "GET"} ${endpoint}`, err.stack);
+      throw err;
+    }
 
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.apiKey}`,
@@ -268,6 +356,10 @@ export class NestrClient {
       headers["X-MCP-Client"] = this.mcpClient;
     }
 
+    console.log(
+      `${cidTag()}[Outbound] ${options.method || "GET"} ${endpoint} bearer=${tokenFingerprint(this.apiKey)}${isRetry ? " (retry)" : ""}`,
+    );
+
     const response = await fetch(url, {
       ...options,
       signal: AbortSignal.timeout(30000),
@@ -277,10 +369,31 @@ export class NestrClient {
       },
     });
 
+    console.log(
+      `${cidTag()}[Upstream] ${options.method || "GET"} ${endpoint} → ${response.status}`,
+    );
+
     if (!response.ok) {
-      // On 401 with a tokenProvider, try refreshing the token and retry once
+      // On 401 with a tokenProvider (Flow A), try refreshing the token and retry once.
       if (response.status === 401 && this.tokenProvider && !isRetry) {
-        const newToken = await this.tokenProvider();
+        const refreshAt = Date.now();
+        let newToken: string;
+        try {
+          newToken = await this.tokenProvider();
+          this.onRefreshAttempt?.({ at: refreshAt, success: true });
+        } catch (refreshErr) {
+          const errMsg = refreshErr instanceof Error ? refreshErr.message : String(refreshErr);
+          this.onRefreshAttempt?.({ at: refreshAt, success: false, error: errMsg });
+          // tokenProvider already produced a typed NestrApiError — preserve it.
+          if (refreshErr instanceof NestrApiError) throw refreshErr;
+          throw new NestrApiError(errMsg, 401, endpoint, {
+            code: "AUTH_REFRESH_FAILED",
+            flow: this.flow,
+            hint:
+              "Server-side refresh failed. User must re-authenticate via /oauth/authorize. " +
+              "Tell the user to reconnect Nestr.",
+          });
+        }
         this.apiKey = newToken;
         return this.fetch<T>(endpoint, options, true);
       }
@@ -294,6 +407,7 @@ export class NestrClient {
       // user's configured token, but not enough to reconstruct it.
       if (response.status === 401) {
         logBearerFingerprintOn401(this.apiKey, options.method || "GET", endpoint, isRetry);
+        this.onUpstreamAuthFailure?.();
       }
 
       // Try to parse JSON error response for clearer error messages
@@ -316,30 +430,30 @@ export class NestrClient {
         // Not JSON, use raw text
       }
 
-      // Create error and let it infer the code
-      const error = new NestrApiError(
-        errorMessage,
-        response.status,
-        endpoint
-      );
+      // Create error and let it infer the code (401 → AUTH_TOKEN_REJECTED_BY_NESTR,
+      // 403 → AUTH_SCOPE_INSUFFICIENT or APP_DISABLED/PLAN_REQUIRED, etc.)
+      const error = new NestrApiError(errorMessage, response.status, endpoint, {
+        flow: this.flow,
+      });
 
       // Set hints based on inferred error code
       switch (error.code) {
-        case "AUTH_FAILED":
-          error.hint =
-            "Token rejected by Nestr (not the same as 'wrong scope' — that returns 403, not 401). " +
-            "Verify the token is current: regenerate the workspace API key, or re-run the OAuth flow. " +
-            "If the same token works via direct curl but fails through an MCP proxy, the proxy may be " +
-            "stripping or replacing the Authorization header.";
+        case "AUTH_TOKEN_REJECTED_BY_NESTR":
+          error.hint = this.flow === "B"
+            ? "Bearer was rejected by Nestr (expired or revoked). For Flow B clients, refresh is the client's responsibility — call /oauth/token with grant_type=refresh_token. If refresh also fails, run a fresh OAuth flow."
+            : "Bearer was rejected by Nestr (expired or revoked). Tell the user to reconnect Nestr in connector settings.";
+          break;
+        case "AUTH_REFRESH_FAILED":
+          error.hint = "Server-side refresh failed. User must re-authenticate via /oauth/authorize. Tell the user to reconnect Nestr.";
+          break;
+        case "AUTH_SCOPE_INSUFFICIENT":
+          error.hint = "Token is valid but lacks permission for this action. Do not retry. Tell the user what permission is missing (likely a role / circle / workspace they don't belong to).";
           break;
         case "APP_DISABLED":
           error.hint = "Enable this app in workspace settings > Apps.";
           break;
         case "PLAN_REQUIRED":
           error.hint = "This feature requires a Pro plan. Upgrade in workspace settings.";
-          break;
-        case "FORBIDDEN":
-          error.hint = "You don't have permission for this action. Check your role/access level.";
           break;
         case "NOT_FOUND":
           error.hint = "The resource doesn't exist or you don't have access to it.";
