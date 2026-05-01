@@ -17,6 +17,8 @@ export interface DiagnoseSnapshot {
   hasStoredOAuthSession: boolean;
   isApiKey: boolean;
   mcpClient?: string;
+  /** MCP `clientInfo.version` from the initialize handshake. */
+  mcpClientVersion?: string;
   userId?: string;
 }
 

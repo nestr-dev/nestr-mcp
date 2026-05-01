@@ -92,6 +92,12 @@ export interface AuthorizationRequestParams {
   codeChallengeMethod?: string;
   /** Identifier for the MCP client (e.g., "claude-code", "cursor") for token metadata */
   clientConsumer?: string;
+  /**
+   * Version string from MCP `clientInfo.version` (the structured handshake field).
+   * Forwarded as `client_version` on the authorize URL so the upstream OAuth
+   * server can record outdated installs without us having to roundtrip on alias.
+   */
+  clientVersion?: string;
   /** GA4 client_id for cross-domain analytics tracking */
   gaClientId?: string;
 }
@@ -162,6 +168,7 @@ export async function createAuthorizationRequest(
     createdAt: Date.now(),
     scope: params.scope,
     clientConsumer: params.clientConsumer,
+    clientVersion: params.clientVersion,
     gaClientId: params.gaClientId,
   });
 
@@ -184,6 +191,12 @@ export async function createAuthorizationRequest(
   // Pass client_consumer to Nestr for token metadata (identifies MCP client like claude-code, cursor)
   if (params.clientConsumer) {
     urlParams.set("client_consumer", params.clientConsumer);
+  }
+  // Pass client_version so the upstream OAuth server can record the version
+  // alongside the consumer (slashme-online PR #1392). Different versions of
+  // the same consumer share a token row but are distinguishable in metadata.
+  if (params.clientVersion) {
+    urlParams.set("client_version", params.clientVersion);
   }
 
   const authUrl = `${config.authorizationEndpoint}?${urlParams}`;

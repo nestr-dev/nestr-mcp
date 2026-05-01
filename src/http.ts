@@ -388,6 +388,10 @@ app.get("/oauth/authorize", oauthLimiter, async (req: Request, res: Response) =>
   const codeChallenge = req.query.code_challenge as string | undefined;
   const codeChallengeMethod = req.query.code_challenge_method as string | undefined;
   const clientConsumer = req.query.client_consumer as string | undefined;
+  // MCP `clientInfo.version` forwarded from the initialize handshake. Slashme-online
+  // persists it on the issued token row (see PR #1392) for triage / outdated-install
+  // detection. We just plumb the URL param through.
+  const clientVersion = req.query.client_version as string | undefined;
 
   // GA4 analytics: use provided client_id or generate new one for tracking
   const gaClientId = (req.query._ga_client_id as string | undefined) ||
@@ -467,6 +471,7 @@ app.get("/oauth/authorize", oauthLimiter, async (req: Request, res: Response) =>
         codeChallenge,
         codeChallengeMethod: codeChallengeMethod || "S256",
         clientConsumer: effectiveClientConsumer,
+        clientVersion,
         gaClientId,
       });
 
@@ -713,7 +718,7 @@ app.post("/oauth/device", oauthLimiter, express.urlencoded({ extended: true }), 
   const config = getOAuthConfig();
 
   try {
-    const { client_id, scope, client_consumer } = req.body;
+    const { client_id, scope, client_consumer, client_version } = req.body;
 
     // Require client_id
     if (!client_id) {
@@ -760,8 +765,12 @@ app.post("/oauth/device", oauthLimiter, express.urlencoded({ extended: true }), 
     if (effectiveClientConsumer) {
       body.client_consumer = effectiveClientConsumer;
     }
+    // Pass client_version (MCP `clientInfo.version`) for triage / outdated-install detection.
+    if (client_version) {
+      body.client_version = client_version;
+    }
 
-    console.log(`OAuth Device: Requesting device code from Nestr${effectiveClientConsumer ? ` (consumer: ${effectiveClientConsumer})` : ""}`);
+    console.log(`OAuth Device: Requesting device code from Nestr${effectiveClientConsumer ? ` (consumer: ${effectiveClientConsumer})` : ""}${client_version ? ` v${client_version}` : ""}`);
 
     const response = await fetch(config.deviceAuthorizationEndpoint, {
       method: "POST",
@@ -811,6 +820,7 @@ app.post("/oauth/token", tokenLimiter, express.urlencoded({ extended: true }), a
       client_secret,
       code_verifier,
       client_consumer,
+      client_version,
     } = req.body;
 
     if (grant_type === "authorization_code") {
@@ -891,6 +901,12 @@ app.post("/oauth/token", tokenLimiter, express.urlencoded({ extended: true }), a
       if (client_consumer) {
         body.client_consumer = client_consumer;
       }
+      // Pass client_version (MCP `clientInfo.version`) — slashme-online persists
+      // it on the token row alongside the consumer for triage / outdated-install
+      // detection. Ignored upstream until that PR lands.
+      if (client_version) {
+        body.client_version = client_version;
+      }
 
       const response = await fetch(config.tokenEndpoint, {
         method: "POST",
@@ -967,6 +983,9 @@ app.post("/oauth/token", tokenLimiter, express.urlencoded({ extended: true }), a
       if (client_consumer) {
         body.client_consumer = client_consumer;
       }
+      if (client_version) {
+        body.client_version = client_version;
+      }
 
       console.log(`OAuth Token: Polling device code at Nestr${client_consumer ? ` (consumer: ${client_consumer})` : ""}`);
 
@@ -1002,6 +1021,7 @@ export interface SessionData {
   server: Server;
   authToken: string; // API key or OAuth token
   mcpClient?: string; // MCP client name (e.g., "claude-desktop")
+  mcpClientVersion?: string; // MCP client version from clientInfo.version (e.g., "1.4.2")
   isApiKey: boolean; // Whether the auth came in via X-Nestr-API-Key
   wantsJsonOnly: boolean; // Whether the client preferred JSON over SSE at init
   hasStoredOAuthSession: boolean; // Whether the server holds a refreshable OAuth session for this token
@@ -1196,6 +1216,8 @@ function buildMcpSession(opts: {
   authToken: string;
   isApiKey: boolean;
   mcpClient?: string;
+  /** MCP `clientInfo.version` from the initialize handshake. Forwarded to OAuth + diagnose. */
+  mcpClientVersion?: string;
   userId?: string;
   userName?: string;
   wantsJsonOnly: boolean;
@@ -1277,6 +1299,7 @@ function buildMcpSession(opts: {
       hasStoredOAuthSession: opts.hasStoredOAuthSession,
       isApiKey: opts.isApiKey,
       mcpClient: opts.mcpClient,
+      mcpClientVersion: opts.mcpClientVersion,
       userId: opts.userId,
     }),
   });
@@ -1286,12 +1309,13 @@ function buildMcpSession(opts: {
     enableJsonResponse: opts.wantsJsonOnly,
     onsessioninitialized: (newSessionId) => {
       // Only fires for fresh sessions — rehydrated transports skip the handshake.
-      console.log(`${cidTag()}Session initialized: ${newSessionId}${opts.mcpClient ? ` (client: ${opts.mcpClient})` : ""}`);
+      console.log(`${cidTag()}Session initialized: ${newSessionId}${opts.mcpClient ? ` (client: ${opts.mcpClient}${opts.mcpClientVersion ? ` v${opts.mcpClientVersion}` : ""})` : ""}`);
       const sessionData: SessionData = {
         transport,
         server,
         authToken: opts.authToken,
         mcpClient: opts.mcpClient,
+        mcpClientVersion: opts.mcpClientVersion,
         isApiKey: opts.isApiKey,
         wantsJsonOnly: opts.wantsJsonOnly,
         hasStoredOAuthSession: opts.hasStoredOAuthSession,
@@ -1311,6 +1335,7 @@ function buildMcpSession(opts: {
       getStore().storeMcpSession(newSessionId, {
         authToken: opts.authToken,
         mcpClient: opts.mcpClient,
+        mcpClientVersion: opts.mcpClientVersion,
         userId: opts.userId,
         userName: opts.userName,
         isApiKey: opts.isApiKey,
@@ -1373,6 +1398,7 @@ function buildMcpSession(opts: {
       server,
       authToken: opts.authToken,
       mcpClient: opts.mcpClient,
+      mcpClientVersion: opts.mcpClientVersion,
       isApiKey: opts.isApiKey,
       wantsJsonOnly: opts.wantsJsonOnly,
       hasStoredOAuthSession: opts.hasStoredOAuthSession,
@@ -1387,7 +1413,7 @@ function buildMcpSession(opts: {
     };
     sessions[opts.rehydrateFor] = sessionData;
     sessionRef = sessionData;
-    console.log(`${cidTag()}[Rehydrate] Rebuilt session ${opts.rehydrateFor} (client: ${opts.mcpClient ?? "unknown"})`);
+    console.log(`${cidTag()}[Rehydrate] Rebuilt session ${opts.rehydrateFor} (client: ${opts.mcpClient ?? "unknown"}${opts.mcpClientVersion ? ` v${opts.mcpClientVersion}` : ""})`);
     return sessionData;
   }
 
@@ -1398,6 +1424,7 @@ function buildMcpSession(opts: {
     server,
     authToken: opts.authToken,
     mcpClient: opts.mcpClient,
+    mcpClientVersion: opts.mcpClientVersion,
     isApiKey: opts.isApiKey,
     wantsJsonOnly: opts.wantsJsonOnly,
     hasStoredOAuthSession: opts.hasStoredOAuthSession,
@@ -1445,6 +1472,7 @@ async function rehydrateSession(sessionId: string, authToken: string): Promise<S
     authToken: stored.authToken,
     isApiKey: stored.isApiKey,
     mcpClient: stored.mcpClient,
+    mcpClientVersion: stored.mcpClientVersion,
     userId: stored.userId,
     userName: stored.userName,
     wantsJsonOnly: stored.wantsJsonOnly,
@@ -1791,8 +1819,13 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Extract MCP client info early (needed for coalescing check)
+    // Extract MCP client info early (needed for coalescing check). The MCP
+    // initialize handshake provides a structured `clientInfo: { name, version }`;
+    // we capture both, surface them on the session, and forward to OAuth so the
+    // upstream OAuth server can record the version on the issued token row
+    // (slashme-online PR #1392).
     const mcpClientName = req.body?.params?.clientInfo?.name as string | undefined;
+    const mcpClientVersion = req.body?.params?.clientInfo?.version as string | undefined;
 
     if (!isInitializeRequest(req.body)) {
       res.status(400).json({
@@ -1914,6 +1947,7 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
       authToken,
       isApiKey,
       mcpClient: mcpClientName,
+      mcpClientVersion,
       userId,
       userName,
       wantsJsonOnly,

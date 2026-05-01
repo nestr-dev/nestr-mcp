@@ -444,7 +444,13 @@ export class NestrClient {
           error.hint = "Server-side refresh failed. User must re-authenticate via /oauth/authorize. Tell the user to reconnect Nestr.";
           break;
         case "AUTH_SCOPE_INSUFFICIENT":
-          error.hint = "Token is valid but lacks permission for this action. Do not retry. Tell the user what permission is missing (likely a role / circle / workspace they don't belong to).";
+          error.hint =
+            "Token is valid but lacks permission for this action. Do not retry. " +
+            "Common causes (in order of likelihood): " +
+            "(a) the OAuth token is bound to a specific workspace and you tried to read a different one — " +
+            "call nestr_get_me or nestr_list_workspaces to see the accessible workspaces; if broader access is needed, " +
+            "the user must re-authorize without picking a workspace at the consent screen. " +
+            "(b) the user's role doesn't include this action.";
           break;
         case "APP_DISABLED":
           error.hint = "Enable this app in workspace settings > Apps.";
