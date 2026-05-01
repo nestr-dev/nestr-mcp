@@ -146,6 +146,57 @@ describe("tagOAuthClientInfo", () => {
     expect(result.status).toBeUndefined();
     expect(result.error).toContain("ECONNREFUSED");
   });
+
+  // ─── Gate-equivalent shapes (clientInfo → tag call) ─────────────
+  // The src/http.ts initialize handler gates this helper on
+  // `(mcpClientVersion || mcpClientSoftwareId)`. The cases below mirror
+  // the three gate-relevant clientInfo shapes so the test names line up
+  // with the gate behavior they document.
+
+  it("clientInfo with software_id only (no version) → fetch fires with client_software_id, no client_version", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(mockResponse(204));
+    const result = await tagOAuthClientInfo({
+      bearerToken: "bearer-abc",
+      baseUrl: "https://app.nestr.io",
+      clientSoftwareId: "anthropic/claude-code",
+      fetchImpl,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const body = fetchImpl.mock.calls[0][1].body as URLSearchParams;
+    expect(body.has("client_version")).toBe(false);
+    expect(body.get("client_software_id")).toBe("anthropic/claude-code");
+  });
+
+  it("clientInfo with both version and software_id → fetch fires with both fields in body", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(mockResponse(204));
+    const result = await tagOAuthClientInfo({
+      bearerToken: "bearer-abc",
+      baseUrl: "https://app.nestr.io",
+      clientVersion: "2.1.15",
+      clientSoftwareId: "anthropic/claude-code",
+      fetchImpl,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const body = fetchImpl.mock.calls[0][1].body as URLSearchParams;
+    expect(body.get("client_version")).toBe("2.1.15");
+    expect(body.get("client_software_id")).toBe("anthropic/claude-code");
+  });
+
+  it("clientInfo with neither version nor software_id → no fetch call", async () => {
+    const fetchImpl = vi.fn();
+    const result = await tagOAuthClientInfo({
+      bearerToken: "bearer-abc",
+      baseUrl: "https://app.nestr.io",
+      fetchImpl,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
 });
 
 describe("deriveOAuthBaseUrl", () => {

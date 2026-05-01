@@ -1828,8 +1828,18 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
     // we capture both, surface them on the session, and forward to OAuth so the
     // upstream OAuth server can record the version on the issued token row
     // (slashme-online PR #1392).
+    //
+    // Some clients additionally emit a stable `software_id` extension field
+    // (snake_case per the slashme `client_software_id` convention; we also
+    // accept camelCase `softwareId` for forward compat). Capturing it lets the
+    // runtime tagging call fire even when a client emits software_id without
+    // a version.
     const mcpClientName = req.body?.params?.clientInfo?.name as string | undefined;
     const mcpClientVersion = req.body?.params?.clientInfo?.version as string | undefined;
+    const mcpClientSoftwareId = (
+      req.body?.params?.clientInfo?.software_id
+      ?? req.body?.params?.clientInfo?.softwareId
+    ) as string | undefined;
 
     if (!isInitializeRequest(req.body)) {
       res.status(400).json({
@@ -1873,16 +1883,21 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
     // even though slashme-online accepts those fields. Calling
     // /oauth/tokens/client-info here closes the loop so the API Keys UI
     // shows e.g. "Claude Code 2.1.15" right after first connect, without
-    // waiting for the next refresh-token cycle. Skip for API keys (no OAuth
-    // row exists) and when no version was sent. Fire-and-forget — failures
-    // are logged but never block the MCP session.
-    if (!isApiKey && mcpClientVersion) {
+    // waiting for the next refresh-token cycle.
+    //
+    // Skip for API keys (no OAuth row exists). Fire when EITHER version or
+    // software_id is present — the slashme endpoint accepts either alone.
+    // For software_id, prefer the explicit `clientInfo.software_id` extension
+    // when present and fall back to `name` so existing clients (which only
+    // emit name+version) continue to populate clientSoftwareId on the row.
+    // Fire-and-forget — failures are logged but never block the MCP session.
+    if (!isApiKey && (mcpClientVersion || mcpClientSoftwareId)) {
       const oauthBase = deriveOAuthBaseUrl(process.env.NESTR_API_BASE);
       void tagOAuthClientInfo({
         bearerToken: authToken,
         baseUrl: oauthBase,
         clientVersion: mcpClientVersion,
-        clientSoftwareId: mcpClientName,
+        clientSoftwareId: mcpClientSoftwareId || mcpClientName,
       }).then((result) => {
         if (!result.ok) {
           console.warn(
