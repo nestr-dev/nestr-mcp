@@ -1118,6 +1118,18 @@ Once obtained, pass the access token as \`Authorization: Bearer <token>\` on all
 
 **Scopes:** The server requests \`user\` and \`nest\` scopes, which provide access to user profile data and workspace/nest operations.
 
+### OAuth scope is a hard ceiling
+
+When the user picks a workspace at the OAuth consent screen, the issued token is **bound to that workspace**. Calls against any other workspace return HTTP 403 (\`AUTH_SCOPE_INSUFFICIENT\`) — even though the user themselves has rights to those workspaces. List endpoints (\`nestr_list_workspaces\`, \`nestr_get_me\` with \`fullWorkspaces:true\`, \`nestr_search\`) return only the scoped workspace.
+
+If the user wants the agent to see all of their workspaces, they should pick **"My full account"** at the consent screen instead of selecting a specific workspace. That issues a user-scoped token with no nest ceiling.
+
+**How agents should react to a workspace-scope error:**
+
+- A 403 with \`code: "AUTH_SCOPE_INSUFFICIENT"\` on a workspace lookup almost always means the token is scoped to a different workspace, not that the user lacks the underlying permission.
+- Call \`nestr_list_workspaces\` or \`nestr_get_me\` to see what *is* in scope. If the resource the user named lives in a different workspace, ask them to re-authorize without picking a workspace.
+- Personal API keys and workspace API keys do **not** have this ceiling — they keep their pre-existing access model.
+
 ### Which method to choose?
 
 - **OAuth (recommended)**: The preferred method. Standard MCP auto-discovery with user-scoped access and full audit trail attribution. Most MCP clients (Claude, Cursor, VS Code) handle this automatically — just connect and authenticate. No manual key management needed, and tokens refresh automatically.

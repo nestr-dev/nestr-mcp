@@ -453,7 +453,7 @@ describe("HTTP Server", () => {
   // error the client ignores.
 
   describe("POST /mcp — expired stored OAuth session", () => {
-    it("returns 401 with WWW-Authenticate when the stored OAuth session is gone", async () => {
+    it("returns 401 with WWW-Authenticate on a tool call when the stored OAuth session is gone", async () => {
       const sessionId = "expired-oauth-session";
       const token = "expired-token";
 
@@ -475,10 +475,46 @@ describe("HTTP Server", () => {
         .set("Accept", "application/json, text/event-stream")
         .set("Authorization", `Bearer ${token}`)
         .set("mcp-session-id", sessionId)
-        .send({ jsonrpc: "2.0", method: "tools/list", id: 1 });
+        .send({
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { name: "nestr_list_workspaces", arguments: {} },
+          id: 1,
+        });
 
       expect(res.status).toBe(401);
       expect(res.headers["www-authenticate"]).toMatch(/^Bearer resource_metadata="/);
+    });
+
+    it("does not probe the OAuth store for non-tool methods (tools/list, ping)", async () => {
+      // A `tools/list` against an expired Flow A session is intentionally
+      // allowed through — listing tools doesn't talk to Nestr, and the next
+      // `tools/call` will catch the expiry. This avoids hitting Redis on
+      // every keep-alive ping for chatty clients.
+      const sessionId = "list-tolerant-session";
+      const token = "list-tolerant-token";
+
+      await mockStore.storeMcpSession(sessionId, {
+        authToken: token,
+        mcpClient: "claude-code",
+        isApiKey: false,
+        wantsJsonOnly: false,
+        hasStoredOAuthSession: true,
+        createdAt: Date.now(),
+      });
+      // Note: no OAuth session seeded — Flow A "expired" state.
+
+      const res = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", `Bearer ${token}`)
+        .set("mcp-session-id", sessionId)
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 1 });
+
+      // tools/list passes through; transport returns 200 with the tool list.
+      expect(res.status).toBe(200);
+      expect(res.headers["www-authenticate"]).toBeUndefined();
     });
   });
 
@@ -719,6 +755,174 @@ describe("HTTP Server", () => {
         .delete("/mcp")
         .set("mcp-session-id", "nonexistent");
       expect(res.status).toBe(404);
+    });
+  });
+
+  // ─── Flow B (Cowork-style) auth surfacing ──────────────────────────
+  // Regression: a tool call with an expired bearer must come back as a
+  // transport-level HTTP 401 + WWW-Authenticate so the MCP SDK auto-refreshes.
+  // Returning a 200 with `isError: true` (the original Cowork bug) leaves the
+  // SDK wedged on a dead token until the user reconnects manually.
+
+  describe("POST /mcp — Flow B auth surfacing", () => {
+    async function initFlowBSession(token: string): Promise<string> {
+      // Init: server probes /users/me to identify the user. Return success so
+      // the session gets created. Then we'll swap in a 401 for the tool call.
+      const initFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ _id: "user-1", username: "alice", profile: { fullName: "Alice" } }),
+        json: async () => ({ _id: "user-1", username: "alice", profile: { fullName: "Alice" } }),
+      });
+      vi.stubGlobal("fetch", initFetch);
+
+      const res = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", `Bearer ${token}`)
+        .send({
+          jsonrpc: "2.0",
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "cowork-test", version: "1.0" },
+          },
+          id: 1,
+        });
+
+      vi.unstubAllGlobals();
+      expect(res.status).toBe(200);
+      const sid = res.headers["mcp-session-id"];
+      expect(sid).toBeDefined();
+      return sid;
+    }
+
+    /** Parse an SSE-framed response body. Returns the first JSON-RPC payload found. */
+    function parseSse(body: string): unknown {
+      const dataLine = body.split("\n").find((line) => line.startsWith("data: "));
+      if (!dataLine) throw new Error(`No SSE data in body: ${body.slice(0, 200)}`);
+      return JSON.parse(dataLine.slice("data: ".length));
+    }
+
+    it("returns HTTP 401 + WWW-Authenticate when Nestr rejects the bearer on a tool call", async () => {
+      const token = "flow-b-stale-bearer";
+      const sid = await initFlowBSession(token);
+
+      // Tool-call time: pre-flight probe to /users/me 401s.
+      const tool401 = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        text: async () => JSON.stringify({ message: "You must be logged in to do this." }),
+        json: async () => ({ message: "You must be logged in to do this." }),
+      });
+      vi.stubGlobal("fetch", tool401);
+
+      const res = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", `Bearer ${token}`)
+        .set("mcp-session-id", sid)
+        .send({
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { name: "nestr_list_workspaces", arguments: {} },
+          id: 2,
+        });
+
+      // Transport-level 401, NOT 200 with isError:true. Triggers MCP SDK re-auth.
+      expect(res.status).toBe(401);
+      expect(res.headers["www-authenticate"]).toMatch(/^Bearer resource_metadata="/);
+      expect(res.headers["www-authenticate"]).toContain('error="invalid_token"');
+      // 401 path returns plain JSON (not SSE) since we short-circuit before
+      // transport.handleRequest.
+      expect(res.body.error.data?.flow).toBe("B");
+
+      vi.unstubAllGlobals();
+    });
+
+    it("returns a tool result (not transport 401) when Nestr returns 403 — scope, not auth", async () => {
+      const token = "flow-b-scoped-bearer";
+      const sid = await initFlowBSession(token);
+
+      // Pre-flight probe says 200 (token is valid). The actual tool then 403s.
+      const fetchSeq = vi.fn()
+        // pre-flight /users/me
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ _id: "user-1", username: "alice" }),
+          json: async () => ({ _id: "user-1", username: "alice" }),
+        })
+        // tool: GET /workspaces
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 403,
+          text: async () => JSON.stringify({ message: "Access denied" }),
+          json: async () => ({ message: "Access denied" }),
+        });
+      vi.stubGlobal("fetch", fetchSeq);
+
+      const res = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", `Bearer ${token}`)
+        .set("mcp-session-id", sid)
+        .send({
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { name: "nestr_list_workspaces", arguments: {} },
+          id: 3,
+        });
+
+      // 403 is "valid token, no permission". It must NOT trigger transport-level
+      // re-auth — that would kick the user out of a perfectly good session.
+      expect(res.status).toBe(200);
+      expect(res.headers["www-authenticate"]).toBeUndefined();
+      // SSE-framed response — extract the JSON-RPC envelope from `data: ...`.
+      const envelope = parseSse(res.text) as { result?: { content?: Array<{ text?: string }> } };
+      const text = envelope.result?.content?.[0]?.text || "";
+      expect(text).toContain("AUTH_SCOPE_INSUFFICIENT");
+      expect(text).not.toContain("AUTH_TOKEN_REJECTED_BY_NESTR");
+
+      vi.unstubAllGlobals();
+    });
+
+    it("nestr_diagnose works without an Authorization header", async () => {
+      // No Authorization header — diagnose is the escape hatch when the bearer
+      // is missing or rejected. It should still return a tool result describing
+      // the (lack of) auth state.
+      const token = "diagnose-bearer";
+      const sid = await initFlowBSession(token);
+
+      // No fetch stubs — diagnose doesn't talk to Nestr.
+      const res = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        // Authorization header still set on the connection (the session is
+        // bound to it), but diagnose itself bypasses pre-flight.
+        .set("Authorization", `Bearer ${token}`)
+        .set("mcp-session-id", sid)
+        .send({
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { name: "nestr_diagnose", arguments: {} },
+          id: 4,
+        });
+
+      expect(res.status).toBe(200);
+      const envelope = parseSse(res.text) as { result?: { content?: Array<{ text?: string }> } };
+      const text = envelope.result?.content?.[0]?.text;
+      expect(text).toBeDefined();
+      const parsed = JSON.parse(text!);
+      expect(parsed.flow).toBe("B");
+      expect(parsed.tokenPresented).toBe(true);
+      expect(parsed.serverVersion).toBeTruthy();
+      expect(parsed.tokenFingerprint).toMatch(/^\d+:[a-f0-9]+/);
     });
   });
 });

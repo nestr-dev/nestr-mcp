@@ -36,6 +36,8 @@ export interface PendingAuthWithPKCE {
   scope?: string;
   /** Identifier for the MCP client (e.g., "claude-code", "cursor") for token metadata */
   clientConsumer?: string;
+  /** MCP `clientInfo.version` from the initialize handshake (e.g., "1.4.2"). */
+  clientVersion?: string;
   /** GA4 client_id for cross-domain analytics tracking */
   gaClientId?: string;
 }
@@ -50,6 +52,12 @@ export interface StoredOAuthSession {
   scope?: string;
   /** Nestr user ID for analytics (GA4 user_id) */
   userId?: string;
+  /**
+   * Most recent refresh attempt — for `nestr_diagnose`. We persist this so the
+   * answer survives pod restarts and is consistent across the pool. Cleared
+   * (or replaced) whenever a new refresh runs.
+   */
+  lastRefreshAttempt?: { at: number; success: boolean; error?: string };
 }
 
 /**
@@ -74,6 +82,8 @@ export interface PkceForCodeData {
 export interface StoredMcpSession {
   authToken: string;
   mcpClient?: string;
+  /** MCP `clientInfo.version` from the initialize handshake (e.g., "1.4.2"). */
+  mcpClientVersion?: string;
   userId?: string;
   userName?: string;
   isApiKey: boolean;

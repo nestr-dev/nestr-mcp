@@ -18,6 +18,7 @@ import {
   type PendingAuthWithPKCE,
   type StoredOAuthSession,
 } from "./store.js";
+import { cidTag } from "../util/request-context.js";
 
 /**
  * Pending OAuth authorization request
@@ -91,6 +92,12 @@ export interface AuthorizationRequestParams {
   codeChallengeMethod?: string;
   /** Identifier for the MCP client (e.g., "claude-code", "cursor") for token metadata */
   clientConsumer?: string;
+  /**
+   * Version string from MCP `clientInfo.version` (the structured handshake field).
+   * Forwarded as `client_version` on the authorize URL so the upstream OAuth
+   * server can record outdated installs without us having to roundtrip on alias.
+   */
+  clientVersion?: string;
   /** GA4 client_id for cross-domain analytics tracking */
   gaClientId?: string;
 }
@@ -161,6 +168,7 @@ export async function createAuthorizationRequest(
     createdAt: Date.now(),
     scope: params.scope,
     clientConsumer: params.clientConsumer,
+    clientVersion: params.clientVersion,
     gaClientId: params.gaClientId,
   });
 
@@ -183,6 +191,12 @@ export async function createAuthorizationRequest(
   // Pass client_consumer to Nestr for token metadata (identifies MCP client like claude-code, cursor)
   if (params.clientConsumer) {
     urlParams.set("client_consumer", params.clientConsumer);
+  }
+  // Pass client_version so the upstream OAuth server can record the version
+  // alongside the consumer (slashme-online PR #1392). Different versions of
+  // the same consumer share a token row but are distinguishable in metadata.
+  if (params.clientVersion) {
+    urlParams.set("client_version", params.clientVersion);
   }
 
   const authUrl = `${config.authorizationEndpoint}?${urlParams}`;
@@ -335,19 +349,37 @@ async function refreshAndReload(
   refreshToken: string
 ): Promise<OAuthSession | undefined> {
   const store = getStore();
+  let lastError: string | undefined;
   // Retry once after a short delay to handle transient failures
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
+      console.log(`${cidTag()}[Refresh] attempt=${attempt + 1} sessionKey=...${sessionId.slice(-6)}`);
       const tokens = await refreshAccessToken(refreshToken);
-      await storeOAuthSession(sessionId, tokens);
+      // Store the new tokens *and* a success record under the same key.
+      // sessionId here is the original access token used to look up the row;
+      // storeOAuthSession overwrites both accessToken/refreshToken fields.
+      await store.storeSession(sessionId, {
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+        expiresAt: Date.now() + tokens.expires_in * 1000,
+        scope: tokens.scope,
+        // Preserve userId from the existing session if present
+        userId: (await store.getSession(sessionId))?.userId,
+        lastRefreshAttempt: { at: Date.now(), success: true },
+      });
       return await store.getSession(sessionId);
     } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
       if (attempt === 0) {
-        console.warn(`Token refresh attempt 1 failed, retrying in 1s:`, err instanceof Error ? err.message : err);
+        console.warn(`${cidTag()}[Refresh] attempt 1 failed, retrying in 1s: ${lastError}`);
         await new Promise(resolve => setTimeout(resolve, 1000));
       } else {
-        console.error(`Token refresh failed after 2 attempts:`, err instanceof Error ? err.message : err);
-        // Refresh permanently failed, remove session
+        console.error(`${cidTag()}[Refresh] failed after 2 attempts: ${lastError}`);
+        // Refresh permanently failed. Record the failure on the session so
+        // nestr_diagnose can report it, then remove (but only after a small
+        // delay-window where diagnose can still see it). We just remove —
+        // diagnose reads from the in-memory MCP session instead, which is
+        // updated via the onRefreshAttempt callback.
         await store.removeSession(sessionId);
         return undefined;
       }

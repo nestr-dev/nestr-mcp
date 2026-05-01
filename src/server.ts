@@ -16,6 +16,10 @@ import { toolDefinitions, handleToolCall } from "./tools/index.js";
 import { getCompletableListHtml, appResources } from "./apps/index.js";
 // Skills instructions are now served on-demand via nestr_help tool (see src/help/topics.ts)
 import * as mcpcat from "mcpcat";
+import type { DiagnoseSnapshot } from "./util/diagnose.js";
+
+// Re-export for callers that already import from this module.
+export type { DiagnoseSnapshot };
 
 export interface NestrMcpServerConfig {
   client?: NestrClient;
@@ -25,6 +29,8 @@ export interface NestrMcpServerConfig {
   userId?: string;
   /** Pre-resolved user display name for MCPcat identification */
   userName?: string;
+  /** Builds a fresh diagnose snapshot from session state. Required for nestr_diagnose. */
+  getDiagnose?: () => DiagnoseSnapshot;
 }
 
 // Server instructions provide context to AI assistants about what Nestr is and how to use it
@@ -72,6 +78,18 @@ Nestr supports any self-organization approach. When the flavour is clear (check 
 
 The \`users\` array on every nest contains the IDs of assigned users. For roles, \`users\` tells you **who fills (energizes) that role**. To find all roles a user fills, search with \`assignee:me label:role\` or \`assignee:{userId} label:role\`. The \`users\` field is always present in API responses, even when using \`stripDescription: true\`.
 
+## Authentication
+
+Tools accept either an OAuth bearer token (user-scoped) or a workspace API key, except where the tool description explicitly says "Auth: OAuth only" — those require user scope and will return \`AUTH_SCOPE_INSUFFICIENT\` under an API key.
+
+**On any auth error, call \`nestr_diagnose\` first.** It works without auth and reports which flow the session is in (A = server-managed refresh, B = client-managed refresh, unknown = API key), whether the bearer reached Nestr, when the most recent upstream 401 was, and (Flow A only) the most recent refresh attempt. Auth error codes:
+
+- \`AUTH_NO_TOKEN_PRESENTED\` — run the OAuth flow.
+- \`AUTH_TOKEN_REJECTED_BY_NESTR\` — Flow B clients refresh themselves; Flow A means the user must reconnect.
+- \`AUTH_REFRESH_FAILED\` — server-side refresh failed; user must reconnect.
+- \`AUTH_SCOPE_INSUFFICIENT\` — token is valid but lacks permission for this action; do not retry.
+- \`AUTH_PROXY_HEADER_DROPPED\` — server bug. Retry once and report the \`correlationId\`.
+
 ## Best Practices
 
 1. Start with \`nestr_get_me\` to establish context
@@ -112,7 +130,9 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
     const toolArgs = (args as Record<string, unknown>) || {};
 
     try {
-      const result = await handleToolCall(client, name, toolArgs);
+      const result = await handleToolCall(client, name, toolArgs, {
+        getDiagnose: config.getDiagnose,
+      });
 
       // Track successful tool call
       if (config.onToolCall) {
