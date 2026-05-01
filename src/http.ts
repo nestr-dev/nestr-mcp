@@ -55,6 +55,10 @@ import {
   type RegisteredClient,
 } from "./oauth/store.js";
 import {
+  tagOAuthClientInfo,
+  deriveOAuthBaseUrl,
+} from "./oauth/client-info.js";
+import {
   constantTimeCompare,
   validateRedirectUri,
 } from "./oauth/storage.js";
@@ -1861,6 +1865,31 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
     }
     if (mcpClientName) {
       console.log(`MCP client: ${mcpClientName}`);
+    }
+
+    // Tag the upstream OAuth token row with the MCP `clientInfo` we just
+    // captured. The OAuth grant happened BEFORE this initialize handshake,
+    // so the token was issued without `client_version` / `client_software_id`
+    // even though slashme-online accepts those fields. Calling
+    // /oauth/tokens/client-info here closes the loop so the API Keys UI
+    // shows e.g. "Claude Code 2.1.15" right after first connect, without
+    // waiting for the next refresh-token cycle. Skip for API keys (no OAuth
+    // row exists) and when no version was sent. Fire-and-forget — failures
+    // are logged but never block the MCP session.
+    if (!isApiKey && mcpClientVersion) {
+      const oauthBase = deriveOAuthBaseUrl(process.env.NESTR_API_BASE);
+      void tagOAuthClientInfo({
+        bearerToken: authToken,
+        baseUrl: oauthBase,
+        clientVersion: mcpClientVersion,
+        clientSoftwareId: mcpClientName,
+      }).then((result) => {
+        if (!result.ok) {
+          console.warn(
+            `[ClientInfo] tag failed: status=${result.status ?? "n/a"} error=${result.error ?? "unknown"}`,
+          );
+        }
+      });
     }
 
     let userId: string | undefined;
