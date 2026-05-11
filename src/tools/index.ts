@@ -261,12 +261,12 @@ export const schemas = {
 
   addComment: z.object({
     nestId: z.string().describe("Nest ID to comment on"),
-    body: z.string().describe("Comment text (supports HTML and @mentions: @{userId}, @{email}, @{circle})"),
+    body: z.string().describe("Comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)."),
   }),
 
   updateComment: z.object({
     commentId: z.string().describe("Comment ID to update"),
-    body: z.string().describe("Updated comment text (supports HTML and @mentions: @{userId}, @{email}, @{circle})"),
+    body: z.string().describe("Updated comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)."),
   }),
 
   deleteComment: z.object({
@@ -878,12 +878,12 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_comment",
-    description: "Add a comment to a nest. Supports HTML and @mentions (@{userId}, @{email}, @{circle}). Use for progress updates and discussion.",
+    description: "Add a comment to a nest. Supports HTML and @mentions — **mentions MUST be wrapped in literal curly braces** (e.g. `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`); without the braces the user is not notified. Prefer `@{userId:roleId}` so the recipient knows which role they're being addressed in. Use for progress updates and discussion.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID to comment on" },
-        body: { type: "string", description: "Comment text (supports HTML and @mentions: @{userId}, @{email}, @{circle})" },
+        body: { type: "string", description: "Comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)." },
       },
       required: ["nestId", "body"],
     },
@@ -891,12 +891,12 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_comment",
-    description: "Update an existing comment's body. Supports HTML and @mentions.",
+    description: "Update an existing comment's body. Supports HTML and @mentions — **mentions MUST be wrapped in literal curly braces** (e.g. `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`); without the braces the user is not notified.",
     inputSchema: {
       type: "object" as const,
       properties: {
         commentId: { type: "string", description: "Comment ID to update" },
-        body: { type: "string", description: "Updated comment text (supports HTML and @mentions: @{userId}, @{email}, @{circle})" },
+        body: { type: "string", description: "Updated comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)." },
       },
       required: ["commentId", "body"],
     },
