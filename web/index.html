@@ -523,6 +523,7 @@
 
             <div class="tab-content" id="copilot-studio">
               <p class="tip" style="margin-bottom: 16px;">Works with <strong>Microsoft Copilot Studio</strong> agents and <strong>Microsoft 365 Copilot</strong> declarative agents.</p>
+              <p class="warning" style="margin-bottom: 16px;"><strong>Keep the Server description under 500 characters.</strong> Copilot Studio's connector backend truncates longer descriptions and surfaces a confusing SQL error (<code>String or binary data would be truncated in table '{0}', column '{1}'</code>) instead of a clear validation message. If a previous save failed with that error, also delete the half-created connector before retrying — Copilot Studio leaves a stub behind that triggers a "display name already exists" error on the next attempt.</p>
 
               <div class="config-block hosted oauth active">
                 <div class="quickstart-box">
