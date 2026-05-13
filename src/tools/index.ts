@@ -262,11 +262,13 @@ export const schemas = {
   addComment: z.object({
     nestId: z.string().describe("Nest ID to comment on"),
     body: z.string().describe("Comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)."),
+    labels: z.array(z.string()).optional().describe("Optional label IDs to attach to the comment at creation time (e.g., 'decision', 'question', or a custom label ID). Personal labels are auto-scoped to the authenticated user. Use nestr_list_labels / nestr_list_personal_labels to discover IDs."),
   }),
 
   updateComment: z.object({
     commentId: z.string().describe("Comment ID to update"),
     body: z.string().describe("Updated comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)."),
+    labels: z.array(z.string()).optional().describe("Optional full set of label IDs for the comment. When provided, this REPLACES the comment's existing labels. To incrementally add or remove a single label without replacing the rest, use nestr_add_label / nestr_remove_label with the commentId as the nestId."),
   }),
 
   deleteComment: z.object({
@@ -878,12 +880,17 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_comment",
-    description: "Add a comment to a nest. Supports HTML and @mentions — **mentions MUST be wrapped in literal curly braces** (e.g. `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`); without the braces the user is not notified. Prefer `@{userId:roleId}` so the recipient knows which role they're being addressed in. Use for progress updates and discussion.",
+    description: "Add a comment to a nest. Supports HTML and @mentions — **mentions MUST be wrapped in literal curly braces** (e.g. `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`); without the braces the user is not notified. Prefer `@{userId:roleId}` so the recipient knows which role they're being addressed in. Use for progress updates and discussion. Optionally attach labels at creation time via the `labels` parameter.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID to comment on" },
         body: { type: "string", description: "Comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)." },
+        labels: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional label IDs to attach to the comment at creation time (e.g., 'decision', 'question', or a custom label ID). Personal labels are auto-scoped to the authenticated user. Use nestr_list_labels / nestr_list_personal_labels to discover IDs.",
+        },
       },
       required: ["nestId", "body"],
     },
@@ -891,12 +898,17 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_comment",
-    description: "Update an existing comment's body. Supports HTML and @mentions — **mentions MUST be wrapped in literal curly braces** (e.g. `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`); without the braces the user is not notified.",
+    description: "Update an existing comment's body and/or labels. Supports HTML and @mentions — **mentions MUST be wrapped in literal curly braces** (e.g. `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`); without the braces the user is not notified. When `labels` is provided it REPLACES the existing label set — use nestr_add_label / nestr_remove_label for incremental changes.",
     inputSchema: {
       type: "object" as const,
       properties: {
         commentId: { type: "string", description: "Comment ID to update" },
         body: { type: "string", description: "Updated comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)." },
+        labels: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional full set of label IDs for the comment. When provided, this REPLACES the comment's existing labels. To incrementally add or remove a single label without replacing the rest, use nestr_add_label / nestr_remove_label with the commentId as the nestId.",
+        },
       },
       required: ["commentId", "body"],
     },
@@ -2008,7 +2020,9 @@ async function _handleToolCall(
 
       case "nestr_add_comment": {
         const parsed = schemas.addComment.parse(args);
-        const post = await client.createPost(parsed.nestId, parsed.body);
+        const post = await client.createPost(parsed.nestId, parsed.body, {
+          labels: parsed.labels,
+        });
         return formatResult({ message: "Comment added successfully", post });
       }
 
@@ -2016,6 +2030,7 @@ async function _handleToolCall(
         const parsed = schemas.updateComment.parse(args);
         const updated = await client.updateNest(parsed.commentId, {
           title: parsed.body,
+          ...(parsed.labels !== undefined ? { labels: parsed.labels } : {}),
         });
         return formatResult({ message: "Comment updated successfully", comment: updated });
       }

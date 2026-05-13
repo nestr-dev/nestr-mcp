@@ -780,10 +780,18 @@ export class NestrClient {
     return this.fetch<Post[]>(`/nests/${nestId}/posts${query ? `?${query}` : ""}`);
   }
 
-  async createPost(nestId: string, body: string): Promise<Post> {
+  async createPost(
+    nestId: string,
+    body: string,
+    options?: { labels?: string[] }
+  ): Promise<Post> {
     return this.fetch<Post>(`/nests/${nestId}/posts`, {
       method: "POST",
-      body: JSON.stringify({ body, parentId: nestId }),
+      body: JSON.stringify({
+        body,
+        parentId: nestId,
+        ...(options?.labels !== undefined ? { labels: options.labels } : {}),
+      }),
     });
   }
 
