@@ -105,6 +105,7 @@ export interface Post {
   ancestors?: string[];
   labels?: string[];
   createdAt?: string;
+  replies?: Post[];
 }
 
 export interface User {
@@ -771,10 +772,10 @@ export class NestrClient {
 
   async getNestPosts(
     nestId: string,
-    options?: { depth?: number }
+    options?: { depth?: number | "all" }
   ): Promise<Post[]> {
     const params = new URLSearchParams();
-    if (options?.depth) params.set("depth", options.depth.toString());
+    if (options?.depth !== undefined) params.set("depth", options.depth.toString());
 
     const query = params.toString();
     return this.fetch<Post[]>(`/nests/${nestId}/posts${query ? `?${query}` : ""}`);

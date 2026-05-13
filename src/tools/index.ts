@@ -105,6 +105,23 @@ const HINT_URL_PATTERNS: Array<{
       return result;
     },
   },
+  // /nests/{id}/search?search=... → nestr_search scoped to that nest with in:{id}
+  {
+    pattern: /^\/nests\/([^/]+)\/search$/,
+    tool: "nestr_search",
+    params: (m, sp, workspaceId) => {
+      const search = sp.get("search") || "";
+      const result: Record<string, string> = { query: `in:${m[1]} ${search}`.trim() };
+      if (workspaceId) result.workspaceId = workspaceId;
+      return result;
+    },
+  },
+  // /workspaces/{id}/search?search=... → nestr_search at workspace scope
+  {
+    pattern: /^\/workspaces\/([^/]+)\/search$/,
+    tool: "nestr_search",
+    params: (m, sp) => ({ workspaceId: m[1], query: sp.get("search") || "" }),
+  },
   // /nests/{id}/posts → nestr_get_comments
   { pattern: /^\/nests\/([^/]+)\/posts$/, tool: "nestr_get_comments", params: (m) => ({ nestId: m[1] }) },
   // /nests/{id}/tensions → nestr_list_tensions
@@ -329,8 +346,8 @@ export const schemas = {
   }),
 
   getComments: z.object({
-    nestId: z.string().describe("Nest ID to get comments from"),
-    depth: z.number().optional().describe("Comment thread depth (default: all)"),
+    nestId: z.string().describe("Nest ID to get comments from. Pass a workspace ID to gather communication across the whole workspace (combine with depth='all')."),
+    depth: z.union([z.number(), z.literal("all")]).optional().describe("How deep below the context nest to look for comments. 0 (default) returns only comments directly on this nest; N includes comments on descendants up to N levels deep; 'all' includes comments on this nest and every descendant. Use 'all' on a workspace or circle nest to analyse large sets of communication in one call."),
   }),
 
   getCircle: z.object({
@@ -1050,12 +1067,15 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_comments",
-    description: "Get comments and discussion history on a nest.",
+    description: "Get comments and discussion history on a nest, including full nested reply threads. By default returns only comments posted directly on the given nest. Widen with depth to also include comments on descendant nests, or pass a workspace/circle nest ID with depth='all' to gather large sets of communication for analysis.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        nestId: { type: "string", description: "Nest ID to get comments from" },
-        depth: { type: "number", description: "Comment thread depth (default: all)" },
+        nestId: { type: "string", description: "Nest ID to get comments from. Pass a workspace ID to gather communication across the whole workspace (combine with depth='all')." },
+        depth: {
+          oneOf: [{ type: "number" }, { type: "string", enum: ["all"] }],
+          description: "How deep below the context nest to look for comments. 0 (default) returns only comments directly on this nest; N includes comments on descendants up to N levels deep; 'all' includes comments on this nest and every descendant.",
+        },
       },
       required: ["nestId"],
     },
