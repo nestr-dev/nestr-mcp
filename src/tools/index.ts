@@ -9,6 +9,7 @@ import { appResources } from "../apps/index.js";
 import { getCorrelationId } from "../util/request-context.js";
 import { VERSION } from "../version.js";
 import type { DiagnoseSnapshot } from "../util/diagnose.js";
+import { PRIME_LABELS, PrimeLabelConflictError, validatePrimeLabels } from "./validation.js";
 
 // MCP Apps UI metadata for tools that can render in the completable list app.
 // IMPORTANT: Only use for completable items (tasks, projects, todos, inbox items).
@@ -786,7 +787,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_nest",
-    description: "Create a nest under a parent. Use labels to define type (e.g., ['project'], ['role']). For governance changes in established workspaces, prefer the tension flow. See nestr_help('labels') for available types.",
+    description: "Create a nest under a parent. Use labels to define type (e.g., ['project'], ['role']). Apply at most ONE prime label per nest (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback) — they define the nest's core identity and cannot coexist. For governance changes in established workspaces, prefer the tension flow. See nestr_help('labels') for available types.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -829,7 +830,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_nest",
-    description: "Update nest properties. Set parentId to move. Only send fields you want to change. For governance changes, prefer tensions. See nestr_help('nest-model') for fields and data namespacing.",
+    description: "Update nest properties. Set parentId to move. Only send fields you want to change. When replacing `labels`, keep at most ONE prime label (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback) — they define the nest's core identity. For governance changes, prefer tensions. See nestr_help('nest-model') for fields and data namespacing.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1323,7 +1324,7 @@ export const toolDefinitions = [
   // Label management
   {
     name: "nestr_add_label",
-    description: "Add a label to a nest. Personal labels (like 'now') are automatically scoped to the authenticated user by the API.",
+    description: "Add a label to a nest. Personal labels (like 'now') are automatically scoped to the authenticated user by the API. Will reject any attempt to add a prime label (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback) to a nest that already has one — a nest can only have one core identity.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1939,6 +1940,7 @@ async function _handleToolCall(
 
       case "nestr_create_nest": {
         const parsed = schemas.createNest.parse(args);
+        validatePrimeLabels(parsed.labels);
         const hasGovernanceLabels = parsed.labels?.some(l =>
           ["role", "circle"].includes(l)
         );
@@ -1989,6 +1991,7 @@ async function _handleToolCall(
 
       case "nestr_update_nest": {
         const parsed = schemas.updateNest.parse(args);
+        validatePrimeLabels(parsed.labels);
         const hasInlineGovernance = parsed.accountabilities?.length || parsed.domains?.length;
 
         // Route to self-organization API when updating roles/circles with accountabilities/domains
@@ -2287,6 +2290,13 @@ async function _handleToolCall(
       // Label management
       case "nestr_add_label": {
         const parsed = schemas.addLabel.parse(args);
+        // Only fetch existing labels when applying a prime label — for all
+        // other labels there's no possible conflict, so skip the extra call.
+        if (PRIME_LABELS.has(parsed.labelId)) {
+          const existing = await client.getNest(parsed.nestId);
+          const existingNest = Array.isArray(existing) ? existing[0] : existing;
+          validatePrimeLabels([...(existingNest?.labels ?? []), parsed.labelId]);
+        }
         const nest = await client.addLabel(parsed.nestId, parsed.labelId);
         return formatResult({ message: `Label '${parsed.labelId}' added successfully`, nest: compactResponse(nest) });
       }
@@ -2640,6 +2650,18 @@ async function _handleToolCall(
         message: error.errors.map(e => `${e.path.join(".")}: ${e.message}`).join("; "),
         retryable: false,
         hint: "Check the tool parameters match the expected schema.",
+        correlationId: getCorrelationId(),
+      });
+    }
+
+    // Prime-label conflicts (e.g. ['project', 'tension'] on one nest)
+    if (error instanceof PrimeLabelConflictError) {
+      return formatError({
+        error: true,
+        code: "VALIDATION",
+        message: error.message,
+        retryable: false,
+        hint: `Prime labels (one per nest): ${[...PRIME_LABELS].join(", ")}. Drop one label and retry, or create separate nests linked via nestr_add_graph_link.`,
         correlationId: getCorrelationId(),
       });
     }

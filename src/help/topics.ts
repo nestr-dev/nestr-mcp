@@ -410,6 +410,10 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 - \`meeting\` - A calendar meeting
 - \`tension\` - The fundamental unit of organizational communication — a gap between current reality and potential. Used for inter-role communication, meeting agenda items, governance proposals, and general tension processing. Supports \`fields['tension.feeling']\` and \`fields['tension.needs']\` for separating personal context from organizational response. Use the dedicated tension tools (\`nestr_create_tension\`, \`nestr_list_my_tensions\`, etc.) to create and manage tensions.
 
+### Prime Labels (one per nest)
+
+These labels define a nest's core identity and are mutually exclusive — a nest can have at most one of them: \`project\`, \`tension\`, \`role\`, \`circle\`, \`anchor-circle\`, \`meeting\`, \`metric\`, \`goal\`, \`result\`, \`checklist\`, \`feedback\`. A project is not also a tension, a role is not also a metric. The MCP layer will reject calls to \`nestr_create_nest\`, \`nestr_update_nest\`, or \`nestr_add_label\` that would put two prime labels on the same nest. If you need to express a relationship between two such entities, create separate nests and link them with \`nestr_add_graph_link\`. Modifier labels like \`governance\` and \`circle-meeting\` (which pair with \`meeting\`) are not prime and can coexist.
+
 ## Label Architecture
 
 Labels give nests meaning and define their behavior. There are three types of labels:

@@ -99,6 +99,7 @@ Tools accept either an OAuth bearer token (user-scoped) or a workspace API key, 
 5. Use hints=true on \`nestr_get_nest\` to surface issues without extra queries
 6. For governance changes in established workspaces, prefer the tension flow
 7. To find who fills a role, check its \`users\` array. To find a user's roles, use \`assignee:{userId} label:role\`
+8. **One prime label per nest.** A nest's core identity is defined by exactly one of: \`project\`, \`tension\`, \`role\`, \`circle\`, \`anchor-circle\`, \`meeting\`, \`metric\`, \`goal\`, \`result\`, \`checklist\`, \`feedback\`. Never combine two — a project is not also a tension. Modifier labels like \`governance\`/\`circle-meeting\` (which pair with \`meeting\`) are fine, as are workspace and personal labels. If you need both, create separate nests and link them with \`nestr_add_graph_link\`.
 `.trim();
 
 export function createServer(config: NestrMcpServerConfig = {}): Server {
