@@ -387,7 +387,7 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 
 **Meetings & Operations:**
 - \`metric\` - A metric tracked by a role/circle
-- \`checklist\` - A recurring checklist item
+- \`checklist\` - A **recurring** check processed during the Checklist Review section of a tactical meeting (Holacracy semantic): a regular yes/no/n-a confirmation that a role-filler is performing an ongoing activity. Must live under a role or circle. **NOT a general checklist item** — do not use for one-off tasks, todos, or generic "things to check off" (those are plain nests with no system label; see Work Tracking below).
 - \`governance\` - Combined with \`meeting\` label to create a governance meeting (processes governance tensions/proposals)
 - \`circle-meeting\` - Combined with \`meeting\` label to create a circle/tactical meeting (processes operational tensions — projects, todos, inter-role requests)
 
