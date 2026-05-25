@@ -107,22 +107,26 @@ When determining work assignments, consider:
 
   "linking": `## Linking to Nests
 
-**Always link to nests when mentioning them.** The URL format is:
+**When generating clickable links to nests in chat output, comments, or descriptions, always use the canonical pattern:** \`https://app.nestr.io/n/{nestId}\` (NOT \`/nests/{nestId}\`, \`/nest/\`, or any other variation — only \`/n/\`).
 
-\`https://app.nestr.io/n/{nestId}\`
+Every nest returned by this MCP server includes a precomputed \`url\` field — **prefer that field over constructing the URL yourself**. The server already applies the context rules below.
 
-If you know the context (circle or workspace) of the nest, include it as a prefix:
+### URL construction rules (when you must build a URL yourself)
 
-\`https://app.nestr.io/n/{contextId}/{nestId}\`
+1. If you know the nest's parent (circle, project, role, etc.), include it as the context prefix:
+   \`https://app.nestr.io/n/{parentId}/{nestId}\`
+2. If the nest has no parent, or its parent is \`inbox\`, fall back to the bare form:
+   \`https://app.nestr.io/n/{nestId}\`
 
-Where \`{contextId}\` is the nest's containing circle or workspace (found in the \`ancestors\` array). If you don't know the context ID, just use \`/n/{nestId}\` — it will still work.
+The parent context (when present) opens the nest in its detail pane on desktop. The bare form always works.
 
-**IMPORTANT:** The URL path is \`/n/\`, NOT \`/nest/\`, \`/nests/\`, or any other variation. Always use \`/n/\`.
+### Examples
 
-Examples:
 - Role in a circle: \`[Developer](https://app.nestr.io/n/circleId/roleId)\`
+- Task in a project: \`[Fix bug](https://app.nestr.io/n/projectId/taskId)\`
 - Top-level workspace: \`[My Workspace](https://app.nestr.io/n/workspaceId)\`
-- Task (circle unknown): \`[Fix bug](https://app.nestr.io/n/taskId)\``,
+- Inbox item: \`[Quick capture](https://app.nestr.io/n/itemId)\` (parent is 'inbox' — drop the context)
+- Nest of unknown context: \`[Fix bug](https://app.nestr.io/n/taskId)\``,
 
   "workspace-types": `## Workspace Types
 
@@ -473,6 +477,8 @@ Use this when you need to know what values are valid for a field, especially bef
   "search": `## Search Query Syntax
 
 The \`nestr_search\` tool supports powerful query operators. Combine multiple operators with spaces (AND logic) or use commas within an operator (OR logic).
+
+**Linking search results:** Every returned nest includes a precomputed \`url\` field — use it directly when generating clickable links to results. The canonical pattern is \`https://app.nestr.io/n/{nestId}\` (NOT \`/nests/{nestId}\`). See \`nestr_help('linking')\` for full URL construction rules.
 
 ### Common Search Operators
 

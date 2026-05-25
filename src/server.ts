@@ -72,7 +72,7 @@ Nestr supports any self-organization approach. When the flavour is clear (check 
 
 - **title**: Plain text only (HTML stripped)
 - **purpose, description, comments**: Use HTML, NOT Markdown (\`<b>\` not \`**\`, \`<ul><li>\` not \`-\`)
-- **Linking to nests**: \`https://app.nestr.io/n/{nestId}\` (path is \`/n/\`, NOT \`/nest/\`)
+- **Linking to nests**: every returned nest includes a precomputed \`url\` field — use it directly. Canonical pattern is \`https://app.nestr.io/n/{nestId}\` (path is \`/n/\`, NOT \`/nest/\` or \`/nests/\`). See \`nestr_help({ topic: "linking" })\`.
 
 ## Role Assignments
 

@@ -5,6 +5,7 @@ import {
   stripDescriptionFields,
   completableResponse,
   unescapeRichTextFields,
+  addNestUrls,
 } from "../../src/tools/index.js";
 
 // ─── compactResponse ────────────────────────────────────────────────
@@ -182,6 +183,109 @@ describe("enrichHints", () => {
   it("returns primitives unchanged", () => {
     expect(enrichHints(null)).toBeNull();
     expect(enrichHints("string")).toBe("string");
+  });
+});
+
+// ─── addNestUrls ────────────────────────────────────────────────────
+
+describe("addNestUrls", () => {
+  it("uses parentId as the URL context when present", () => {
+    const data = { _id: "task1", title: "Task", parentId: "project1" };
+    const result = addNestUrls(data) as any;
+    expect(result.url).toBe("https://app.nestr.io/n/project1/task1");
+  });
+
+  it("falls back to /n/{id} when parentId is 'inbox' (case-insensitive)", () => {
+    expect((addNestUrls({ _id: "i1", title: "Item", parentId: "inbox" }) as any).url)
+      .toBe("https://app.nestr.io/n/i1");
+    expect((addNestUrls({ _id: "i2", title: "Item", parentId: "Inbox" }) as any).url)
+      .toBe("https://app.nestr.io/n/i2");
+    expect((addNestUrls({ _id: "i3", title: "Item", parentId: "INBOX" }) as any).url)
+      .toBe("https://app.nestr.io/n/i3");
+  });
+
+  it("falls back to /n/{id} when parentId is missing (workspace via labels)", () => {
+    const data = { _id: "ws1", title: "Workspace", labels: ["anchor-circle"] };
+    const result = addNestUrls(data) as any;
+    expect(result.url).toBe("https://app.nestr.io/n/ws1");
+  });
+
+  it("walks arrays of nests", () => {
+    const data = [
+      { _id: "n1", title: "A", parentId: "p1" },
+      { _id: "n2", title: "B", parentId: "p1" },
+    ];
+    const result = addNestUrls(data) as any[];
+    expect(result[0].url).toBe("https://app.nestr.io/n/p1/n1");
+    expect(result[1].url).toBe("https://app.nestr.io/n/p1/n2");
+  });
+
+  it("walks wrapped responses { data: [...] }", () => {
+    const data = {
+      status: "ok",
+      data: [{ _id: "n1", title: "A", parentId: "p1" }],
+    };
+    const result = addNestUrls(data) as any;
+    expect(result.data[0].url).toBe("https://app.nestr.io/n/p1/n1");
+  });
+
+  it("walks completable list response shape { title, source, items }", () => {
+    const data = {
+      title: "Inbox",
+      source: "inbox" as const,
+      items: [{ _id: "n1", title: "Item", parentId: "inbox" }],
+    };
+    const result = addNestUrls(data) as any;
+    expect(result.items[0].url).toBe("https://app.nestr.io/n/n1");
+  });
+
+  it("adds URL to nest nested inside a wrapper { message, nest }", () => {
+    const data = {
+      message: "Nest created successfully",
+      nest: { _id: "n1", title: "T", parentId: "p1" },
+    };
+    const result = addNestUrls(data) as any;
+    expect(result.nest.url).toBe("https://app.nestr.io/n/p1/n1");
+    expect(result.message).toBe("Nest created successfully");
+  });
+
+  it("does NOT add URL to users (have username)", () => {
+    const data = { _id: "u1", username: "alice", profile: { fullName: "Alice" } };
+    const result = addNestUrls(data) as any;
+    expect(result).not.toHaveProperty("url");
+  });
+
+  it("does NOT add URL to labels (have _id + title but no parentId/ancestors/labels[])", () => {
+    const data = { _id: "lbl1", title: "Project", workspaceId: "ws1" };
+    const result = addNestUrls(data) as any;
+    expect(result).not.toHaveProperty("url");
+  });
+
+  it("does NOT add URL to error envelopes", () => {
+    const data = { error: true, code: "VALIDATION", message: "bad input", retryable: false };
+    const result = addNestUrls(data) as any;
+    expect(result).not.toHaveProperty("url");
+  });
+
+  it("does NOT overwrite an existing url field", () => {
+    const data = { _id: "n1", title: "T", parentId: "p1", url: "https://custom.example/n/n1" };
+    const result = addNestUrls(data) as any;
+    expect(result.url).toBe("https://custom.example/n/n1");
+  });
+
+  it("returns primitives unchanged", () => {
+    expect(addNestUrls(null)).toBeNull();
+    expect(addNestUrls("hello")).toBe("hello");
+    expect(addNestUrls(42)).toBe(42);
+  });
+
+  it("composes with compactResponse — URL survives after compaction-then-url ordering", () => {
+    const compacted = compactResponse([
+      { _id: "n1", title: "A", parentId: "p1", extraField: "gone" },
+    ]) as any[];
+    const result = addNestUrls(compacted) as any[];
+    expect(result[0]).not.toHaveProperty("extraField");
+    expect(result[0].url).toBe("https://app.nestr.io/n/p1/n1");
   });
 });
 

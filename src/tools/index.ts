@@ -368,6 +368,56 @@ export function enrichHints<T>(data: T): T {
   return data;
 }
 
+// Canonical web URL for a nest in the Nestr app.
+// Pattern: /n/{parentId}/{id} when a parent context is known, /n/{id} otherwise.
+// Parent 'inbox' is treated as no parent — inbox is not a navigable container.
+const NESTR_WEB_BASE = "https://app.nestr.io";
+
+function buildNestUrl(id: string, parentId: string | undefined): string {
+  if (parentId && parentId.toLowerCase() !== "inbox") {
+    return `${NESTR_WEB_BASE}/n/${parentId}/${id}`;
+  }
+  return `${NESTR_WEB_BASE}/n/${id}`;
+}
+
+// Heuristic: does this object look like a nest (vs. a user, label, error, etc.)?
+// Nests have _id plus at least one of parentId, ancestors, or a labels[] array.
+// Workspaces qualify via labels[]; circles/roles/projects/tasks/comments via parentId.
+function looksLikeNest(obj: Record<string, unknown>): boolean {
+  if (typeof obj._id !== "string") return false;
+  if ("username" in obj) return false; // users
+  if (typeof obj.parentId === "string") return true;
+  if (Array.isArray(obj.ancestors)) return true;
+  if (Array.isArray(obj.labels)) return true;
+  return false;
+}
+
+// Recursively add a `url` field to every nest-shaped object in the response.
+// Walks arrays, wrapped { data: [...] } responses, and any nested object/array
+// values. Skips non-nest shapes (users, labels, errors, tension parts).
+export function addNestUrls<T>(data: T): T {
+  if (!data || typeof data !== "object") return data;
+
+  if (Array.isArray(data)) {
+    return data.map((item) => addNestUrls(item)) as T;
+  }
+
+  const record = data as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...record };
+
+  if (looksLikeNest(record) && typeof out.url !== "string") {
+    out.url = buildNestUrl(record._id as string, record.parentId as string | undefined);
+  }
+
+  for (const [key, value] of Object.entries(out)) {
+    if (value && typeof value === "object") {
+      out[key] = addNestUrls(value);
+    }
+  }
+
+  return out as T;
+}
+
 // Coerce JSON-stringified arrays/objects before Zod validation.
 // Some MCP clients send array/object params as JSON strings (e.g., "[\"project\"]" instead of ["project"]).
 const coerceFromJson = <T extends z.ZodTypeAny>(schema: T) =>
@@ -2892,7 +2942,7 @@ function formatResult(data: unknown): ToolResult {
     content: [
       {
         type: "text",
-        text: JSON.stringify(data, null, 2),
+        text: JSON.stringify(addNestUrls(data), null, 2),
       },
     ],
   };
