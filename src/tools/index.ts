@@ -131,15 +131,176 @@ const HINT_URL_PATTERNS: Array<{
   { pattern: /^\/nests\/([^/]+)$/, tool: "nestr_get_nest", params: (m) => ({ nestId: m[1] }) },
 ];
 
+/**
+ * Single endpoint object the API returns inside hint.endpoints.
+ * `body_example` is intentionally snake_case — it's a passthrough from the API.
+ */
+export interface ApiHintEndpoint {
+  purpose: string;
+  method: string;
+  path: string;
+  body_example?: Record<string, unknown>;
+}
+
+/**
+ * Per-endpoint MCP-tool guidance produced by translateEndpoint.
+ * Field names follow this codebase's camelCase convention (e.g. `toolCall`).
+ */
+export interface EnrichedToolCall {
+  tool: string;
+  purpose: string;
+  parametersExample: Record<string, unknown>;
+  notes?: string;
+}
+
 interface Hint {
   type: string;
   label: string;
   severity: string;
   count?: number;
   url?: string;
+  endpoints?: ApiHintEndpoint[];
   lastPost?: string;
   readAt?: string;
   toolCall?: { tool: string; params: Record<string, string> };
+  toolCalls?: EnrichedToolCall[];
+}
+
+/**
+ * Mapping table for hint.endpoints → MCP tool calls.
+ *
+ * Each entry pairs an API route (method + path regex) with the MCP tool that
+ * wraps it, plus the names for the path-capture groups and the set of body
+ * fields that map 1:1 to tool parameters. `extraParams` injects fixed values
+ * (e.g. removeNest:true) when the route's tool needs them to disambiguate
+ * multiple operations behind one tool name.
+ *
+ * Add new mappings here as the API surfaces additional hint endpoints.
+ */
+interface EndpointToolMapping {
+  method: "GET" | "POST" | "PATCH" | "DELETE";
+  pattern: RegExp;
+  tool: string;
+  /** Names assigned to capture groups, in order (e.g. ['nestId', 'tensionId']). */
+  pathParamNames: readonly string[];
+  /** Body fields recognized by the tool — anything else falls into `notes`. */
+  bodyParams: ReadonlySet<string>;
+  /** Fixed args added to parametersExample (e.g. { removeNest: true }). */
+  extraParams?: Record<string, unknown>;
+}
+
+const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
+  {
+    method: "POST",
+    pattern: /^\/nests\/?$/,
+    tool: "nestr_create_nest",
+    pathParamNames: [],
+    bodyParams: new Set([
+      "parentId", "title", "description", "purpose", "labels",
+      "fields", "users", "accountabilities", "domains", "workspaceId",
+    ]),
+  },
+  {
+    method: "POST",
+    pattern: /^\/nests\/([^/]+)\/tensions\/?$/,
+    tool: "nestr_create_tension",
+    pathParamNames: ["nestId"],
+    bodyParams: new Set(["title", "description", "feeling", "needs"]),
+  },
+  {
+    method: "POST",
+    pattern: /^\/nests\/([^/]+)\/tensions\/([^/]+)\/parts\/?$/,
+    tool: "nestr_add_tension_part",
+    pathParamNames: ["nestId", "tensionId"],
+    bodyParams: new Set([
+      "_id", "title", "labels", "description", "purpose",
+      "parentId", "users", "due", "accountabilities", "domains",
+    ]),
+  },
+  // PATCH /parts (body has _id) — propose a change to an existing item.
+  // Same tool as POST /parts (which proposes a new item); the _id discriminates.
+  {
+    method: "PATCH",
+    pattern: /^\/nests\/([^/]+)\/tensions\/([^/]+)\/parts\/?$/,
+    tool: "nestr_add_tension_part",
+    pathParamNames: ["nestId", "tensionId"],
+    bodyParams: new Set([
+      "_id", "title", "labels", "description", "purpose",
+      "parentId", "users", "due", "accountabilities", "domains",
+    ]),
+  },
+  // DELETE /parts (body has _id) — propose deletion of an existing item.
+  // Same tool, with removeNest:true to disambiguate from a change proposal.
+  {
+    method: "DELETE",
+    pattern: /^\/nests\/([^/]+)\/tensions\/([^/]+)\/parts\/?$/,
+    tool: "nestr_add_tension_part",
+    pathParamNames: ["nestId", "tensionId"],
+    bodyParams: new Set(["_id"]),
+    extraParams: { removeNest: true },
+  },
+  {
+    method: "DELETE",
+    pattern: /^\/nests\/([^/]+)\/tensions\/([^/]+)\/?$/,
+    tool: "nestr_delete_tension",
+    pathParamNames: ["nestId", "tensionId"],
+    bodyParams: new Set([]),
+  },
+];
+
+/** Strip optional host + /api prefix so we match against canonical routes. */
+function normalizeEndpointPath(path: string): string {
+  const hostStripped = path.replace(/^https?:\/\/[^/]+/, "");
+  return hostStripped.replace(/^\/api(?=\/)/, "");
+}
+
+/**
+ * Translate one API hint endpoint into an MCP tool-call suggestion.
+ * Returns null for routes we don't have a mapping for — never guesses a tool.
+ */
+export function translateEndpoint(endpoint: ApiHintEndpoint): EnrichedToolCall | null {
+  if (!endpoint || typeof endpoint !== "object") return null;
+  const method = (endpoint.method || "").toUpperCase();
+  if (!method) return null;
+  const path = normalizeEndpointPath(endpoint.path || "");
+
+  for (const mapping of HINT_ENDPOINT_TOOL_MAPPINGS) {
+    if (mapping.method !== method) continue;
+    const match = path.match(mapping.pattern);
+    if (!match) continue;
+
+    const parametersExample: Record<string, unknown> = {};
+    mapping.pathParamNames.forEach((name, i) => {
+      parametersExample[name] = match[i + 1];
+    });
+    if (mapping.extraParams) Object.assign(parametersExample, mapping.extraParams);
+
+    const droppedFields: string[] = [];
+    const body = endpoint.body_example;
+    if (body && typeof body === "object" && !Array.isArray(body)) {
+      for (const [key, value] of Object.entries(body)) {
+        if (mapping.bodyParams.has(key)) {
+          parametersExample[key] = value;
+        } else {
+          droppedFields.push(key);
+        }
+      }
+    }
+
+    const toolCall: EnrichedToolCall = {
+      tool: mapping.tool,
+      purpose: endpoint.purpose,
+      parametersExample,
+    };
+    if (droppedFields.length > 0) {
+      toolCall.notes =
+        `Body fields not exposed by ${mapping.tool} (set these manually if needed): ` +
+        droppedFields.join(", ");
+    }
+    return toolCall;
+  }
+
+  return null;
 }
 
 // Enrich hints with tool call parameters so models can act on hints directly.
@@ -165,22 +326,42 @@ export function enrichHints<T>(data: T): T {
     const workspaceId = ancestors?.length ? ancestors[ancestors.length - 1] : undefined;
 
     record.hints = (record.hints as Hint[]).map((hint) => {
-      if (!hint.url) return hint;
-      // Parse URL and query params — strip absolute URL prefix if present
-      let rawUrl = hint.url;
-      const apiPrefixMatch = rawUrl.match(/^https?:\/\/[^/]+\/api(\/.*)/);
-      if (apiPrefixMatch) rawUrl = apiPrefixMatch[1];
-      const [path, queryString] = rawUrl.split("?");
-      const searchParams = new URLSearchParams(queryString || "");
-      for (const { pattern, tool, params } of HINT_URL_PATTERNS) {
-        const match = path.match(pattern);
-        if (match) {
-          return { ...hint, toolCall: { tool, params: params(match, searchParams, workspaceId) } };
+      const enriched: Hint = { ...hint };
+
+      // Legacy: single URL → toolCall. Kept for backwards compatibility with
+      // hints that pre-date the endpoints[] payload.
+      if (hint.url) {
+        let rawUrl = hint.url;
+        const apiPrefixMatch = rawUrl.match(/^https?:\/\/[^/]+\/api(\/.*)/);
+        if (apiPrefixMatch) rawUrl = apiPrefixMatch[1];
+        const [path, queryString] = rawUrl.split("?");
+        const searchParams = new URLSearchParams(queryString || "");
+        let matched = false;
+        for (const { pattern, tool, params } of HINT_URL_PATTERNS) {
+          const match = path.match(pattern);
+          if (match) {
+            enriched.toolCall = { tool, params: params(match, searchParams, workspaceId) };
+            matched = true;
+            break;
+          }
+        }
+        if (!matched) {
+          console.error(`[nestr-mcp] Unrecognized hint URL pattern: "${hint.url}" (hint type: ${hint.type})`);
         }
       }
-      // Log unrecognized hint URLs so we can add mappings when the API adds new patterns
-      console.error(`[nestr-mcp] Unrecognized hint URL pattern: "${hint.url}" (hint type: ${hint.type})`);
-      return hint;
+
+      // New: endpoints[] → toolCalls[]. Each endpoint becomes one tool-call
+      // suggestion; unmapped routes are dropped silently (no invented tools).
+      if (Array.isArray(hint.endpoints) && hint.endpoints.length > 0) {
+        const toolCalls = hint.endpoints
+          .map((endpoint) => translateEndpoint(endpoint))
+          .filter((tc): tc is EnrichedToolCall => tc !== null);
+        if (toolCalls.length > 0) {
+          enriched.toolCalls = toolCalls;
+        }
+      }
+
+      return enriched;
     });
   }
 
@@ -539,7 +720,11 @@ export const schemas = {
     due: z.string().optional().describe("Due date / re-election date (ISO format)"),
     accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles to set on a role (replaces all — use children endpoint for individual management)"),
     domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles to set on a role (replaces all — use children endpoint for individual management)"),
-  }),
+    removeNest: z.boolean().optional().describe("Set true with _id to propose deletion of the referenced governance item (when the proposal is accepted, the item is removed). Distinct from nestr_remove_tension_part, which undoes a proposal part you already added. Requires _id; other body fields are ignored."),
+  }).refine(
+    (data) => !data.removeNest || !!data._id,
+    { message: "removeNest:true requires _id to identify which item to propose for deletion" }
+  ),
 
   modifyTensionPart: z.object({
     nestId: z.string().describe("ID of the circle or role the tension belongs to"),
@@ -1530,7 +1715,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_tension_part",
-    description: "Add or modify a governance proposal on a tension. To add new: omit _id. To modify existing: include _id with changed fields. See nestr_help('tension-processing').",
+    description: "Add a governance proposal part to a tension. Three modes: (1) propose a new item — omit _id, provide title/labels/etc.; (2) propose changes to an existing item — provide _id plus the fields to change; (3) propose deletion of an existing item — provide _id and removeNest:true. See nestr_help('tension-processing').",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1546,6 +1731,7 @@ export const toolDefinitions = [
         due: { type: "string", description: "Due date / re-election date (ISO format)" },
         accountabilities: { type: "array", items: { type: "string" }, description: "Accountability titles to set on a role (replaces all — use children endpoint for individual management)" },
         domains: { type: "array", items: { type: "string" }, description: "Domain titles to set on a role (replaces all — use children endpoint for individual management)" },
+        removeNest: { type: "boolean", description: "Set true with _id to propose deletion of the referenced governance item (when the proposal is accepted, the item is removed). Distinct from nestr_remove_tension_part, which undoes a proposal part you already added." },
       },
       required: ["nestId", "tensionId"],
     },
@@ -2448,7 +2634,7 @@ async function _handleToolCall(
           description: parsed.description,
           ...(Object.keys(fields).length > 0 ? { fields } : {}),
         });
-        return formatResult({ message: "Tension created successfully", tension });
+        return formatResult({ message: "Tension created successfully", tension: enrichHints(tension) });
       }
 
       case "nestr_get_tension": {
@@ -2458,7 +2644,7 @@ async function _handleToolCall(
           parsed.tensionId,
           { cleanText: true }
         );
-        return formatResult(tension);
+        return formatResult(enrichHints(tension));
       }
 
       case "nestr_list_tensions": {
@@ -2468,7 +2654,7 @@ async function _handleToolCall(
           parsed.search,
           { limit: parsed.limit, order: parsed.order, cleanText: true }
         );
-        return formatResult(compactResponse(tensions));
+        return formatResult(compactResponse(enrichHints(tensions)));
       }
 
       case "nestr_update_tension": {
@@ -2506,9 +2692,13 @@ async function _handleToolCall(
 
       case "nestr_add_tension_part": {
         const parsed = schemas.addTensionPart.parse(args);
-        const { nestId, tensionId, ...body } = parsed;
+        const { nestId, tensionId, removeNest, ...body } = parsed;
 
-        if (body._id) {
+        if (body._id && removeNest === true) {
+          // Propose deletion of an existing structural item.
+          const part = await client.proposeTensionDeletion(nestId, tensionId, body._id);
+          return formatResult({ message: "Deletion proposal added successfully", part });
+        } else if (body._id) {
           // Propose change to existing item (existing children auto-copied if accountabilities/domains not provided)
           const part = await client.proposeTensionChange(nestId, tensionId, body);
           return formatResult({ message: "Change proposal added successfully", part });

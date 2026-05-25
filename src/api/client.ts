@@ -1255,6 +1255,28 @@ export class NestrClient {
     );
   }
 
+  /**
+   * Propose deletion of an existing structural item (role, accountability, etc.)
+   * via the tension. Creates a new proposal part that, when enacted, removes the
+   * referenced item. Distinct from removeTensionPart (which removes a proposal
+   * part you've already added — undoing your own proposal).
+   *
+   * Uses DELETE /nests/:id/tensions/:tensionId/parts with `_id` in the body.
+   */
+  async proposeTensionDeletion(
+    nestId: string,
+    tensionId: string,
+    itemId: string
+  ): Promise<TensionPart> {
+    return this.fetch<TensionPart>(
+      `/nests/${nestId}/tensions/${tensionId}/parts`,
+      {
+        method: "DELETE",
+        body: JSON.stringify({ _id: itemId }),
+      }
+    );
+  }
+
   async modifyTensionPart(
     nestId: string,
     tensionId: string,
