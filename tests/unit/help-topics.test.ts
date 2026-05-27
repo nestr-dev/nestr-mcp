@@ -32,4 +32,42 @@ describe("HELP_TOPICS", () => {
       expect(HELP_TOPICS[key], `topic '${key}' listed in index but missing from HELP_TOPICS`).toBeDefined();
     }
   });
+
+  it("scrum topic documents the three labels and key workflows", () => {
+    const content = HELP_TOPICS["scrum"];
+    expect(content).toBeDefined();
+    expect(content).toContain("userstory");
+    expect(content).toContain("sprint");
+    expect(content).toContain("epic");
+    expect(content).toContain("userstory_sprint");
+    expect(content).toContain("userstory_epic");
+    expect(content).toContain("nestr_get_workspace_apps");
+    expect(content).toContain("sprint->term:now");
+    expect(content).toContain("fieldValues.userstory_sprint:!exists");
+  });
+
+  it("okr topic documents goal/result/resultwork and term queries", () => {
+    const content = HELP_TOPICS["okr"];
+    expect(content).toBeDefined();
+    expect(content).toContain("goal");
+    expect(content).toContain("result");
+    expect(content).toContain("resultwork");
+    expect(content).toContain("goal_term");
+    expect(content).toContain("goal->term:this_quarter");
+  });
+
+  it("search topic documents the term-field operator", () => {
+    const content = HELP_TOPICS["search"];
+    expect(content).toContain("Term-field");
+    expect(content).toContain("sprint->term:now");
+    expect(content).toContain("DATE_DATE");
+  });
+
+  it("labels topic flags scrum and okr labels as workspace-app labels", () => {
+    const content = HELP_TOPICS["labels"];
+    expect(content).toContain("Workspace App labels");
+    expect(content).toContain("userstory");
+    expect(content).toContain("resultwork");
+    expect(content).toContain("nestr_get_workspace_apps");
+  });
 });

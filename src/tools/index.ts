@@ -880,7 +880,7 @@ const destructive = { annotations: { readOnlyHint: false, destructiveHint: true 
 export const toolDefinitions = [
   {
     name: "nestr_help",
-    description: "Get detailed Nestr documentation by topic. Call before unfamiliar operations. Topics: search, labels, nest-model, inbox, daily-plan, notifications, insights, tension-processing, skills, mcp-apps, authentication, and more. Use topic 'topics' for the full list. Auth: none required.",
+    description: "Get detailed Nestr documentation by topic. Call before unfamiliar operations. Topics: search, labels, nest-model, inbox, daily-plan, notifications, insights, tension-processing, skills, mcp-apps, authentication, scrum, okr, and more. Use topic 'topics' for the full list. Auth: none required.",
     inputSchema: {
       type: "object" as const,
       properties: {

@@ -32,7 +32,9 @@ export const HELP_TOPICS: Record<string, string> = {
 - best-practices: Recommended patterns for working with Nestr
 - doing-work: How work flows from purpose through strategy to execution
 - tension-processing: Listening for, creating, and processing tensions
-- workspace-setup: Guided setup wizard for new workspaces and circles`,
+- workspace-setup: Guided setup wizard for new workspaces and circles
+- scrum: Scrum/Agile workspace app — user stories, sprints, epics, burndown
+- okr: Objectives & Key Results workspace app — goals, key results, contributions`,
 
   "operating-modes": `### Mode-Specific Behavior Summary
 
@@ -408,6 +410,10 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 **AI Knowledge:**
 - \`skill\` - A process, piece of knowledge, or learned pattern that a role or circle holds. Lives directly under a role or circle. Used by AI agents to persist and retrieve operational knowledge across sessions. When doing work that is likely to be repeated, capture it as a skill for future reference.
 
+**Workspace App labels** (only present when the corresponding app is enabled — check with \`nestr_get_workspace_apps\`):
+- \`userstory\`, \`sprint\`, \`epic\` — Scrum/Agile app. See \`nestr_help({ topic: "scrum" })\` for the data model, fields, and graph relations.
+- \`goal\`, \`result\`, \`resultwork\` — OKR app. See \`nestr_help({ topic: "okr" })\` for the Objective / Key Result / contribution pattern.
+
 **System Labels** (define structure, not categorization):
 \`circle\`, \`anchor-circle\`, \`role\`, \`policy\`, \`domain\`, \`accountability\`, \`project\`, \`tension\`, \`skill\`, \`goal\`, \`result\`, \`contact\`, \`deal\`, \`organisation\`, \`metric\`, \`checklist\`, \`meeting\`, \`feedback\`
 - \`note\` - A simple note
@@ -520,6 +526,25 @@ Search by label-specific field values using \`label->field:value\`:
 - \`project->status:Current\` - Projects with status "Current"
 - \`project->status:Current,Future\` - Status is Current OR Future
 - \`project->status:!Done\` - Status is NOT Done
+
+### Term-field Search
+
+For fields of type \`term\` (date ranges stored as \`{from, to}\` ISO date strings — e.g. \`sprint_term\`, \`goal_term\`), the standard \`{labelId}->{fieldCode}:value\` operator accepts date / range / named-range values and produces an **overlap** query: "the term overlaps this point or range".
+
+| Query | Means |
+|---|---|
+| \`sprint->term:now\` | Sprints active today |
+| \`sprint->term:2026-03-15\` | Sprints active on that date |
+| \`sprint->term:2026-01-01_2026-03-31\` | Sprints overlapping Q1 2026 |
+| \`sprint->term:2026-01-01_now\` | Sprints overlapping the range up to today |
+| \`goal->term:this_quarter\` | Objectives running any portion of this quarter |
+| \`sprint->term:!now\` | Sprints NOT currently active |
+
+Accepted value forms: \`now\`, ISO \`YYYY-MM-DD\`, \`DATE_DATE\` range (same \`_\`-separated convention as \`completed:DATE_DATE\`), or named ranges (\`past_7_days\`, \`this_month\`, \`last_month\`, \`this_quarter\`, \`last_quarter\`, \`this_year\`, \`last_year\`, etc. — the same set as \`completed:\` and \`updated-date:\`).
+
+Prefix the value with \`!\` to invert (no overlap).
+
+**Endpoint-specific queries** (e.g. "sprints that ended last week" vs. "sprints that overlapped last week") are not yet supported as a single operator — the overlap form is the supported primitive. For "is field set / unset" use the existing \`fieldValues.X:exists\` / \`fieldValues.X:!exists\`.
 
 ### Search Examples
 
@@ -1224,6 +1249,240 @@ All work in Nestr — projects, tasks, comments, tensions, and skills — forms 
    - When completing work that is likely repeatable, capture it as a skill under the appropriate role or circle
    - Skills are the primary mechanism for AI context persistence — they're visible, searchable, and transfer with the role when it's reassigned
    - The \`data\` field is shared with Nestr internals and other integrations — never overwrite or remove existing keys. If you must store custom data, namespace under \`mcp.\` (e.g., \`data: { "mcp.lastSync": "..." }\`)`,
+
+  "scrum": `## Scrum / Agile App
+
+The Scrum app adds three label types (\`userstory\`, \`epic\`, \`sprint\`) plus the graph relations and field rollups that make a real Scrum board work. It is a **workspace app** — the labels and tools below only behave correctly when the app is enabled.
+
+### Detect whether Scrum is enabled
+
+Call \`nestr_get_workspace_apps({ workspaceId })\` and look for \`id: 'scrum'\` with the active flag set. If it's absent, the labels won't exist in the workspace and any \`label:userstory\` / \`label:sprint\` / \`label:epic\` queries will return empty.
+
+### The three labels
+
+| Label | Role | Lives under |
+|---|---|---|
+| \`userstory\` | A unit of Scrum work. Implies \`project\`, so every story is also a project — existing project tooling and \`nestr_get_projects\` find them. | role, circle, anchor-circle |
+| \`epic\` | A scope axis grouping related stories across sprints. Can nest under another epic. | role, circle, anchor-circle, epic |
+| \`sprint\` | A time-boxed iteration. Holds the active work via the \`userstory_sprint\` graph relation. Sprint goal is stored in the \`purpose\` field. | circle, anchor-circle |
+
+### Story fields (\`userstory\`)
+
+Discover the live schema with \`nestr_get_label({ workspaceId, labelId: 'userstory' })\` or by fetching any story with \`fieldsMetaData=true\`.
+
+| Field code | Field id | Type | Notes |
+|---|---|---|---|
+| \`sprint\` | \`userstory_sprint\` | graphselect → sprint | Outgoing graph link. Read/write via \`nestr_get_graph_links({ relation: 'userstory_sprint' })\` / \`nestr_add_graph_link\` / \`nestr_remove_graph_link\`. |
+| \`epic\` | \`userstory_epic\` | graphselect → epic | Same pattern with relation \`userstory_epic\`. |
+| \`points\` | \`userstory_points\` | select | Fibonacci values: 1, 2, 3, 5, 8, 13. |
+| \`points_burned\` | \`userstory_points_burned\` | range (0 → points) | Max equals the story's \`userstory_points\`. Server auto-snaps to full points when the story flips to Done, to 0 when undone. |
+| \`type\` | \`userstory_type\` | select | feature, bug, chore, spike. |
+
+A story shares the \`project.status\` field via the \`project\` implication — that's where Done lives.
+
+### Sprint fields (\`sprint\`)
+
+| Field code | Field id | Type | Notes |
+|---|---|---|---|
+| \`term\` | \`sprint_term\` | term ({from, to}) | Server mirrors \`term.to\` into the sprint's \`due\` field so overdue rendering works. |
+| \`capacity\` | \`sprint_capacity\` | number | Team capacity in points. |
+| \`points_total\` | \`sprint_points_total\` | number (derived) | Sum of \`userstory_points\` across linked stories. Read-only. |
+| \`points_burned\` | \`sprint_points_burned\` | number (derived) | Sum of \`userstory_points_burned\` across linked stories. Read-only. |
+| \`sprint_burndown\` | \`sprint_burndown\` | dataseries | Burndown chart, tracks \`sprint_points_burned\` over \`sprint_term\`. |
+
+Sprint goal lives in the standard \`purpose\` field (just relabeled in the UI).
+
+### Epic fields (\`epic\`)
+
+| Field code | Field id | Type | Notes |
+|---|---|---|---|
+| \`status\` | \`epic_status\` | select | proposed, in_progress, done. |
+
+### Common workflows
+
+**Find the active sprint for a circle**
+
+Use term-field overlap to ask "which sprint is active right now":
+
+\`\`\`
+nestr_search({ workspaceId, query: "label:sprint sprint->term:now in:<circleId>" })
+\`\`\`
+
+To get active sprints across the whole workspace, drop \`in:\`. To find sprints running in a window, replace \`now\` with a date, range, or named range — e.g. \`sprint->term:this_quarter\`. See \`nestr_help({ topic: "search" })\` → "Term-field Search" for the full value forms.
+
+**List the stories in a sprint**
+
+\`\`\`
+nestr_get_graph_links({ nestId: <sprintId>, relation: "userstory_sprint", direction: "incoming" })
+\`\`\`
+
+\`incoming\` because the graph edge is stored on the story (outgoing from story → sprint).
+
+**List the backlog (stories with no sprint)**
+
+\`\`\`
+nestr_search({ workspaceId, query: "label:userstory completed:false fieldValues.userstory_sprint:!exists in:<circleId>" })
+\`\`\`
+
+The \`:!exists\` check on \`fieldValues.userstory_sprint\` selects stories not linked to any sprint. Drop \`in:\` to search the whole workspace.
+
+**Find stories under an epic**
+
+\`\`\`
+nestr_get_graph_links({ nestId: <epicId>, relation: "userstory_epic", direction: "incoming" })
+\`\`\`
+
+**Read sprint progress**
+
+Fetch the sprint with \`nestr_get_nest({ nestId, fieldsMetaData: true })\`. The derived rollups land in \`fields['sprint.points_total']\` and \`fields['sprint.points_burned']\`. The burndown chart history lives in the metrics collection — surface it through the regular insights / metric tools rather than recomputing.
+
+**Create a sprint**
+
+\`\`\`
+nestr_create_nest({
+  workspaceId,
+  parentId: <circleId>,
+  labels: ["sprint"],
+  purpose: "Ship the search filter to beta users",
+  fields: { "sprint.term": { from: "2026-06-01", to: "2026-06-14" }, "sprint.capacity": 40 }
+})
+\`\`\`
+
+**Create a user story**
+
+\`\`\`
+nestr_create_nest({
+  workspaceId,
+  parentId: <roleOrCircleId>,
+  labels: ["userstory"],
+  title: "Search filter respects archived items",
+  fields: { "userstory.points": "5", "userstory.type": "feature" }
+})
+\`\`\`
+
+Link to sprint/epic after creation with \`nestr_add_graph_link({ relation: "userstory_sprint" | "userstory_epic", targetId })\`.
+
+**Move a story between sprints**
+
+Remove the old link, add the new one. The sprint-level rollups update automatically.
+
+### Mode-specific guidance
+
+**Assistant mode** — Defer planning decisions to the user. Surface candidate stories (e.g., "Here are unsprinted high-priority stories in your backlog"), draft \`nestr_create_nest\` payloads, but let the human commit. Show the active sprint's burndown when asked about progress; don't editorialise it.
+
+**Role-filler mode** — If you energise a role that owns work in a sprint, treat the sprint as your current operating context. Auto-link stories you create to the active sprint when the role's accountabilities match the work. Update \`userstory_points_burned\` as you complete work; do not wait for the human to mark the story Done if the work objectively wraps an accountability. Capture repeatable scrum patterns as skill nests under the role.
+
+**Workspace mode** — Use for sprint setup, capacity tracking, and reporting across circles. Avoid user-scoped flows.`,
+
+  "okr": `## OKR App (Objectives & Key Results)
+
+The OKR app adds three labels — \`goal\` (Objective), \`result\` (Key Result), and \`resultwork\` (work that contributes to a result). It works the same in any workspace where the app is enabled; the goal/result labels are part of \`nestr:core\`, but the surfacing UI and the conventions below assume the OKR pattern.
+
+### The three labels
+
+| Label | Role | Lives under |
+|---|---|---|
+| \`goal\` | An Objective. Can nest under another goal to express hierarchy. | anchor-circle, circle, role, goal |
+| \`result\` | A Key Result. Always lives under a \`goal\`. | goal (only) |
+| \`resultwork\` | A completable nest that contributes to a key result. Links to its result via a graph relation. | anywhere (typically under a role or project) |
+
+### Objective fields (\`goal\`)
+
+| Field code | Field id | Type | Notes |
+|---|---|---|---|
+| \`term\` | \`goal_term\` | term ({from, to}) | The period the Objective runs in (quarter, year, custom). Follows the ancestor goal when set on a parent. |
+| \`goal_complete\` | \`goal_complete\` | percentage (derived) | Average progress of the Objective's Key Results. Read-only. |
+| \`goal-data\` | \`goal-data\` | dataseries | Progress history. Tracks \`goal_complete\` over \`goal_term\`. |
+
+### Key Result fields (\`result\`)
+
+| Field code | Field id | Type | Notes |
+|---|---|---|---|
+| \`term\` | \`goal_term\` | term ({from, to}) | Inherits from the parent goal by default. |
+| \`target_complete\` | \`goal_complete\` | range (0 → 100) | The user's progress slider. Aggregates upward into the parent Objective's \`goal_complete\`. |
+| \`goal-data\` | \`goal-data\` | dataseries | Same history pattern as goals. |
+
+### Work contribution (\`resultwork\`)
+
+| Field code | Field id | Type | Notes |
+|---|---|---|---|
+| \`result\` | \`completable_result\` | graphselect → goal/result | Links the completable to the Key Result (or Objective) it contributes to. |
+
+### Common workflows
+
+**Find the current Objectives for a circle**
+
+\`\`\`
+nestr_search({ workspaceId, query: "label:goal goal->term:now in:<circleId>" })
+\`\`\`
+
+For all Objectives running this quarter:
+
+\`\`\`
+nestr_search({ workspaceId, query: "label:goal goal->term:this_quarter" })
+\`\`\`
+
+See \`nestr_help({ topic: "search" })\` → "Term-field Search" for the full value forms.
+
+**List Key Results under an Objective**
+
+\`\`\`
+nestr_get_nest_children({ nestId: <goalId> })
+\`\`\`
+
+Key Results are always direct children of their goal.
+
+**Find work contributing to a Key Result**
+
+\`\`\`
+nestr_get_graph_links({ nestId: <resultId>, relation: "completable_result", direction: "incoming" })
+\`\`\`
+
+**Read Objective progress**
+
+Fetch with \`nestr_get_nest({ nestId, fieldsMetaData: true })\`. \`fields['goal.goal_complete']\` holds the averaged percentage; \`fields['goal.goal-data']\` exposes the history series.
+
+**Create an Objective**
+
+\`\`\`
+nestr_create_nest({
+  workspaceId,
+  parentId: <circleId | roleId | anchorId>,
+  labels: ["goal"],
+  title: "Trial conversion above 30%",
+  purpose: "Lift sustainable revenue without raising acquisition spend",
+  fields: { "goal.term": { from: "2026-04-01", to: "2026-06-30" } }
+})
+\`\`\`
+
+**Create a Key Result**
+
+\`\`\`
+nestr_create_nest({
+  workspaceId,
+  parentId: <goalId>,
+  labels: ["result"],
+  title: "Convert 35% of new trials within 14 days"
+})
+\`\`\`
+
+The KR inherits \`goal_term\` from the parent automatically.
+
+**Mark progress on a Key Result**
+
+\`\`\`
+nestr_update_nest({ nestId: <resultId>, fields: { "result.target_complete": 60 } })
+\`\`\`
+
+The parent Objective's \`goal_complete\` updates from the average of its KRs.
+
+### Mode-specific guidance
+
+**Assistant mode** — Help the user articulate Objectives that are aspirational, time-bound, and outcome-shaped (past-tense or measurable). Coach them to keep KRs measurable; resist the urge to fill in numbers without their input. When asked "how are we doing on OKRs?", read the period (\`goal.term=this_quarter\` is the usual frame) and report progress objectively.
+
+**Role-filler mode** — If your role owns an Objective or contributes \`resultwork\` to a Key Result, update your contribution as part of your operational rhythm. Reading the parent goal's \`term\` tells you the window you're working in. Capture repeatable measurement patterns as skill nests.
+
+**Workspace mode** — Use for cross-circle reporting and period-level rollups. Pair \`goal.term=this_quarter\` queries with insights tools to build dashboards.`,
 
   "doing-work": DOING_WORK_INSTRUCTIONS,
 
