@@ -411,7 +411,7 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 - \`skill\` - A process, piece of knowledge, or learned pattern that a role or circle holds. Lives directly under a role or circle. Used by AI agents to persist and retrieve operational knowledge across sessions. When doing work that is likely to be repeated, capture it as a skill for future reference.
 
 **Workspace App labels** (only present when the corresponding app is enabled — check with \`nestr_get_workspace_apps\`):
-- \`userstory\`, \`sprint\`, \`epic\` — Scrum/Agile app. See \`nestr_help({ topic: "scrum" })\` for the data model, fields, and graph relations.
+- \`userstory\`, \`sprint\`, \`epic\`, \`milestone\` — Scrum/Agile app. See \`nestr_help({ topic: "scrum" })\` for the data model, fields, and graph relations.
 - \`goal\`, \`result\`, \`resultwork\` — OKR app. See \`nestr_help({ topic: "okr" })\` for the Objective / Key Result / contribution pattern.
 
 **System Labels** (define structure, not categorization):
@@ -684,8 +684,11 @@ in:roleId label:project project->status:Current
 The \`completed:\` operator accepts:
 - \`completed:false\` - Only uncompleted items (recommended default for work queries)
 - \`completed:true\` - Only completed items
+- \`completed:any\` - Both completed AND uncompleted (skips the default 1-week-old filter). Use when you need full history.
 - Presets: \`completed:past_7_days\`, \`completed:this_month\`, \`completed:last_quarter\`, etc.
 - Custom date range: \`completed:2024-01-01_2024-03-31\` (format: \`YYYY-MM-DD_YYYY-MM-DD\`)
+
+**Strict variant** (\`completed-strict:false\` / \`completed-strict:true\`): drops the \`_p.completable || _p.eventable\` guard that \`completed:false\` adds. Use when the rest of the search already restricts to labels declared \`completable: false\` at the label level but whose status field has \`completed: true\` options — e.g. \`label:sprint completed-strict:false\` returns planned + active sprints (hiding closed/cancelled). Without the strict variant the sprint label's \`completable: false\` would filter out every sprint.
 
 **Examples:**
 \`\`\`
@@ -1252,19 +1255,24 @@ All work in Nestr — projects, tasks, comments, tensions, and skills — forms 
 
   "scrum": `## Scrum / Agile App
 
-The Scrum app adds three label types (\`userstory\`, \`epic\`, \`sprint\`) plus the graph relations and field rollups that make a real Scrum board work. It is a **workspace app** — the labels and tools below only behave correctly when the app is enabled.
+The Scrum app adds four label types (\`userstory\`, \`sprint\`, \`epic\`, \`milestone\`) plus the graph relations and field rollups that make a real Scrum board work. It is a **workspace app** — the labels and tools below only behave correctly when the app is enabled.
 
 ### Detect whether Scrum is enabled
 
-Call \`nestr_get_workspace_apps({ workspaceId })\` and look for \`id: 'scrum'\` with the active flag set. If it's absent, the labels won't exist in the workspace and any \`label:userstory\` / \`label:sprint\` / \`label:epic\` queries will return empty.
+Call \`nestr_get_workspace_apps({ workspaceId })\` and look for \`id: 'scrum'\`. If it's absent, the labels won't exist in the workspace and any \`label:userstory\` / \`label:sprint\` / \`label:epic\` / \`label:milestone\` queries will return empty.
 
-### The three labels
+Sprints, epics, and milestones can each be individually disabled at the workspace level even when the app is on — check \`workspace.data['appfield-scrum-sprints-enabled']\` (and the \`-epics-\` / \`-milestones-\` variants). When a sub-feature is set to \`false\`, the corresponding graph-field on user stories is hidden in the UI; the labels still resolve, so search and graph-link tools keep working.
+
+### The four labels
 
 | Label | Role | Lives under |
 |---|---|---|
-| \`userstory\` | A unit of Scrum work. Implies \`project\`, so every story is also a project — existing project tooling and \`nestr_get_projects\` find them. | role, circle, anchor-circle |
-| \`epic\` | A scope axis grouping related stories across sprints. Can nest under another epic. | role, circle, anchor-circle, epic |
-| \`sprint\` | A time-boxed iteration. Holds the active work via the \`userstory_sprint\` graph relation. Sprint goal is stored in the \`purpose\` field. | circle, anchor-circle |
+| \`userstory\` | A unit of Scrum work. **Always carries the \`project\` label** (\`implies: ['project']\`), so every story is also a project — \`nestr_get_projects\` finds them, \`project.status\` drives Done, and workspace-wide project reporting includes them. | role, circle, anchor-circle |
+| \`sprint\` | A time-boxed iteration. Holds active work via the \`userstory_sprint\` graph relation. Sprint goal is stored in the \`purpose\` field. | circle, anchor-circle |
+| \`epic\` | A scope axis (feature / initiative) grouping stories across sprints. **Termless** — scope-boxed, not time-boxed. Can nest under another epic. | role, circle, anchor-circle, epic |
+| \`milestone\` | A time-boxed delivery target above the sprint — release, version, or phase. Time-boxed (has a \`term\`). | circle, anchor-circle |
+
+The three "container" labels (\`sprint\`, \`epic\`, \`milestone\`) each carry the same shape: a status field, derived points totals/burned (summed via \`sum_reverse_graphselect\` across linked stories), and a burndown dataseries. Sprint and milestone are term-bound; epic burndown tracks calendar time.
 
 ### Story fields (\`userstory\`)
 
@@ -1272,51 +1280,76 @@ Discover the live schema with \`nestr_get_label({ workspaceId, labelId: 'usersto
 
 | Field code | Field id | Type | Notes |
 |---|---|---|---|
-| \`sprint\` | \`userstory_sprint\` | graphselect → sprint | Outgoing graph link. Read/write via \`nestr_get_graph_links({ relation: 'userstory_sprint' })\` / \`nestr_add_graph_link\` / \`nestr_remove_graph_link\`. |
-| \`epic\` | \`userstory_epic\` | graphselect → epic | Same pattern with relation \`userstory_epic\`. |
-| \`points\` | \`userstory_points\` | select | Fibonacci values: 1, 2, 3, 5, 8, 13. |
-| \`points_burned\` | \`userstory_points_burned\` | range (0 → points) | Max equals the story's \`userstory_points\`. Server auto-snaps to full points when the story flips to Done, to 0 when undone. |
-| \`type\` | \`userstory_type\` | select | feature, bug, chore, spike. |
+| \`sprint\` | \`userstory_sprint\` | graphselect → sprint | Outgoing graph link. Read/write via \`nestr_get_graph_links({ relation: 'userstory_sprint' })\` / \`nestr_add_graph_link\` / \`nestr_remove_graph_link\`. Hidden when sprints are disabled at the workspace. |
+| \`epic\` | \`userstory_epic\` | graphselect → epic | Same pattern with relation \`userstory_epic\`. Hidden when epics are disabled. |
+| \`milestone\` | \`userstory_milestone\` | graphselect → milestone | Same pattern with relation \`userstory_milestone\`. Hidden when milestones are disabled. |
+| \`points\` | \`userstory_points\` | select | Fibonacci values: 1, 2, 3, 5, 8, 13. A leading \`__unset__\` "Not estimated" sentinel is the unset state — \`points_burned\` stays hidden until the story is estimated. |
+| \`points_burned\` | \`userstory_points_burned\` | range (0 → points) | Max equals the story's \`userstory_points\`. Server auto-snaps to full points when the story flips to Done (via \`project.status\`), to 0 when undone. |
+| \`change_request_url\` | \`userstory_change_request_url\` | text | URL of a linked PR / merge request. Always visible so it can be set from the UI. |
 
-A story shares the \`project.status\` field via the \`project\` implication — that's where Done lives.
+A story uses \`project.status\` for Done (via the \`project\` implication). There is no \`userstory_type\` field — feature/bug/chore/spike was dropped in V1.
 
 ### Sprint fields (\`sprint\`)
 
 | Field code | Field id | Type | Notes |
 |---|---|---|---|
+| \`status\` | \`sprint_status\` | select | \`planned\` / \`active\` / \`closed\` (completed) / \`cancelled\` (completed). Terminal options carry \`completed: true\` so the nest's \`completed\` flag flips when the sprint closes. **Canonical "active sprint" signal — prefer this over term-overlap.** Default: \`planned\`. |
 | \`term\` | \`sprint_term\` | term ({from, to}) | Server mirrors \`term.to\` into the sprint's \`due\` field so overdue rendering works. |
 | \`capacity\` | \`sprint_capacity\` | number | Team capacity in points. |
 | \`points_total\` | \`sprint_points_total\` | number (derived) | Sum of \`userstory_points\` across linked stories. Read-only. |
 | \`points_burned\` | \`sprint_points_burned\` | number (derived) | Sum of \`userstory_points_burned\` across linked stories. Read-only. |
-| \`sprint_burndown\` | \`sprint_burndown\` | dataseries | Burndown chart, tracks \`sprint_points_burned\` over \`sprint_term\`. |
+| \`sprint_burndown\` | \`sprint_burndown\` | dataseries | Two-series chart: \`remaining\` (primary, descends from total → 0 via \`invertAgainst\`) and \`total\` (grey step-line). Window-bounded by \`sprint_term\`. |
 
-Sprint goal lives in the standard \`purpose\` field (just relabeled in the UI).
+Sprint goal lives in the standard \`purpose\` field (relabeled "Sprint goal" in the UI).
+
+### Milestone fields (\`milestone\`)
+
+| Field code | Field id | Type | Notes |
+|---|---|---|---|
+| \`status\` | \`milestone_status\` | select | \`planned\` / \`in_progress\` / \`released\` (completed) / \`cancelled\`. Only \`released\` marks the milestone completed — shipped milestones are "done", cancelled ones stay uncompleted. |
+| \`term\` | \`milestone_term\` | term ({from, to}) | The release window. |
+| \`points_total\` / \`points_burned\` / \`milestone_burndown\` | — | derived | Same shape as the sprint trio, summing across \`userstory_milestone\` instead of \`userstory_sprint\`. |
 
 ### Epic fields (\`epic\`)
 
 | Field code | Field id | Type | Notes |
 |---|---|---|---|
-| \`status\` | \`epic_status\` | select | proposed, in_progress, done. |
+| \`status\` | \`epic_status\` | select | \`proposed\` / \`in_progress\` / \`done\` (completed). |
+| \`points_total\` / \`points_burned\` / \`epic_burndown\` | — | derived | Same shape as sprint/milestone, summing across \`userstory_epic\`. **Termless burndown** — tracks on every value change (no \`trackTerm\`), so the chart shows calendar-time trajectory regardless of sprint cadence. |
 
 ### Common workflows
 
-**Find the active sprint for a circle**
+**Find the active sprint**
 
-Use term-field overlap to ask "which sprint is active right now":
-
-\`\`\`
-nestr_search({ workspaceId, query: "label:sprint sprint->term:now in:<circleId>" })
-\`\`\`
-
-To get active sprints across the whole workspace, drop \`in:\`. To find sprints running in a window, replace \`now\` with a date, range, or named range — e.g. \`sprint->term:this_quarter\`. See \`nestr_help({ topic: "search" })\` → "Term-field Search" for the full value forms.
-
-**List the stories in a sprint**
+The canonical signal is the lifecycle field:
 
 \`\`\`
-nestr_get_graph_links({ nestId: <sprintId>, relation: "userstory_sprint", direction: "incoming" })
+nestr_search({ workspaceId, query: "label:sprint fieldValues.sprint_status:active in:<circleId>" })
 \`\`\`
 
-\`incoming\` because the graph edge is stored on the story (outgoing from story → sprint).
+Drop \`in:\` for workspace-wide. To find sprints whose term overlaps today (regardless of status — e.g. a \`planned\` sprint that should have started but hasn't been activated):
+
+\`\`\`
+nestr_search({ workspaceId, query: "label:sprint sprint->term:now" })
+\`\`\`
+
+To list all sprints including closed/cancelled ones (the default search hides completed work), add \`completed:any\` or \`completed-strict:false\`:
+
+\`\`\`
+nestr_search({ workspaceId, query: "label:sprint completed:any sort:fieldValues.sprint_term.to sort-order:desc" })
+\`\`\`
+
+See \`nestr_help({ topic: "search" })\` for the term-field operator and the \`completed-strict\` / \`completed:any\` DSLs.
+
+**List the stories in a sprint, epic, or milestone**
+
+All three use the same pattern — \`incoming\` because the graph edge is stored on the story:
+
+\`\`\`
+nestr_get_graph_links({ nestId: <sprintId>,    relation: "userstory_sprint",    direction: "incoming" })
+nestr_get_graph_links({ nestId: <epicId>,      relation: "userstory_epic",      direction: "incoming" })
+nestr_get_graph_links({ nestId: <milestoneId>, relation: "userstory_milestone", direction: "incoming" })
+\`\`\`
 
 **List the backlog (stories with no sprint)**
 
@@ -1324,17 +1357,11 @@ nestr_get_graph_links({ nestId: <sprintId>, relation: "userstory_sprint", direct
 nestr_search({ workspaceId, query: "label:userstory completed:false fieldValues.userstory_sprint:!exists in:<circleId>" })
 \`\`\`
 
-The \`:!exists\` check on \`fieldValues.userstory_sprint\` selects stories not linked to any sprint. Drop \`in:\` to search the whole workspace.
+The \`:!exists\` check on \`fieldValues.userstory_sprint\` selects stories not linked to any sprint. Swap the field id for \`userstory_epic\` / \`userstory_milestone\` to find stories without an epic or milestone instead.
 
-**Find stories under an epic**
+**Read progress on a sprint / epic / milestone**
 
-\`\`\`
-nestr_get_graph_links({ nestId: <epicId>, relation: "userstory_epic", direction: "incoming" })
-\`\`\`
-
-**Read sprint progress**
-
-Fetch the sprint with \`nestr_get_nest({ nestId, fieldsMetaData: true })\`. The derived rollups land in \`fields['sprint.points_total']\` and \`fields['sprint.points_burned']\`. The burndown chart history lives in the metrics collection — surface it through the regular insights / metric tools rather than recomputing.
+Fetch with \`nestr_get_nest({ nestId, fieldsMetaData: true })\`. The derived rollups land in \`fields['sprint.points_total']\` / \`fields['sprint.points_burned']\` (and the equivalents for epic / milestone). The burndown history lives in the metrics collection — surface it through the regular insights / metric tools rather than recomputing.
 
 **Create a sprint**
 
@@ -1348,6 +1375,8 @@ nestr_create_nest({
 })
 \`\`\`
 
+\`sprint_status\` defaults to \`planned\` — set it to \`active\` when the sprint starts, \`closed\` when it ends.
+
 **Create a user story**
 
 \`\`\`
@@ -1356,23 +1385,23 @@ nestr_create_nest({
   parentId: <roleOrCircleId>,
   labels: ["userstory"],
   title: "Search filter respects archived items",
-  fields: { "userstory.points": "5", "userstory.type": "feature" }
+  fields: { "userstory.points": "5" }
 })
 \`\`\`
 
-Link to sprint/epic after creation with \`nestr_add_graph_link({ relation: "userstory_sprint" | "userstory_epic", targetId })\`.
+Leave \`userstory.points\` unset for unestimated stories. Link to sprint / epic / milestone after creation with \`nestr_add_graph_link({ relation: "userstory_sprint" | "userstory_epic" | "userstory_milestone", targetId })\`.
 
 **Move a story between sprints**
 
-Remove the old link, add the new one. The sprint-level rollups update automatically.
+Remove the old link, add the new one. The sprint-level rollups update automatically through the \`sum_reverse_graphselect\` derivation.
 
 ### Mode-specific guidance
 
 **Assistant mode** — Defer planning decisions to the user. Surface candidate stories (e.g., "Here are unsprinted high-priority stories in your backlog"), draft \`nestr_create_nest\` payloads, but let the human commit. Show the active sprint's burndown when asked about progress; don't editorialise it.
 
-**Role-filler mode** — If you energise a role that owns work in a sprint, treat the sprint as your current operating context. Auto-link stories you create to the active sprint when the role's accountabilities match the work. Update \`userstory_points_burned\` as you complete work; do not wait for the human to mark the story Done if the work objectively wraps an accountability. Capture repeatable scrum patterns as skill nests under the role.
+**Role-filler mode** — If you energise a role that owns work in a sprint, treat \`fieldValues.sprint_status:active\` as your current operating context. Auto-link stories you create to that sprint when the role's accountabilities match the work. Update \`userstory_points_burned\` as you complete work; do not wait for the human to mark the story Done if the work objectively wraps an accountability. Capture repeatable scrum patterns as skill nests under the role.
 
-**Workspace mode** — Use for sprint setup, capacity tracking, and reporting across circles. Avoid user-scoped flows.`,
+**Workspace mode** — Use for sprint / milestone setup, capacity tracking, and reporting across circles. Avoid user-scoped flows.`,
 
   "okr": `## OKR App (Objectives & Key Results)
 

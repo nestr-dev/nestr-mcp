@@ -33,17 +33,25 @@ describe("HELP_TOPICS", () => {
     }
   });
 
-  it("scrum topic documents the three labels and key workflows", () => {
+  it("scrum topic documents the four labels and key workflows", () => {
     const content = HELP_TOPICS["scrum"];
     expect(content).toBeDefined();
     expect(content).toContain("userstory");
     expect(content).toContain("sprint");
     expect(content).toContain("epic");
+    expect(content).toContain("milestone");
     expect(content).toContain("userstory_sprint");
     expect(content).toContain("userstory_epic");
+    expect(content).toContain("userstory_milestone");
+    expect(content).toContain("userstory_change_request_url");
+    expect(content).toContain("sprint_status");
+    expect(content).toContain("milestone_status");
     expect(content).toContain("nestr_get_workspace_apps");
+    expect(content).toContain("fieldValues.sprint_status:active");
     expect(content).toContain("sprint->term:now");
     expect(content).toContain("fieldValues.userstory_sprint:!exists");
+    // userstory_type was dropped in V1 — the topic notes its absence rather than documenting it
+    expect(content).toContain("There is no \`userstory_type\` field");
   });
 
   it("okr topic documents goal/result/resultwork and term queries", () => {
@@ -56,17 +64,20 @@ describe("HELP_TOPICS", () => {
     expect(content).toContain("goal->term:this_quarter");
   });
 
-  it("search topic documents the term-field operator", () => {
+  it("search topic documents the term-field operator and completed-strict DSL", () => {
     const content = HELP_TOPICS["search"];
     expect(content).toContain("Term-field");
     expect(content).toContain("sprint->term:now");
     expect(content).toContain("DATE_DATE");
+    expect(content).toContain("completed:any");
+    expect(content).toContain("completed-strict:false");
   });
 
   it("labels topic flags scrum and okr labels as workspace-app labels", () => {
     const content = HELP_TOPICS["labels"];
     expect(content).toContain("Workspace App labels");
     expect(content).toContain("userstory");
+    expect(content).toContain("milestone");
     expect(content).toContain("resultwork");
     expect(content).toContain("nestr_get_workspace_apps");
   });
