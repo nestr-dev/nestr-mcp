@@ -1270,9 +1270,9 @@ Sprints, epics, and milestones can each be individually disabled at the workspac
 | \`userstory\` | A unit of Scrum work. **Always carries the \`project\` label** (\`implies: ['project']\`), so every story is also a project — \`nestr_get_projects\` finds them, \`project.status\` drives Done, and workspace-wide project reporting includes them. | role, circle, anchor-circle |
 | \`sprint\` | A time-boxed iteration. Holds active work via the \`userstory_sprint\` graph relation. Sprint goal is stored in the \`purpose\` field. | circle, anchor-circle |
 | \`epic\` | A scope axis (feature / initiative) grouping stories across sprints. **Termless** — scope-boxed, not time-boxed. Can nest under another epic. | role, circle, anchor-circle, epic |
-| \`milestone\` | A time-boxed delivery target above the sprint — release, version, or phase. Time-boxed (has a \`term\`). | circle, anchor-circle |
+| \`milestone\` | A time-boxed delivery target — release, version, or phase. Time-boxed (has a \`term\`). Conceptually larger in scope than a sprint (typically spans several), but in the data model it is a peer container alongside the sprint, not its parent: both live directly under the circle. | circle, anchor-circle |
 
-The three "container" labels (\`sprint\`, \`epic\`, \`milestone\`) each carry the same shape: a status field, derived points totals/burned (summed via \`sum_reverse_graphselect\` across linked stories), and a burndown dataseries. Sprint and milestone are term-bound; epic burndown tracks calendar time.
+The three "container" labels (\`sprint\`, \`epic\`, \`milestone\`) are independent grouping axes: a single user story can be linked to any combination of one sprint, one epic, and one milestone via three separate graph relations. There is no hierarchy between the containers themselves — milestones do not contain sprints, epics do not contain sprints. Each carries the same shape: a status field, derived points totals/burned (summed via \`sum_reverse_graphselect\` across linked stories), and a burndown dataseries. Sprint and milestone are term-bound; epic burndown tracks calendar time.
 
 ### Story fields (\`userstory\`)
 
