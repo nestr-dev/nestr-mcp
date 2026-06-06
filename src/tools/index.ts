@@ -865,8 +865,12 @@ export const schemas = {
   }),
 
   help: z.object({
-    topic: z.string().describe("Topic key (e.g., 'search', 'labels', 'tensions'). Use 'topics' for the full list."),
-  }),
+    topic: z.string().optional().describe("Topic key (e.g., 'search', 'labels', 'tensions'). Use 'topics' for the full list. If the key isn't a known internal topic, it's tried as a help-article slug from nestr.io/help/articles/<slug>."),
+    search: z.string().optional().describe("Free-text query against the public help-article index (nestr.io/help/articles/*). Returns a ranked list of matching articles with slugs and URLs; fetch one with `topic: <slug>`."),
+  }).refine(
+    (v) => Boolean(v.topic) || Boolean(v.search),
+    { message: "Provide either `topic` or `search`." },
+  ),
 
   diagnose: z.object({}).describe("No arguments — diagnose reads session state from the server."),
 };
@@ -880,13 +884,13 @@ const destructive = { annotations: { readOnlyHint: false, destructiveHint: true 
 export const toolDefinitions = [
   {
     name: "nestr_help",
-    description: "Get detailed Nestr documentation by topic. Call before unfamiliar operations. Topics: search, labels, nest-model, inbox, daily-plan, notifications, insights, tension-processing, skills, mcp-apps, authentication, and more. Use topic 'topics' for the full list. Auth: none required.",
+    description: "Get Nestr documentation. Three modes: (1) internal MCP-flavoured topic — pass `topic` with one of the curated keys (search, labels, nest-model, inbox, daily-plan, notifications, insights, tension-processing, skills, mcp-apps, authentication, scrum, okr, ...); use topic 'topics' for the full list. (2) Help-article fetch — pass `topic` with a slug from nestr.io/help/articles/<slug>; returns the article as markdown. The tool tries internal topics first, then falls back to article fetch. (3) Help-article search — pass `search` with a free-text query; returns ranked matches with slugs to fetch. Call this before unfamiliar operations. Auth: none required.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        topic: { type: "string", description: "Topic key. Use 'topics' for the full list." },
+        topic: { type: "string", description: "Internal topic key or help-article slug. Use 'topics' for the full list of internal topics." },
+        search: { type: "string", description: "Free-text query against the public help articles. Returns slugs to fetch via `topic`." },
       },
-      required: ["topic"],
     },
     ...readOnly,
   },
@@ -2069,11 +2073,57 @@ async function _handleToolCall(
       case "nestr_help": {
         const parsed = schemas.help.parse(args);
         const { HELP_TOPICS } = await import("../help/topics.js");
-        const content = HELP_TOPICS[parsed.topic];
-        if (!content) {
-          return { content: [{ type: "text", text: `Unknown topic: "${parsed.topic}". Call nestr_help({ topic: "topics" }) to see available topics.` }] };
+
+        // Search mode: query the public help-article index. Returns a ranked
+        // list of slugs; the caller pulls a specific article with a second
+        // call passing `topic: <slug>`.
+        if (parsed.search) {
+          const { loadArticleIndex, searchArticleIndex } = await import("../help/articles.js");
+          try {
+            const entries = await loadArticleIndex();
+            const hits = searchArticleIndex(entries, parsed.search, 10);
+            if (hits.length === 0) {
+              return { content: [{ type: "text", text: `No help articles matched "${parsed.search}". Try broader terms, or call nestr_help({ topic: "topics" }) for internal MCP topics.` }] };
+            }
+            const body = [
+              `Found ${hits.length} help article${hits.length === 1 ? "" : "s"} for "${parsed.search}". Fetch one with nestr_help({ topic: "<slug>" }).`,
+              "",
+              ...hits.map(h => `- \`${h.slug}\` — ${h.url}`),
+            ].join("\n");
+            return { content: [{ type: "text", text: body }] };
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: "text", text: `Help-article search failed: ${message}. Internal topics still available via nestr_help({ topic: "topics" }).` }], isError: true };
+          }
         }
-        return { content: [{ type: "text", text: content }] };
+
+        // Topic mode: prefer the curated internal topic; if there's no match,
+        // try the slug as a help article. Network failures on the fallback are
+        // surfaced rather than masked — a stale link is more useful than a
+        // generic "not found".
+        const topic = parsed.topic!;
+        const content = HELP_TOPICS[topic];
+        if (content) {
+          return { content: [{ type: "text", text: content }] };
+        }
+        const { fetchArticleMarkdown } = await import("../help/articles.js");
+        try {
+          const article = await fetchArticleMarkdown(topic);
+          const body = [
+            `# ${article.title || article.slug}`,
+            "",
+            article.description ? `> ${article.description}` : "",
+            "",
+            article.markdown,
+            "",
+            `---`,
+            `Source: ${article.url}`,
+          ].filter(Boolean).join("\n");
+          return { content: [{ type: "text", text: body }] };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return { content: [{ type: "text", text: `Unknown topic: "${topic}". Tried internal topics (call nestr_help({ topic: "topics" }) for the full list) and the help-article fetch (failed: ${message}). To search the help site instead, call nestr_help({ search: "<query>" }).` }] };
+        }
       }
 
       case "nestr_diagnose": {
