@@ -12,6 +12,8 @@ import { WORKSPACE_SETUP_INSTRUCTIONS } from "../skills/workspace-setup.js";
 export const HELP_TOPICS: Record<string, string> = {
   "topics": `Available nestr_help topics (call with any topic key):
 
+The internal topics below are curated MCP-flavoured guidance — tool call patterns, mode behaviour, and conventions. For end-user UI walkthroughs and feature how-tos, call \`nestr_help({ search: "<query>" })\` to search the public help-article corpus at nestr.io/help/articles, or pass an article slug directly as \`topic\` (e.g. \`topic: "getting-started-with-nestr"\`).
+
 - topics: This list
 - operating-modes: Detailed assistant/role-filler/workspace mode behaviors
 - matching-work-to-roles: How to determine which role owns work
