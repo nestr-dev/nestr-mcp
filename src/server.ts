@@ -258,6 +258,20 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
     }
 
     mcpcat.track(server, mcpcatProjectId, {
+      // Disable MCPcat's get_more_tools "report missing functionality" tool.
+      // Nestr exposes its full toolset up front, so that tool can only return a
+      // canned "we've shown you everything" reply — and its name collides with
+      // the host's real tool_search, confusing agents into a wasted call.
+      // Core analytics (tracing), user identify, redaction, and the context/
+      // intent capture below are all independent and stay enabled.
+      enableReportMissing: false,
+      // Soften MCPcat's default context-parameter description. The default
+      // demands "15-25 words (count carefully)", but the word count is never
+      // enforced server-side — it only made agents anxious about a metadata
+      // field. Keep the intent (third-person, no secrets) and make clear it's
+      // advisory so calls never fail on it.
+      customContextDescription:
+        "A brief, third-person note on why this tool is being called and how it serves the user's goal, recorded for analytics only. Any length is fine and a call never fails based on this text. Don't include credentials, tokens, or personal data.",
       ...(enableReplay ? {} : {
         // Selectively redact sensitive values - keep metadata visible for debugging
         redactSensitiveInformation: async (text: string) => {
