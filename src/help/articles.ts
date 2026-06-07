@@ -273,8 +273,13 @@ function isFetchableImageUrl(raw: string): boolean {
   }
   if (u.protocol !== "https:") return false;
   const host = u.hostname.toLowerCase();
+  // Reject IPv6 literals outright. Legit CDN/help image URLs use DNS hostnames,
+  // and IPv6 range-matching is unreliable (Node normalises ::ffff:127.0.0.1 to
+  // ::ffff:7f00:1). URL.hostname brackets any IPv6 literal, so this single check
+  // covers loopback, link-local, unique-local, and IPv4-mapped addresses.
+  if (host.startsWith("[")) return false;
   if (host === "localhost" || host.endsWith(".local") || host.endsWith(".internal")) return false;
-  if (host === "0.0.0.0" || host === "::1" || host === "[::1]") return false;
+  if (host === "0.0.0.0") return false;
   if (/^(127\.|10\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) return false;
   return true;
 }
@@ -292,7 +297,8 @@ function mimeFromExtension(url: string): string | null {
  * Fetch a single image and return it as base64 + MIME type for an MCP `image`
  * content block, or null if it can't be safely inlined (disallowed URL,
  * non-image content, too large, or any network error). Best-effort by design —
- * callers fall back to the text URL list. Bounded LRU-ish cache by URL.
+ * callers fall back to the text URL list. Bounded FIFO cache by URL (oldest
+ * entry evicted once the cap is reached).
  */
 export async function fetchImageAsBase64(url: string): Promise<{ data: string; mimeType: string } | null> {
   if (!isFetchableImageUrl(url)) return null;

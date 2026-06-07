@@ -493,6 +493,16 @@ Some text
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
+    it("returns null for IPv6 literal hosts (loopback, link-local, mapped) without fetching", async () => {
+      // IPv6 literals are bracketed in URL.hostname; we reject them wholesale
+      // because range-matching is unreliable (::ffff:127.0.0.1 -> ::ffff:7f00:1).
+      expect(await fetchImageAsBase64("https://[::1]/x.png")).toBeNull();
+      expect(await fetchImageAsBase64("https://[fe80::1]/x.png")).toBeNull();
+      expect(await fetchImageAsBase64("https://[fd00::1]/x.png")).toBeNull();
+      expect(await fetchImageAsBase64("https://[::ffff:127.0.0.1]/x.png")).toBeNull();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it("returns null when content-length exceeds the cap", async () => {
       mockFetch.mockResolvedValueOnce(
         imageResponse(Buffer.from("small"), "image/png", { "content-length": String(5 * 1024 * 1024) }),
