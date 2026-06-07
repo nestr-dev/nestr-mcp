@@ -4,8 +4,12 @@ import {
   loadArticleIndex,
   searchArticleIndex,
   fetchArticleMarkdown,
+  fetchArticleMeta,
   extractArticleMeta,
   extractArticleBody,
+  extractImages,
+  fetchImageAsBase64,
+  collectArticleImages,
   htmlToMarkdown,
 } from "../../src/help/articles.js";
 
@@ -28,6 +32,18 @@ describe("help articles", () => {
   }
   function errorResponse(status: number, statusText = "Error") {
     return { ok: false, status, statusText, text: async () => "" };
+  }
+  function imageResponse(bytes: Buffer, contentType = "image/png", headers: Record<string, string> = {}) {
+    const all = new Map(
+      Object.entries({ "content-type": contentType, ...headers }).map(([k, v]) => [k.toLowerCase(), v]),
+    );
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: { get: (k: string) => all.get(k.toLowerCase()) ?? null },
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    };
   }
 
   // ─── Index loading ──────────────────────────────────────────────
@@ -109,6 +125,26 @@ describe("help articles", () => {
     it("honours the limit", () => {
       const hits = searchArticleIndex(entries, "nestr", 1);
       expect(hits).toHaveLength(1);
+    });
+
+    it("rescues a typo via fuzzy matching (scum -> scrum)", () => {
+      const hits = searchArticleIndex(entries, "scum");
+      expect(hits.map(h => h.slug)).toContain("scrum-agile-app");
+    });
+
+    it("matches curated synonyms absent from the slug (kanban -> scrum-agile-app)", () => {
+      expect(searchArticleIndex(entries, "kanban").map(h => h.slug)).toContain("scrum-agile-app");
+      expect(searchArticleIndex(entries, "burndown").map(h => h.slug)).toContain("scrum-agile-app");
+    });
+
+    it("scores a fuzzy match below an exact match", () => {
+      expect(searchArticleIndex(entries, "scrum")[0].score).toBe(1);
+      expect(searchArticleIndex(entries, "scum")[0].score).toBe(0.5);
+    });
+
+    it("does not fuzzy-match tokens shorter than 4 characters", () => {
+      // "scu" is too short to rescue and isn't a substring of any haystack.
+      expect(searchArticleIndex(entries, "scu")).toEqual([]);
     });
   });
 
@@ -342,6 +378,177 @@ describe("help articles", () => {
       const article = await fetchArticleMarkdown("/scrum-agile-app/");
       expect(article.slug).toBe("scrum-agile-app");
       expect(article.url).toBe("https://nestr.io/help/articles/scrum-agile-app");
+    });
+  });
+
+  // ─── Lightweight meta fetch (search snippets) ──────────────────────────────
+
+  describe("fetchArticleMeta", () => {
+    const metaHtml = `<html><head>
+<title>Ignored | Nestr Help</title>
+<script type="application/ld+json">
+{"@type":"TechArticle","headline":"Scrum/Agile app","description":"Run sprints in Nestr."}
+</script></head><body><h1>Scrum/Agile app</h1></body></html>`;
+
+    it("returns title + description for a slug", async () => {
+      mockFetch.mockResolvedValueOnce(htmlResponse(metaHtml));
+      const meta = await fetchArticleMeta("scrum-agile-app");
+      expect(meta).toEqual({
+        slug: "scrum-agile-app",
+        title: "Scrum/Agile app",
+        description: "Run sprints in Nestr.",
+      });
+    });
+
+    it("caches meta across calls within the TTL", async () => {
+      mockFetch.mockResolvedValueOnce(htmlResponse(metaHtml));
+      await fetchArticleMeta("scrum-agile-app");
+      await fetchArticleMeta("scrum-agile-app");
+      expect(mockFetch).toHaveBeenCalledOnce();
+    });
+
+    it("reuses a full-article cache entry without refetching", async () => {
+      mockFetch.mockResolvedValueOnce(htmlResponse(metaHtml));
+      await fetchArticleMarkdown("scrum-agile-app"); // populates article + meta cache
+      const meta = await fetchArticleMeta("scrum-agile-app");
+      expect(meta.title).toBe("Scrum/Agile app");
+      expect(mockFetch).toHaveBeenCalledOnce();
+    });
+
+    it("throws a clear error on a non-OK response", async () => {
+      mockFetch.mockResolvedValueOnce(errorResponse(404, "Not Found"));
+      await expect(fetchArticleMeta("missing")).rejects.toThrow(/404/);
+    });
+  });
+
+  // ─── Image extraction ──────────────────────────────────────────────
+
+  describe("extractImages", () => {
+    it("pulls captioned images in order, deduped by URL", () => {
+      const md = `# Title
+![First shot](https://cdn.example.com/a.png)
+Some text
+![Second shot](https://cdn.example.com/b.png)
+![First shot again](https://cdn.example.com/a.png)`;
+      expect(extractImages(md)).toEqual([
+        { url: "https://cdn.example.com/a.png", caption: "First shot" },
+        { url: "https://cdn.example.com/b.png", caption: "Second shot" },
+      ]);
+    });
+
+    it("keeps an image with an empty caption", () => {
+      expect(extractImages("![](https://cdn.example.com/x.png)")).toEqual([
+        { url: "https://cdn.example.com/x.png", caption: "" },
+      ]);
+    });
+
+    it("skips SVG chrome/icons", () => {
+      const md = `![logo](https://cdn.example.com/logo.svg)
+![screenshot](https://cdn.example.com/shot.png)`;
+      expect(extractImages(md)).toEqual([
+        { url: "https://cdn.example.com/shot.png", caption: "screenshot" },
+      ]);
+    });
+
+    it("extracts the inner image of a markdown linked-image", () => {
+      const md = `[![sprint board](https://cdn.example.com/board.png)](https://nestr.io/help/articles/sprints)`;
+      expect(extractImages(md)).toEqual([
+        { url: "https://cdn.example.com/board.png", caption: "sprint board" },
+      ]);
+    });
+
+    it("returns an empty array when there are no images", () => {
+      expect(extractImages("# Just text\nNo images here.")).toEqual([]);
+    });
+  });
+
+  // ─── Inline image fetch (opt-in base64) ──────────────────────────────
+
+  describe("fetchImageAsBase64", () => {
+    const PNG = "https://cdn.prod.website-files.com/x/board.png";
+
+    it("returns base64 data + MIME type from the content-type header", async () => {
+      const bytes = Buffer.from("fake-png-bytes");
+      mockFetch.mockResolvedValueOnce(imageResponse(bytes, "image/png"));
+      const result = await fetchImageAsBase64(PNG);
+      expect(result).toEqual({ data: bytes.toString("base64"), mimeType: "image/png" });
+    });
+
+    it("falls back to the URL extension when content-type is unhelpful", async () => {
+      const bytes = Buffer.from("bytes");
+      mockFetch.mockResolvedValueOnce(imageResponse(bytes, "application/octet-stream"));
+      const result = await fetchImageAsBase64(PNG);
+      expect(result?.mimeType).toBe("image/png");
+    });
+
+    it("returns null for a non-https URL without fetching", async () => {
+      expect(await fetchImageAsBase64("http://cdn.prod.website-files.com/x/board.png")).toBeNull();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("returns null for a private/loopback host without fetching", async () => {
+      expect(await fetchImageAsBase64("https://127.0.0.1/x.png")).toBeNull();
+      expect(await fetchImageAsBase64("https://localhost/x.png")).toBeNull();
+      expect(await fetchImageAsBase64("https://10.0.0.5/x.png")).toBeNull();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("returns null when content-length exceeds the cap", async () => {
+      mockFetch.mockResolvedValueOnce(
+        imageResponse(Buffer.from("small"), "image/png", { "content-length": String(5 * 1024 * 1024) }),
+      );
+      expect(await fetchImageAsBase64(PNG)).toBeNull();
+    });
+
+    it("returns null when the content can't be typed as an image", async () => {
+      mockFetch.mockResolvedValueOnce(imageResponse(Buffer.from("x"), "text/html"));
+      expect(await fetchImageAsBase64("https://cdn.prod.website-files.com/x/page")).toBeNull();
+    });
+
+    it("returns null on a network error rather than throwing", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("boom"));
+      expect(await fetchImageAsBase64(PNG)).toBeNull();
+    });
+
+    it("caches a fetched image by URL", async () => {
+      mockFetch.mockResolvedValueOnce(imageResponse(Buffer.from("bytes"), "image/png"));
+      await fetchImageAsBase64(PNG);
+      await fetchImageAsBase64(PNG);
+      expect(mockFetch).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe("collectArticleImages", () => {
+    it("fetches up to `max` images in order, dropping failures", async () => {
+      const a = Buffer.from("a");
+      const c = Buffer.from("c");
+      mockFetch
+        .mockResolvedValueOnce(imageResponse(a, "image/png"))  // a.png ok
+        .mockResolvedValueOnce(errorResponse(404))             // b.png fails
+        .mockResolvedValueOnce(imageResponse(c, "image/jpeg")); // c.jpg ok
+      const images = [
+        { url: "https://cdn.prod.website-files.com/x/a.png", caption: "A" },
+        { url: "https://cdn.prod.website-files.com/x/b.png", caption: "B" },
+        { url: "https://cdn.prod.website-files.com/x/c.jpg", caption: "C" },
+      ];
+      const result = await collectArticleImages(images, 3);
+      expect(result.map(r => r.caption)).toEqual(["A", "C"]);
+      expect(result[0]).toMatchObject({ mimeType: "image/png", data: a.toString("base64") });
+      expect(result[1]).toMatchObject({ mimeType: "image/jpeg", data: c.toString("base64") });
+    });
+
+    it("honours the max cap", async () => {
+      mockFetch
+        .mockResolvedValueOnce(imageResponse(Buffer.from("1"), "image/png"))
+        .mockResolvedValueOnce(imageResponse(Buffer.from("2"), "image/png"));
+      const images = [
+        { url: "https://cdn.prod.website-files.com/x/1.png", caption: "1" },
+        { url: "https://cdn.prod.website-files.com/x/2.png", caption: "2" },
+        { url: "https://cdn.prod.website-files.com/x/3.png", caption: "3" },
+      ];
+      const result = await collectArticleImages(images, 2);
+      expect(result).toHaveLength(2);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
     });
   });
 });

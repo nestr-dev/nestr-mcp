@@ -15,19 +15,31 @@ const INDEX_TTL_MS = 15 * 60 * 1000;
 const ARTICLE_TTL_MS = 15 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 8000;
 
+// Inline-image limits (opt-in base64 attachment for hosts that render images).
+const MAX_INLINE_IMAGES = 3;
+const MAX_IMAGE_BYTES = 2 * 1024 * 1024; // 2 MB per image — Webflow screenshots are far smaller
+const IMAGE_CACHE_MAX = 50;
+
 export type ArticleIndexEntry = { slug: string; url: string };
 export type ArticleSearchHit = ArticleIndexEntry & { score: number };
 
 type IndexCache = { entries: ArticleIndexEntry[]; expiresAt: number };
 type ArticleCache = { markdown: string; title: string; description: string; expiresAt: number };
 
+type MetaCache = { title: string; description: string; expiresAt: number };
+type ImageCache = { data: string; mimeType: string; expiresAt: number };
+
 let indexCache: IndexCache | null = null;
 const articleCache = new Map<string, ArticleCache>();
+const metaCache = new Map<string, MetaCache>();
+const imageCache = new Map<string, ImageCache>();
 
 // Test-only: reset caches between cases without poking at module internals.
 export function _resetCaches(): void {
   indexCache = null;
   articleCache.clear();
+  metaCache.clear();
+  imageCache.clear();
 }
 
 async function fetchWithTimeout(url: string): Promise<Response> {
@@ -67,9 +79,58 @@ export async function loadArticleIndex(): Promise<ArticleIndexEntry[]> {
 }
 
 /**
- * Token-overlap search against slug-as-words. Slugs are descriptive
- * (e.g. `building-your-org-structure-roles-circles`), so dash-to-space gives
- * a usable signal without fetching every article's title for the index.
+ * Extra search keywords for articles whose slug undersells their content, so a
+ * query like "kanban" or "burndown" still finds `scrum-agile-app`. Keyed by
+ * slug; merged into the search haystack alongside the slug-as-words. This is
+ * the synonym layer — keep it focused on real user vocabulary that the slug
+ * itself omits.
+ */
+const ARTICLE_KEYWORDS: Record<string, string[]> = {
+  "scrum-agile-app": ["sprint", "sprints", "kanban", "backlog", "burndown", "epic", "epics", "milestone", "milestones", "iteration", "userstory", "story", "stories", "standup", "velocity", "board"],
+  "running-meetings-in-nestr": ["tactical", "governance", "standup", "retro", "retrospective", "facilitation", "facilitator", "agenda"],
+  "tensions-and-governance-proposals": ["proposal", "proposals", "holacracy", "sociocracy", "amend", "amendment", "objection"],
+  "nestr-the-power-of-labels": ["tag", "tags", "tagging"],
+  "building-your-org-structure-roles-circles": ["hierarchy", "department", "team", "org", "orgchart", "chart", "accountability", "accountabilities"],
+  "giving-or-requesting-feedback-in-nestr": ["review", "praise", "kudos", "appraisal"],
+  "projects-and-todos-creating-tracking-managing-work": ["task", "tasks", "todo", "todos", "project", "projects", "checklist", "deadline"],
+  "nestr-mcp-connect-ai-assistants-to-your-workspace": ["mcp", "assistant", "assistants", "claude", "cursor", "llm", "agent"],
+  "chat-channels-and-communication-in-nestr": ["chat", "message", "messaging", "channel", "channels", "notification", "notifications", "mention", "comment"],
+  "managing-users-invitations-permissions": ["invite", "invitation", "permission", "permissions", "member", "members", "user", "users", "access"],
+  "pricing-plans-what-you-pay-for": ["pricing", "price", "plan", "plans", "billing", "subscription", "cost", "payment"],
+};
+
+/**
+ * Classic Levenshtein distance, capped for our needs. Only used to rescue
+ * near-miss typos (e.g. "scum" → "scrum") against single words, so the full
+ * matrix on short inputs is fine. Returns early past our max threshold.
+ */
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (Math.abs(m - n) > 2) return 3;
+  const prev = new Array<number>(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let diag = prev[0];
+    prev[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = prev[j];
+      prev[j] = Math.min(
+        prev[j] + 1,
+        prev[j - 1] + 1,
+        diag + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+      diag = tmp;
+    }
+  }
+  return prev[n];
+}
+
+/**
+ * Token-overlap search against slug-as-words plus curated keywords. Slugs are
+ * descriptive (e.g. `building-your-org-structure-roles-circles`), so
+ * dash-to-space gives a usable signal without fetching every article's title.
+ * Exact substring matches score 1; a typo rescued by Levenshtein scores 0.5,
+ * so an exact hit always outranks a fuzzy one.
  */
 export function searchArticleIndex(
   entries: ArticleIndexEntry[],
@@ -83,10 +144,21 @@ export function searchArticleIndex(
   if (tokens.length === 0) return [];
   const hits: ArticleSearchHit[] = [];
   for (const entry of entries) {
-    const haystack = entry.slug.toLowerCase().replace(/-/g, " ");
+    const slugWords = entry.slug.toLowerCase().replace(/-/g, " ");
+    const keywords = ARTICLE_KEYWORDS[entry.slug] ?? [];
+    const haystack = keywords.length ? `${slugWords} ${keywords.join(" ")}` : slugWords;
+    const words = haystack.split(/\s+/).filter(Boolean);
     let score = 0;
     for (const token of tokens) {
-      if (haystack.includes(token)) score++;
+      if (haystack.includes(token)) {
+        score += 1; // exact substring match (original behaviour)
+      } else if (token.length >= 4) {
+        // Typo rescue: allow 1 edit for short tokens, 2 for longer ones.
+        const threshold = token.length >= 7 ? 2 : 1;
+        if (words.some(w => w.length >= 4 && levenshtein(w, token) <= threshold)) {
+          score += 0.5; // weaker than exact, so exact matches win ties
+        }
+      }
     }
     if (score > 0) hits.push({ ...entry, score });
   }
@@ -131,7 +203,141 @@ export async function fetchArticleMarkdown(slug: string): Promise<{
     markdown,
     expiresAt: Date.now() + ARTICLE_TTL_MS,
   });
+  metaCache.set(cleanSlug, { title, description, expiresAt: Date.now() + ARTICLE_TTL_MS });
   return { slug: cleanSlug, url, title, description, markdown };
+}
+
+/**
+ * Fetch just an article's title + description, for search-result snippets,
+ * without converting the whole body. Reuses a full-article or prior meta cache
+ * entry when one is fresh, and caches meta separately so repeated searches are
+ * cheap. Throws on a non-OK response — callers enrich best-effort and fall back
+ * to the bare slug on failure.
+ */
+export async function fetchArticleMeta(slug: string): Promise<{ slug: string; title: string; description: string }> {
+  const cleanSlug = slug.replace(/^\/+|\/+$/g, "");
+  const cachedMeta = metaCache.get(cleanSlug);
+  if (cachedMeta && Date.now() < cachedMeta.expiresAt) {
+    return { slug: cleanSlug, title: cachedMeta.title, description: cachedMeta.description };
+  }
+  const full = articleCache.get(cleanSlug);
+  if (full && Date.now() < full.expiresAt) {
+    return { slug: cleanSlug, title: full.title, description: full.description };
+  }
+  const res = await fetchWithTimeout(HELP_ARTICLE_PREFIX + cleanSlug);
+  if (!res.ok) {
+    throw new Error(`Article meta fetch failed for "${cleanSlug}": ${res.status} ${res.statusText}`);
+  }
+  const { title, description } = extractArticleMeta(await res.text());
+  metaCache.set(cleanSlug, { title, description, expiresAt: Date.now() + ARTICLE_TTL_MS });
+  return { slug: cleanSlug, title, description };
+}
+
+export type ArticleImage = { url: string; caption: string };
+
+/**
+ * Pull the in-body images out of converted article markdown as structured data
+ * so callers can surface screenshots as first-class items (some MCP hosts
+ * render them inline; text-only clients still get the caption + URL). SVGs are
+ * skipped — on these pages they're UI chrome/icons, not content. Dedupes by
+ * URL, preserves document order. Run this on the article body markdown so nav
+ * and marketing imagery (already cut by extractArticleBody) stays out.
+ */
+export function extractImages(markdown: string): ArticleImage[] {
+  const seen = new Set<string>();
+  const images: ArticleImage[] = [];
+  // Matches `![alt](url)` and the inner image of a linked image `[![alt](url)](href)`.
+  for (const m of markdown.matchAll(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
+    const url = m[2].trim();
+    if (!url || seen.has(url) || /\.svg(\?|#|$)/i.test(url)) continue;
+    seen.add(url);
+    images.push({ url, caption: m[1].trim() });
+  }
+  return images;
+}
+
+export type InlineArticleImage = ArticleImage & { data: string; mimeType: string };
+
+/**
+ * Guard the image URLs we'll fetch server-side. Image URLs come from
+ * Nestr-authored help articles (low risk), but we still only fetch public
+ * https origins — never loopback, link-local, or private ranges — as
+ * defence-in-depth against SSRF.
+ */
+function isFetchableImageUrl(raw: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "https:") return false;
+  const host = u.hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".local") || host.endsWith(".internal")) return false;
+  if (host === "0.0.0.0" || host === "::1" || host === "[::1]") return false;
+  if (/^(127\.|10\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) return false;
+  return true;
+}
+
+function mimeFromExtension(url: string): string | null {
+  const path = url.split(/[?#]/)[0].toLowerCase();
+  if (path.endsWith(".png")) return "image/png";
+  if (path.endsWith(".jpg") || path.endsWith(".jpeg")) return "image/jpeg";
+  if (path.endsWith(".webp")) return "image/webp";
+  if (path.endsWith(".gif")) return "image/gif";
+  return null;
+}
+
+/**
+ * Fetch a single image and return it as base64 + MIME type for an MCP `image`
+ * content block, or null if it can't be safely inlined (disallowed URL,
+ * non-image content, too large, or any network error). Best-effort by design —
+ * callers fall back to the text URL list. Bounded LRU-ish cache by URL.
+ */
+export async function fetchImageAsBase64(url: string): Promise<{ data: string; mimeType: string } | null> {
+  if (!isFetchableImageUrl(url)) return null;
+  const cached = imageCache.get(url);
+  if (cached && Date.now() < cached.expiresAt) {
+    return { data: cached.data, mimeType: cached.mimeType };
+  }
+  try {
+    const res = await fetchWithTimeout(url);
+    if (!res.ok) return null;
+    const contentType = (res.headers?.get?.("content-type") || "").split(";")[0].trim().toLowerCase();
+    const mimeType = contentType.startsWith("image/") ? contentType : mimeFromExtension(url);
+    if (!mimeType || mimeType === "image/svg+xml") return null; // svg = chrome/icons, skip
+    const declaredLength = Number(res.headers?.get?.("content-length") || 0);
+    if (declaredLength > MAX_IMAGE_BYTES) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.byteLength === 0 || buf.byteLength > MAX_IMAGE_BYTES) return null;
+    const data = buf.toString("base64");
+    if (imageCache.size >= IMAGE_CACHE_MAX) {
+      const oldest = imageCache.keys().next().value;
+      if (oldest !== undefined) imageCache.delete(oldest);
+    }
+    imageCache.set(url, { data, mimeType, expiresAt: Date.now() + ARTICLE_TTL_MS });
+    return { data, mimeType };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch up to `max` of an article's images as inline base64 blocks, in document
+ * order, dropping any that can't be inlined. Concurrent and best-effort.
+ */
+export async function collectArticleImages(
+  images: ArticleImage[],
+  max = MAX_INLINE_IMAGES,
+): Promise<InlineArticleImage[]> {
+  const picked = images.slice(0, max);
+  const settled = await Promise.all(
+    picked.map(async img => {
+      const bytes = await fetchImageAsBase64(img.url);
+      return bytes ? { ...img, ...bytes } : null;
+    }),
+  );
+  return settled.filter((r): r is InlineArticleImage => r !== null);
 }
 
 /**
