@@ -227,7 +227,7 @@ describe("nestr_help tool", () => {
     const imageBlocks = result.content.filter(c => c.type === "image");
     expect(imageBlocks).toHaveLength(2); // the two captioned screenshots, not the hero
     const text = textOf(result);
-    expect(text).toContain("- [0] (no caption) — https://cdn.prod.website-files.com/x/hero.png");
+    expect(text).toContain("- [0] [decorative] (no caption) — https://cdn.prod.website-files.com/x/hero.png");
     expect(text).not.toContain("hero.png — attached inline below"); // hero NOT attached
     expect(text).toContain('- [1] "Enable the app" — https://cdn.prod.website-files.com/x/enable.png — attached inline below');
     expect(text).toContain('- [2] "Plan a sprint" — https://cdn.prod.website-files.com/x/sprints.png — attached inline below');
@@ -243,9 +243,25 @@ describe("nestr_help tool", () => {
     const imageBlocks = result.content.filter(c => c.type === "image");
     expect(imageBlocks).toHaveLength(2);
     const text = textOf(result);
-    expect(text).toContain("- [0] (no caption) — https://cdn.prod.website-files.com/x/hero.png — attached inline below");
+    expect(text).toContain("- [0] [decorative] (no caption) — https://cdn.prod.website-files.com/x/hero.png — attached inline below");
     expect(text).not.toContain("enable.png — attached inline below"); // index 1 not requested
     expect(text).toContain("sprints.png — attached inline below");
+  });
+
+  it("keeps the index list's attached markers in sync with the attached image blocks", async () => {
+    mockFetch
+      .mockResolvedValueOnce(htmlResponse(multiImageArticle))
+      .mockResolvedValue(imageResponse(Buffer.from("png")));
+
+    const result = await handleToolCall(client, "nestr_help", { topic: "scrum-agile-app", includeImages: true });
+    const imageBlocks = result.content.filter(c => c.type === "image");
+    const text = textOf(result);
+    // Exactly one "attached inline below" marker per attached image block...
+    const markers = text.match(/attached inline below/g) ?? [];
+    expect(markers).toHaveLength(imageBlocks.length);
+    // ...and the marked list entries are exactly the non-decorative indices.
+    const markedIndexes = [...text.matchAll(/^- \[(\d+)\][^\n]*attached inline below$/gm)].map(m => Number(m[1]));
+    expect(markedIndexes).toEqual([1, 2]);
   });
 
   it("caps the default selection at maxImages", async () => {
@@ -259,7 +275,7 @@ describe("nestr_help tool", () => {
     expect(mockFetch).toHaveBeenCalledTimes(2); // article + one image
   });
 
-  it("attaches nothing and explains when an article has no captioned images", async () => {
+  it("attaches nothing and explains when an article has no content images", async () => {
     const articleHtml = `<html><head>
 <script type="application/ld+json">
 {"@type":"TechArticle","headline":"Logos only","description":"No screenshots."}
@@ -272,7 +288,7 @@ describe("nestr_help tool", () => {
 
     const result = await handleToolCall(client, "nestr_help", { topic: "logos-only", includeImages: true });
     expect(result.content.filter(c => c.type === "image")).toHaveLength(0);
-    expect(textOf(result)).toContain("No images attached — this article has no captioned screenshots");
+    expect(textOf(result)).toContain("No images attached — this article has no non-decorative content screenshots");
     expect(mockFetch).toHaveBeenCalledTimes(1); // article only — nothing selected to fetch
   });
 

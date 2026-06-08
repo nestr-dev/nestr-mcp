@@ -433,14 +433,35 @@ Some text
 ![Second shot](https://cdn.example.com/b.png)
 ![First shot again](https://cdn.example.com/a.png)`;
       expect(extractImages(md)).toEqual([
-        { url: "https://cdn.example.com/a.png", caption: "First shot" },
-        { url: "https://cdn.example.com/b.png", caption: "Second shot" },
+        { url: "https://cdn.example.com/a.png", caption: "First shot", decorative: false },
+        { url: "https://cdn.example.com/b.png", caption: "Second shot", decorative: false },
       ]);
     });
 
-    it("keeps an image with an empty caption", () => {
+    it("flags an image with an empty caption as decorative", () => {
       expect(extractImages("![](https://cdn.example.com/x.png)")).toEqual([
-        { url: "https://cdn.example.com/x.png", caption: "" },
+        { url: "https://cdn.example.com/x.png", caption: "", decorative: true },
+      ]);
+    });
+
+    it("flags a captioned image before the first content heading as decorative", () => {
+      // Header/thumbnail sits between the title (#) and the first section (##).
+      const md = `# Title
+![Top banner](https://cdn.example.com/banner.png)
+## First section
+![Real screenshot](https://cdn.example.com/shot.png)`;
+      expect(extractImages(md)).toEqual([
+        { url: "https://cdn.example.com/banner.png", caption: "Top banner", decorative: true },
+        { url: "https://cdn.example.com/shot.png", caption: "Real screenshot", decorative: false },
+      ]);
+    });
+
+    it("does not apply the position rule when the body has no content heading", () => {
+      // Only a title (one heading) — fall back to the caption test alone.
+      const md = `# Title
+![Captioned](https://cdn.example.com/a.png)`;
+      expect(extractImages(md)).toEqual([
+        { url: "https://cdn.example.com/a.png", caption: "Captioned", decorative: false },
       ]);
     });
 
@@ -448,14 +469,14 @@ Some text
       const md = `![logo](https://cdn.example.com/logo.svg)
 ![screenshot](https://cdn.example.com/shot.png)`;
       expect(extractImages(md)).toEqual([
-        { url: "https://cdn.example.com/shot.png", caption: "screenshot" },
+        { url: "https://cdn.example.com/shot.png", caption: "screenshot", decorative: false },
       ]);
     });
 
     it("extracts the inner image of a markdown linked-image", () => {
       const md = `[![sprint board](https://cdn.example.com/board.png)](https://nestr.io/help/articles/sprints)`;
       expect(extractImages(md)).toEqual([
-        { url: "https://cdn.example.com/board.png", caption: "sprint board" },
+        { url: "https://cdn.example.com/board.png", caption: "sprint board", decorative: false },
       ]);
     });
 
@@ -539,9 +560,9 @@ Some text
         .mockResolvedValueOnce(errorResponse(404))             // b.png fails
         .mockResolvedValueOnce(imageResponse(c, "image/jpeg")); // c.jpg ok
       const images = [
-        { url: "https://cdn.prod.website-files.com/x/a.png", caption: "A" },
-        { url: "https://cdn.prod.website-files.com/x/b.png", caption: "B" },
-        { url: "https://cdn.prod.website-files.com/x/c.jpg", caption: "C" },
+        { url: "https://cdn.prod.website-files.com/x/a.png", caption: "A", decorative: false },
+        { url: "https://cdn.prod.website-files.com/x/b.png", caption: "B", decorative: false },
+        { url: "https://cdn.prod.website-files.com/x/c.jpg", caption: "C", decorative: false },
       ];
       const result = await collectArticleImages(images, { max: 3 });
       expect(result.map(r => r.caption)).toEqual(["A", "C"]);
@@ -554,34 +575,34 @@ Some text
         .mockResolvedValueOnce(imageResponse(Buffer.from("1"), "image/png"))
         .mockResolvedValueOnce(imageResponse(Buffer.from("2"), "image/png"));
       const images = [
-        { url: "https://cdn.prod.website-files.com/x/1.png", caption: "1" },
-        { url: "https://cdn.prod.website-files.com/x/2.png", caption: "2" },
-        { url: "https://cdn.prod.website-files.com/x/3.png", caption: "3" },
+        { url: "https://cdn.prod.website-files.com/x/1.png", caption: "1", decorative: false },
+        { url: "https://cdn.prod.website-files.com/x/2.png", caption: "2", decorative: false },
+        { url: "https://cdn.prod.website-files.com/x/3.png", caption: "3", decorative: false },
       ];
       const result = await collectArticleImages(images, { max: 2 });
       expect(result).toHaveLength(2);
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
 
-    it("skips uncaptioned images (avatar/hero/chrome) in the default selection", async () => {
+    it("skips decorative images (avatar/hero/chrome) in the default selection", async () => {
       mockFetch.mockResolvedValue(imageResponse(Buffer.from("x"), "image/png"));
       const images = [
-        { url: "https://cdn.prod.website-files.com/x/hero.png", caption: "" }, // uncaptioned
-        { url: "https://cdn.prod.website-files.com/x/shot.png", caption: "Real screenshot" },
+        { url: "https://cdn.prod.website-files.com/x/hero.png", caption: "", decorative: true },
+        { url: "https://cdn.prod.website-files.com/x/shot.png", caption: "Real screenshot", decorative: false },
       ];
       const result = await collectArticleImages(images);
       expect(result.map(r => r.index)).toEqual([1]);
-      expect(mockFetch).toHaveBeenCalledTimes(1); // only the captioned one is fetched
+      expect(mockFetch).toHaveBeenCalledTimes(1); // only the content image is fetched
     });
 
-    it("attaches exact imageIndexes (including uncaptioned), overriding the cap", async () => {
+    it("attaches exact imageIndexes (including decorative), overriding the cap", async () => {
       mockFetch.mockResolvedValue(imageResponse(Buffer.from("x"), "image/png"));
       const images = [
-        { url: "https://cdn.prod.website-files.com/x/0.png", caption: "" },
-        { url: "https://cdn.prod.website-files.com/x/1.png", caption: "One" },
-        { url: "https://cdn.prod.website-files.com/x/2.png", caption: "Two" },
-        { url: "https://cdn.prod.website-files.com/x/3.png", caption: "Three" },
-        { url: "https://cdn.prod.website-files.com/x/4.png", caption: "Four" },
+        { url: "https://cdn.prod.website-files.com/x/0.png", caption: "", decorative: true },
+        { url: "https://cdn.prod.website-files.com/x/1.png", caption: "One", decorative: false },
+        { url: "https://cdn.prod.website-files.com/x/2.png", caption: "Two", decorative: false },
+        { url: "https://cdn.prod.website-files.com/x/3.png", caption: "Three", decorative: false },
+        { url: "https://cdn.prod.website-files.com/x/4.png", caption: "Four", decorative: false },
       ];
       const result = await collectArticleImages(images, { indexes: [0, 4, 2, 3], max: 1 });
       expect(result.map(r => r.index)).toEqual([0, 4, 2, 3]); // requested order, cap ignored
@@ -590,9 +611,11 @@ Some text
   });
 
   describe("selectImageIndexes", () => {
-    const imgs = (caps: string[]) => caps.map((caption, i) => ({ url: `https://x/${i}.png`, caption }));
+    // Mirror extractImages' caption-based decorative flag for these fixtures.
+    const imgs = (caps: string[]) =>
+      caps.map((caption, i) => ({ url: `https://x/${i}.png`, caption, decorative: !caption }));
 
-    it("defaults to captioned images only, in document order", () => {
+    it("defaults to non-decorative (content) images, in document order", () => {
       expect(selectImageIndexes(imgs(["", "A", "", "B"]))).toEqual([1, 3]);
     });
 
@@ -601,11 +624,21 @@ Some text
       expect(selectImageIndexes(imgs(["A", "B", "C", "D", "E"]), { max: 2 })).toEqual([0, 1]);
     });
 
-    it("returns [] when there are no captioned images", () => {
+    it("returns [] when every image is decorative", () => {
       expect(selectImageIndexes(imgs(["", "", ""]))).toEqual([]);
     });
 
-    it("honours explicit indexes verbatim, deduped, ignoring the cap and captions", () => {
+    it("excludes a decorative-by-position image from the default but keeps it addressable", () => {
+      // A captioned header thumbnail flagged decorative (e.g. before first heading).
+      const images = [
+        { url: "https://x/0.png", caption: "Header banner", decorative: true },
+        { url: "https://x/1.png", caption: "Content", decorative: false },
+      ];
+      expect(selectImageIndexes(images)).toEqual([1]);                  // default skips it
+      expect(selectImageIndexes(images, { indexes: [0] })).toEqual([0]); // explicit attaches it
+    });
+
+    it("honours explicit indexes verbatim, deduped, ignoring the cap and decorative flag", () => {
       expect(selectImageIndexes(imgs(["", "A", "B", "C", "D"]), { indexes: [4, 0, 2, 4], max: 1 }))
         .toEqual([4, 0, 2]);
     });
