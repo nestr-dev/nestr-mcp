@@ -186,7 +186,7 @@ describe("nestr_help tool", () => {
     expect(textOf(result)).toContain('- [0] "Sprint board" — https://cdn.prod.website-files.com/x/board.png — attached inline below');
   });
 
-  it("suppresses images (and image fetches) when includeImages is false", async () => {
+  it("does not attach images by default — attachment is opt-in", async () => {
     const articleHtml = `<html><head>
 <script type="application/ld+json">
 {"@type":"TechArticle","headline":"Scrum/Agile app","description":"Run sprints."}
@@ -197,14 +197,38 @@ describe("nestr_help tool", () => {
 </body></html>`;
     mockFetch.mockResolvedValueOnce(htmlResponse(articleHtml));
 
-    const result = await handleToolCall(client, "nestr_help", { topic: "scrum-agile-app", includeImages: false });
+    // A plain fetch (no includeImages, no imageIndexes) returns text only.
+    const result = await handleToolCall(client, "nestr_help", { topic: "scrum-agile-app" });
     expect(result.content.every(c => c.type === "text")).toBe(true);
-    expect(mockFetch).toHaveBeenCalledTimes(1); // article only — opt-out skips image fetches
-    // The numbered URL list is still present even when images are suppressed.
+    expect(mockFetch).toHaveBeenCalledTimes(1); // article only — no image fetches
+    // ...but the numbered URL list is still there so the agent can opt in next call.
     expect(textOf(result)).toContain('- [0] "Sprint board" — https://cdn.prod.website-files.com/x/board.png');
+    expect(textOf(result)).not.toContain("attached inline below");
+    expect(textOf(result)).toContain("includeImages:true");
   });
 
-  it("attaches the first maxImages content images by default on a plain topic fetch", async () => {
+  it("hints that screenshots are available (and how to attach) on a plain fetch", async () => {
+    mockFetch.mockResolvedValueOnce(htmlResponse(multiImageArticle));
+    const result = await handleToolCall(client, "nestr_help", { topic: "scrum-agile-app" });
+    expect(result.content.filter(c => c.type === "image")).toHaveLength(0); // opt-in: none attached
+    const text = textOf(result);
+    expect(text).toContain("2 screenshots you can view"); // hero[0] decorative; [1],[2] content
+    expect(text).toContain("not attached by default");
+    expect(text).toContain("includeImages:true");
+    expect(text).toContain("imageIndexes");
+  });
+
+  it("hints that more screenshots remain when only some are attached", async () => {
+    mockFetch
+      .mockResolvedValueOnce(htmlResponse(multiImageArticle))
+      .mockResolvedValue(imageResponse(Buffer.from("png")));
+    const text = textOf(await handleToolCall(client, "nestr_help", { topic: "scrum-agile-app", imageIndexes: [1] }));
+    expect(text).toContain("1 screenshot attached below");
+    expect(text).toMatch(/more are listed under the article/i);
+    expect(text).toContain("imageIndexes");
+  });
+
+  it("attaches the first maxImages content images when includeImages is true", async () => {
     // hero (decorative) + 4 captioned content screenshots; default cap is 3.
     const articleHtml = `<html><head>
 <script type="application/ld+json">
@@ -226,8 +250,7 @@ describe("nestr_help tool", () => {
       .mockResolvedValueOnce(htmlResponse(articleHtml))
       .mockResolvedValue(imageResponse(Buffer.from("png")));
 
-    // No includeImages, no imageIndexes — default behaviour.
-    const result = await handleToolCall(client, "nestr_help", { topic: "scrum-agile-app" });
+    const result = await handleToolCall(client, "nestr_help", { topic: "scrum-agile-app", includeImages: true });
     expect(result.content.filter(c => c.type === "image")).toHaveLength(3); // first 3 content images
     const markedIndexes = [...textOf(result).matchAll(/^- \[(\d+)\][^\n]*attached inline below$/gm)].map(m => Number(m[1]));
     expect(markedIndexes).toEqual([1, 2, 3]); // indexes 1-3, hero [0] excluded

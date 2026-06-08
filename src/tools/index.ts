@@ -889,7 +889,7 @@ export const schemas = {
   help: z.object({
     topic: z.string().optional().describe("Topic key (e.g., 'search', 'labels', 'tensions'). Use 'topics' for the full list. If the key isn't a known internal topic, it's tried as a help-article slug from nestr.io/help/articles/<slug>; the response's 'Resolved as:' line says which matched."),
     search: z.string().optional().describe("Free-text query against the public help-article index (nestr.io/help/articles/*). Tolerates typos and common synonyms. Returns ranked matches, each with a title and one-line summary; fetch one with `topic: <slug>`."),
-    includeImages: z.boolean().optional().describe("Help-article fetches attach screenshots as inline image content (base64) BY DEFAULT — the first maxImages content images in document order, downscaled to bound token cost. Set includeImages:false to suppress images and get only the markdown + the numbered URL list (e.g. to save tokens). Decorative images (uncaptioned, or the header/thumbnail before the first content heading) are never auto-attached. Ignored for internal topics and search."),
+    includeImages: z.boolean().optional().describe("Help-article mode only. Default false: a fetch returns markdown + a numbered image-URL list, with NO image blocks. Set true to also attach the first maxImages content screenshots as inline image content (base64, downscaled to bound token cost), in document order. Decorative images (uncaptioned, or the header/thumbnail before the first content heading) are never auto-attached — request them by index via imageIndexes. Use when the user wants to *see* how something looks. Ignored for internal topics and search."),
     imageIndexes: coerceIntArray(z.array(z.number().int().nonnegative()).optional()).describe("Help-article mode only. Attach specific screenshots by their [index] from the numbered 'Images in this article' list shown in the response footer of a prior fetch. Pass an array of integers, e.g. [4,5,6]. Overrides the default selection AND the maxImages cap — exactly these indexes attach, in order (a [decorative] image attaches only when explicitly listed here). Ignored for internal topics and search."),
     maxImages: coerceFromJson(z.number().int().positive().optional()).describe("Help-article mode only. Cap on how many screenshots the default selection attaches (the first N content images in document order). Default 3, max 6. Ignored when imageIndexes is provided."),
   }).refine(
@@ -909,13 +909,13 @@ const destructive = { annotations: { readOnlyHint: false, destructiveHint: true 
 export const toolDefinitions = [
   {
     name: "nestr_help",
-    description: "Get Nestr documentation. Three modes: (1) internal MCP-flavoured topic — pass `topic` with one of the curated keys (search, labels, nest-model, inbox, daily-plan, notifications, insights, tension-processing, skills, mcp-apps, authentication, scrum, okr, ...); use topic 'topics' for the full list. (2) Help-article fetch — pass `topic` with a slug from nestr.io/help/articles/<slug>; returns the article as markdown PLUS, by default, the first `maxImages` (default 3, max 6) content screenshots as renderable image blocks (downscaled; decorative header/thumbnail/uncaptioned images skipped). Pass `includeImages: false` for markdown + the numbered image-URL list only. For a specific screenshot further down (e.g. a burndown chart), read that numbered 'Images in this article' list and re-call with `imageIndexes: [..]` (exactly those indexes, ignoring the cap). The tool tries internal topics first, then falls back to article fetch. (3) Help-article search — pass `search` with a free-text query; returns ranked matches, each with a title and one-line summary. Search tolerates typos and common synonyms (e.g. kanban/sprint→scrum). Every response opens with a 'Resolved as:' line stating which mode answered, and internal topics and articles cross-link to each other. Call this before unfamiliar operations. Auth: none required.",
+    description: "Get Nestr documentation. Three modes: (1) internal MCP-flavoured topic — pass `topic` with one of the curated keys (search, labels, nest-model, inbox, daily-plan, notifications, insights, tension-processing, skills, mcp-apps, authentication, scrum, okr, ...); use topic 'topics' for the full list. (2) Help-article fetch — pass `topic` with a slug from nestr.io/help/articles/<slug>; returns the article as markdown plus a numbered list of its images (with URLs and captions). Images are NOT attached by default. Pass `includeImages: true` to also attach the first `maxImages` (default 3, max 6) content screenshots as renderable image blocks (downscaled; decorative header/thumbnail/uncaptioned images skipped), or `imageIndexes: [..]` to attach specific ones from the numbered list (e.g. a burndown chart further down, ignoring the cap). Use images when the user wants to *see* how something looks. The tool tries internal topics first, then falls back to article fetch. (3) Help-article search — pass `search` with a free-text query; returns ranked matches, each with a title and one-line summary. Search tolerates typos and common synonyms (e.g. kanban/sprint→scrum). Every response opens with a 'Resolved as:' line stating which mode answered, and internal topics and articles cross-link to each other. Call this before unfamiliar operations. Auth: none required.",
     inputSchema: {
       type: "object" as const,
       properties: {
         topic: { type: "string", description: "Internal topic key or help-article slug. Use 'topics' for the full list of internal topics." },
         search: { type: "string", description: "Free-text query against the public help articles. Returns slugs to fetch via `topic`." },
-        includeImages: { type: "boolean", description: "Help-article fetches attach the first maxImages content screenshots as inline image content (base64) BY DEFAULT. Set false to suppress images (markdown + URL list only). Decorative header/thumbnail/uncaptioned images are never auto-attached. Ignored for internal topics and search." },
+        includeImages: { type: "boolean", description: "Help-article mode only. Default false (markdown + numbered image-URL list, no image blocks). Set true to attach the first maxImages content screenshots as inline image content (base64, downscaled). Decorative header/thumbnail/uncaptioned images are never auto-attached — use imageIndexes for those. Ignored for internal topics and search." },
         imageIndexes: { type: "array", items: { type: "integer", minimum: 0 }, description: "Help-article mode only. Attach specific screenshots by their [index] from the numbered 'Images in this article' list in a prior response's footer, e.g. [4,5,6]. Overrides the default selection and the maxImages cap; attaches exactly these indexes in order. Ignored for internal topics and search." },
         maxImages: { type: "integer", minimum: 1, description: "Help-article mode only. Cap on screenshots in the default selection (first N content images). Default 3, max 6. Ignored when imageIndexes is provided." },
       },
@@ -2173,18 +2173,34 @@ async function _handleToolCall(
           const images = extractImages(article.markdown);
           const relatedTopic = relatedTopicForArticle(article.slug);
 
-          // Image attachment is ON by default for article fetches (the consuming
-          // agent often can't fetch the CDN URLs itself, so inline blocks are the
-          // only reliable delivery). includeImages:false opts out; imageIndexes
-          // forces exactly those entries. Fetch first so the text list can mark
-          // which entries were actually attached. Best-effort — fetch failures
-          // just leave the text list, which always carries every image's URL.
+          // Image attachment is opt-in: only when the caller explicitly asks via
+          // includeImages:true (default selection) or imageIndexes (exact
+          // entries). A plain fetch returns markdown + the numbered URL list, so
+          // the agent/user can decide whether the screenshots are worth the
+          // tokens, then re-call to pull them. Fetch first so the text list can
+          // mark which entries were attached; best-effort — failures just leave
+          // the text list, which always carries every image's URL.
           const imageOpts = { indexes: parsed.imageIndexes, max: parsed.maxImages };
           const hasExplicitIndexes = (parsed.imageIndexes?.length ?? 0) > 0;
-          const wantImages = hasExplicitIndexes || parsed.includeImages !== false;
+          const wantImages = parsed.includeImages === true || hasExplicitIndexes;
           const selectedCount = wantImages && images.length ? selectImageIndexes(images, imageOpts).length : 0;
           const inlined = wantImages && images.length ? await collectArticleImages(images, imageOpts) : [];
           const attached = new Set(inlined.map(img => img.index));
+
+          // Surface a clear, prominent hint whenever the article has screenshots
+          // so the caller knows they exist and how to pull them in (images are
+          // opt-in). Adapts to whether any are already attached.
+          const cap = clampMaxImages(parsed.maxImages);
+          const contentCount = images.filter(img => !img.decorative).length;
+          let imageHint = "";
+          if (inlined.length > 0) {
+            const more = images.length - inlined.length;
+            imageHint = more > 0
+              ? `_${inlined.length} screenshot${inlined.length === 1 ? "" : "s"} attached below as viewable image${inlined.length === 1 ? "" : "s"}. ${more} more are listed under the article — request any by [index] with imageIndexes:[..]._`
+              : `_${inlined.length} screenshot${inlined.length === 1 ? "" : "s"} attached below as viewable image${inlined.length === 1 ? "" : "s"}._`;
+          } else if (contentCount > 0) {
+            imageHint = `_This article has ${contentCount} screenshot${contentCount === 1 ? "" : "s"} you can view — not attached by default. Re-call nestr_help with includeImages:true to attach the first ${cap}, or imageIndexes:[..] for specific ones (see the numbered list below)._`;
+          }
 
           const parts: string[] = [
             `_Resolved as: help article "${article.slug}" (fetched from ${article.url})._`,
@@ -2192,17 +2208,18 @@ async function _handleToolCall(
             `# ${article.title || article.slug}`,
           ];
           if (article.description) parts.push(``, `> ${article.description}`);
+          if (imageHint) parts.push(``, imageHint);
           parts.push(``, article.markdown);
           if (images.length) {
             parts.push(
               ``,
               `---`,
-              `Images in this article (${images.length}). [index] is stable. Default attaches the first ${clampMaxImages(parsed.maxImages)} content images in document order; re-call with imageIndexes:[..] for specific ones (e.g. a chart further down). Entries marked [decorative] (header/thumbnail, uncaptioned) are never auto-attached but stay addressable by index:`,
+              `Images in this article (${images.length}) — [index] is stable; [decorative] = header/thumbnail (not auto-attached). Attach with includeImages:true (first ${cap} content images) or imageIndexes:[..]:`,
               ...images.map((img, i) => {
                 const tag = img.decorative ? " [decorative]" : "";
-                const cap = img.caption ? `"${img.caption}"` : "(no caption)";
+                const captionText = img.caption ? `"${img.caption}"` : "(no caption)";
                 const mark = attached.has(i) ? " — attached inline below" : "";
-                return `- [${i}]${tag} ${cap} — ${img.url}${mark}`;
+                return `- [${i}]${tag} ${captionText} — ${img.url}${mark}`;
               }),
             );
             if (wantImages && inlined.length === 0) {
