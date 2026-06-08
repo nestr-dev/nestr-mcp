@@ -15,11 +15,13 @@ const INDEX_TTL_MS = 15 * 60 * 1000;
 const ARTICLE_TTL_MS = 15 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 8000;
 
-// Inline-image limits (opt-in base64 attachment for hosts that render images).
+// Inline-image limits (base64 attachment for hosts that render images).
 const DEFAULT_INLINE_IMAGES = 3;
 const MAX_INLINE_IMAGES_CAP = 6; // upper bound when a caller raises maxImages
-const MAX_IMAGE_BYTES = 2 * 1024 * 1024; // 2 MB per image — Webflow screenshots are far smaller
+const MAX_IMAGE_BYTES = 2 * 1024 * 1024; // 2 MB per source image — Webflow screenshots are far smaller
 const IMAGE_CACHE_MAX = 50;
+const MAX_IMAGE_WIDTH = 1200; // downscale wider screenshots to bound token cost
+const IMAGE_JPEG_QUALITY = 80;
 
 export type ArticleIndexEntry = { slug: string; url: string };
 export type ArticleSearchHit = ArticleIndexEntry & { score: number };
@@ -348,11 +350,36 @@ function mimeFromExtension(url: string): string | null {
 }
 
 /**
+ * Downscale/recompress an image to keep inline token cost reasonable: anything
+ * wider than MAX_IMAGE_WIDTH is resized (aspect preserved) and re-encoded as
+ * JPEG. Images already within bounds are returned untouched. Uses jimp (pure
+ * JS — no native deps, so it builds on the alpine image), loaded lazily and
+ * wrapped so any failure (or jimp being absent) degrades to the original bytes
+ * rather than dropping the image.
+ */
+async function downscaleImage(buf: Buffer, mimeType: string): Promise<{ data: Buffer; mimeType: string }> {
+  try {
+    const { Jimp } = await import("jimp");
+    const img = await Jimp.read(buf);
+    if (img.width <= MAX_IMAGE_WIDTH) return { data: buf, mimeType }; // already small enough
+    // Resize (aspect preserved) and re-encode to JPEG. We always take the
+    // resized version when the source is wide: model image-token cost tracks
+    // pixel count, so fewer pixels is the win even if JPEG bytes don't shrink.
+    img.resize({ w: MAX_IMAGE_WIDTH });
+    const out = Buffer.from(await img.getBuffer("image/jpeg", { quality: IMAGE_JPEG_QUALITY }));
+    return { data: out, mimeType: "image/jpeg" };
+  } catch {
+    return { data: buf, mimeType };
+  }
+}
+
+/**
  * Fetch a single image and return it as base64 + MIME type for an MCP `image`
  * content block, or null if it can't be safely inlined (disallowed URL,
- * non-image content, too large, or any network error). Best-effort by design —
- * callers fall back to the text URL list. Bounded FIFO cache by URL (oldest
- * entry evicted once the cap is reached).
+ * non-image content, too large, or any network error). Wide images are
+ * downscaled to bound token cost. Best-effort by design — callers fall back to
+ * the text URL list. Bounded FIFO cache by URL (oldest entry evicted once the
+ * cap is reached).
  */
 export async function fetchImageAsBase64(url: string): Promise<{ data: string; mimeType: string } | null> {
   if (!isFetchableImageUrl(url)) return null;
@@ -364,13 +391,15 @@ export async function fetchImageAsBase64(url: string): Promise<{ data: string; m
     const res = await fetchWithTimeout(url);
     if (!res.ok) return null;
     const contentType = (res.headers?.get?.("content-type") || "").split(";")[0].trim().toLowerCase();
-    const mimeType = contentType.startsWith("image/") ? contentType : mimeFromExtension(url);
-    if (!mimeType || mimeType === "image/svg+xml") return null; // svg = chrome/icons, skip
+    const sourceMime = contentType.startsWith("image/") ? contentType : mimeFromExtension(url);
+    if (!sourceMime || sourceMime === "image/svg+xml") return null; // svg = chrome/icons, skip
     const declaredLength = Number(res.headers?.get?.("content-length") || 0);
     if (declaredLength > MAX_IMAGE_BYTES) return null;
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.byteLength === 0 || buf.byteLength > MAX_IMAGE_BYTES) return null;
-    const data = buf.toString("base64");
+    const reduced = await downscaleImage(buf, sourceMime);
+    const data = reduced.data.toString("base64");
+    const mimeType = reduced.mimeType;
     if (imageCache.size >= IMAGE_CACHE_MAX) {
       const oldest = imageCache.keys().next().value;
       if (oldest !== undefined) imageCache.delete(oldest);
