@@ -234,7 +234,7 @@ export async function fetchArticleMeta(slug: string): Promise<{ slug: string; ti
   return { slug: cleanSlug, title, description };
 }
 
-export type ArticleImage = { url: string; caption: string };
+export type ArticleImage = { url: string; caption: string; decorative: boolean };
 
 /**
  * Pull the in-body images out of converted article markdown as structured data
@@ -243,8 +243,17 @@ export type ArticleImage = { url: string; caption: string };
  * skipped — on these pages they're UI chrome/icons, not content. Dedupes by
  * URL, preserves document order. Run this on the article body markdown so nav
  * and marketing imagery (already cut by extractArticleBody) stays out.
+ *
+ * Each image is flagged `decorative` when it has no caption OR appears before
+ * the first content heading (the header/category-bar thumbnail at the top of an
+ * article). Decorative images are listed and remain addressable by index, but
+ * are never part of the default selection. "First content heading" is the second
+ * heading in the body — the first is the article title — so when a body has no
+ * sub-headings the position rule is skipped and only the caption test applies.
  */
 export function extractImages(markdown: string): ArticleImage[] {
+  const headings = [...markdown.matchAll(/^#{1,6}[ \t]+/gm)];
+  const firstContentHeadingPos = headings.length >= 2 ? (headings[1].index ?? -1) : -1;
   const seen = new Set<string>();
   const images: ArticleImage[] = [];
   // Matches `![alt](url)` and the inner image of a linked image `[![alt](url)](href)`.
@@ -252,7 +261,9 @@ export function extractImages(markdown: string): ArticleImage[] {
     const url = m[2].trim();
     if (!url || seen.has(url) || /\.svg(\?|#|$)/i.test(url)) continue;
     seen.add(url);
-    images.push({ url, caption: m[1].trim() });
+    const caption = m[1].trim();
+    const beforeContent = firstContentHeadingPos >= 0 && (m.index ?? 0) < firstContentHeadingPos;
+    images.push({ url, caption, decorative: !caption || beforeContent });
   }
   return images;
 }
@@ -270,10 +281,12 @@ export function clampMaxImages(max?: number): number {
  *
  * - Explicit `indexes`: the caller picked specific entries from the numbered
  *   list, so honour them verbatim — valid, de-duped, in the given order, with
- *   NO cap (overrides maxImages and the default caption filter).
- * - Default: only captioned images, in document order, capped at `max`. The
- *   caption requirement skips the uncaptioned hero/avatar and other chrome;
- *   masthead/footer imagery is already gone because we only see body markdown.
+ *   NO cap (overrides maxImages and the default selection, so a decorative
+ *   image can still be attached on explicit request).
+ * - Default: the first `max` non-decorative (content) images in document order.
+ *   This skips the uncaptioned hero/avatar and any header thumbnail before the
+ *   first content heading; masthead/footer imagery is already gone because we
+ *   only see body markdown.
  */
 export function selectImageIndexes(
   images: ArticleImage[],
@@ -294,7 +307,7 @@ export function selectImageIndexes(
   const cap = clampMaxImages(opts.max);
   const out: number[] = [];
   for (let i = 0; i < n && out.length < cap; i++) {
-    if (images[i].caption.trim()) out.push(i);
+    if (!images[i].decorative) out.push(i);
   }
   return out;
 }
