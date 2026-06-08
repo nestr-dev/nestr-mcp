@@ -156,7 +156,8 @@ describe("nestr_help tool", () => {
 
     const text = textOf(await handleToolCall(client, "nestr_help", { topic: "scrum-agile-app" }));
     expect(text).toContain("Images in this article (1)");
-    expect(text).toContain('"Sprint board" — https://cdn.example.com/board.png');
+    expect(text).toContain('- [0] "Sprint board" — https://cdn.example.com/board.png');
+    expect(text).not.toContain("attached inline below"); // nothing attached without includeImages
     expect(text).toContain("Related internal MCP topic");
     expect(text).toContain("`scrum`");
   });
@@ -180,8 +181,9 @@ describe("nestr_help tool", () => {
     const imageBlocks = result.content.filter(c => c.type === "image");
     expect(imageBlocks).toHaveLength(1);
     expect(imageBlocks[0]).toEqual({ type: "image", mimeType: "image/png", data: pngBytes.toString("base64") });
-    // The text block (with the markdown + URL list) is still present as a fallback.
-    expect(result.content.some(c => c.type === "text")).toBe(true);
+    // The text block (with the markdown + URL list) is still present as a fallback,
+    // and marks the attached entry.
+    expect(textOf(result)).toContain('- [0] "Sprint board" — https://cdn.prod.website-files.com/x/board.png — attached inline below');
   });
 
   it("does not fetch images or attach blocks without includeImages", async () => {
@@ -198,6 +200,80 @@ describe("nestr_help tool", () => {
     const result = await handleToolCall(client, "nestr_help", { topic: "scrum-agile-app" });
     expect(result.content.every(c => c.type === "text")).toBe(true);
     expect(mockFetch).toHaveBeenCalledTimes(1); // article only — no image fetch
+  });
+
+  // Article with an uncaptioned hero/"avatar" (index 0) followed by captioned
+  // screenshots — the real-world shape that motivated the selection change.
+  const multiImageArticle = `<html><head>
+<script type="application/ld+json">
+{"@type":"TechArticle","headline":"Scrum/Agile app","description":"Run sprints."}
+</script></head><body>
+<h1>Scrum/Agile app</h1>
+<img src="https://cdn.prod.website-files.com/x/hero.png" />
+<h2>Enable</h2>
+<p>Step one.</p>
+<img src="https://cdn.prod.website-files.com/x/enable.png" alt="Enable the app" />
+<h2>Sprints</h2>
+<img src="https://cdn.prod.website-files.com/x/sprints.png" alt="Plan a sprint" />
+<footer>chrome</footer>
+</body></html>`;
+
+  it("excludes the uncaptioned hero/avatar from the default selection", async () => {
+    mockFetch
+      .mockResolvedValueOnce(htmlResponse(multiImageArticle))
+      .mockResolvedValue(imageResponse(Buffer.from("png")));
+
+    const result = await handleToolCall(client, "nestr_help", { topic: "scrum-agile-app", includeImages: true });
+    const imageBlocks = result.content.filter(c => c.type === "image");
+    expect(imageBlocks).toHaveLength(2); // the two captioned screenshots, not the hero
+    const text = textOf(result);
+    expect(text).toContain("- [0] (no caption) — https://cdn.prod.website-files.com/x/hero.png");
+    expect(text).not.toContain("hero.png — attached inline below"); // hero NOT attached
+    expect(text).toContain('- [1] "Enable the app" — https://cdn.prod.website-files.com/x/enable.png — attached inline below');
+    expect(text).toContain('- [2] "Plan a sprint" — https://cdn.prod.website-files.com/x/sprints.png — attached inline below');
+  });
+
+  it("attaches exactly the requested imageIndexes (incl. uncaptioned), implying attachment and ignoring the cap", async () => {
+    mockFetch
+      .mockResolvedValueOnce(htmlResponse(multiImageArticle))
+      .mockResolvedValue(imageResponse(Buffer.from("png")));
+
+    // imageIndexes alone (no includeImages); request the uncaptioned hero + index 2.
+    const result = await handleToolCall(client, "nestr_help", { topic: "scrum-agile-app", imageIndexes: [0, 2] });
+    const imageBlocks = result.content.filter(c => c.type === "image");
+    expect(imageBlocks).toHaveLength(2);
+    const text = textOf(result);
+    expect(text).toContain("- [0] (no caption) — https://cdn.prod.website-files.com/x/hero.png — attached inline below");
+    expect(text).not.toContain("enable.png — attached inline below"); // index 1 not requested
+    expect(text).toContain("sprints.png — attached inline below");
+  });
+
+  it("caps the default selection at maxImages", async () => {
+    mockFetch
+      .mockResolvedValueOnce(htmlResponse(multiImageArticle))
+      .mockResolvedValue(imageResponse(Buffer.from("png")));
+
+    const result = await handleToolCall(client, "nestr_help", { topic: "scrum-agile-app", includeImages: true, maxImages: 1 });
+    const imageBlocks = result.content.filter(c => c.type === "image");
+    expect(imageBlocks).toHaveLength(1); // only the first captioned screenshot
+    expect(mockFetch).toHaveBeenCalledTimes(2); // article + one image
+  });
+
+  it("attaches nothing and explains when an article has no captioned images", async () => {
+    const articleHtml = `<html><head>
+<script type="application/ld+json">
+{"@type":"TechArticle","headline":"Logos only","description":"No screenshots."}
+</script></head><body>
+<h1>Logos only</h1>
+<img src="https://cdn.prod.website-files.com/x/logo.png" />
+<footer>x</footer>
+</body></html>`;
+    mockFetch.mockResolvedValueOnce(htmlResponse(articleHtml));
+
+    const result = await handleToolCall(client, "nestr_help", { topic: "logos-only", includeImages: true });
+    expect(result.content.filter(c => c.type === "image")).toHaveLength(0);
+    expect(textOf(result)).toContain("No images attached — this article has no captioned screenshots");
+    expect(mockFetch).toHaveBeenCalledTimes(1); // article only — nothing selected to fetch
   });
 
   it("returns a clear unknown-topic message when both internal and article lookup miss", async () => {
