@@ -16,7 +16,8 @@ const ARTICLE_TTL_MS = 15 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 8000;
 
 // Inline-image limits (opt-in base64 attachment for hosts that render images).
-const MAX_INLINE_IMAGES = 3;
+const DEFAULT_INLINE_IMAGES = 3;
+const MAX_INLINE_IMAGES_CAP = 6; // upper bound when a caller raises maxImages
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024; // 2 MB per image — Webflow screenshots are far smaller
 const IMAGE_CACHE_MAX = 50;
 
@@ -256,7 +257,47 @@ export function extractImages(markdown: string): ArticleImage[] {
   return images;
 }
 
-export type InlineArticleImage = ArticleImage & { data: string; mimeType: string };
+export type InlineArticleImage = ArticleImage & { index: number; data: string; mimeType: string };
+
+/** Clamp a caller-supplied maxImages to [1, MAX_INLINE_IMAGES_CAP], default 3. */
+export function clampMaxImages(max?: number): number {
+  if (max === undefined || !Number.isFinite(max) || max < 1) return DEFAULT_INLINE_IMAGES;
+  return Math.min(Math.floor(max), MAX_INLINE_IMAGES_CAP);
+}
+
+/**
+ * Decide which images (by index into `images`) to attach inline.
+ *
+ * - Explicit `indexes`: the caller picked specific entries from the numbered
+ *   list, so honour them verbatim — valid, de-duped, in the given order, with
+ *   NO cap (overrides maxImages and the default caption filter).
+ * - Default: only captioned images, in document order, capped at `max`. The
+ *   caption requirement skips the uncaptioned hero/avatar and other chrome;
+ *   masthead/footer imagery is already gone because we only see body markdown.
+ */
+export function selectImageIndexes(
+  images: ArticleImage[],
+  opts: { indexes?: number[]; max?: number } = {},
+): number[] {
+  const n = images.length;
+  if (opts.indexes && opts.indexes.length > 0) {
+    const seen = new Set<number>();
+    const out: number[] = [];
+    for (const idx of opts.indexes) {
+      if (Number.isInteger(idx) && idx >= 0 && idx < n && !seen.has(idx)) {
+        seen.add(idx);
+        out.push(idx);
+      }
+    }
+    return out;
+  }
+  const cap = clampMaxImages(opts.max);
+  const out: number[] = [];
+  for (let i = 0; i < n && out.length < cap; i++) {
+    if (images[i].caption.trim()) out.push(i);
+  }
+  return out;
+}
 
 /**
  * Guard the image URLs we'll fetch server-side. Image URLs come from
@@ -329,18 +370,19 @@ export async function fetchImageAsBase64(url: string): Promise<{ data: string; m
 }
 
 /**
- * Fetch up to `max` of an article's images as inline base64 blocks, in document
- * order, dropping any that can't be inlined. Concurrent and best-effort.
+ * Fetch the selected article images (see selectImageIndexes) as inline base64
+ * blocks, carrying each image's index in the full list. Concurrent and
+ * best-effort — any that can't be inlined are dropped.
  */
 export async function collectArticleImages(
   images: ArticleImage[],
-  max = MAX_INLINE_IMAGES,
+  opts: { indexes?: number[]; max?: number } = {},
 ): Promise<InlineArticleImage[]> {
-  const picked = images.slice(0, max);
+  const indexes = selectImageIndexes(images, opts);
   const settled = await Promise.all(
-    picked.map(async img => {
-      const bytes = await fetchImageAsBase64(img.url);
-      return bytes ? { ...img, ...bytes } : null;
+    indexes.map(async i => {
+      const bytes = await fetchImageAsBase64(images[i].url);
+      return bytes ? { ...images[i], index: i, ...bytes } : null;
     }),
   );
   return settled.filter((r): r is InlineArticleImage => r !== null);

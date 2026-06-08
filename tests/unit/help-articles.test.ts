@@ -10,6 +10,8 @@ import {
   extractImages,
   fetchImageAsBase64,
   collectArticleImages,
+  selectImageIndexes,
+  clampMaxImages,
   htmlToMarkdown,
 } from "../../src/help/articles.js";
 
@@ -529,7 +531,7 @@ Some text
   });
 
   describe("collectArticleImages", () => {
-    it("fetches up to `max` images in order, dropping failures", async () => {
+    it("fetches the selected images in order, with their list index, dropping failures", async () => {
       const a = Buffer.from("a");
       const c = Buffer.from("c");
       mockFetch
@@ -541,10 +543,10 @@ Some text
         { url: "https://cdn.prod.website-files.com/x/b.png", caption: "B" },
         { url: "https://cdn.prod.website-files.com/x/c.jpg", caption: "C" },
       ];
-      const result = await collectArticleImages(images, 3);
+      const result = await collectArticleImages(images, { max: 3 });
       expect(result.map(r => r.caption)).toEqual(["A", "C"]);
-      expect(result[0]).toMatchObject({ mimeType: "image/png", data: a.toString("base64") });
-      expect(result[1]).toMatchObject({ mimeType: "image/jpeg", data: c.toString("base64") });
+      expect(result[0]).toMatchObject({ index: 0, mimeType: "image/png", data: a.toString("base64") });
+      expect(result[1]).toMatchObject({ index: 2, mimeType: "image/jpeg", data: c.toString("base64") });
     });
 
     it("honours the max cap", async () => {
@@ -556,9 +558,80 @@ Some text
         { url: "https://cdn.prod.website-files.com/x/2.png", caption: "2" },
         { url: "https://cdn.prod.website-files.com/x/3.png", caption: "3" },
       ];
-      const result = await collectArticleImages(images, 2);
+      const result = await collectArticleImages(images, { max: 2 });
       expect(result).toHaveLength(2);
       expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("skips uncaptioned images (avatar/hero/chrome) in the default selection", async () => {
+      mockFetch.mockResolvedValue(imageResponse(Buffer.from("x"), "image/png"));
+      const images = [
+        { url: "https://cdn.prod.website-files.com/x/hero.png", caption: "" }, // uncaptioned
+        { url: "https://cdn.prod.website-files.com/x/shot.png", caption: "Real screenshot" },
+      ];
+      const result = await collectArticleImages(images);
+      expect(result.map(r => r.index)).toEqual([1]);
+      expect(mockFetch).toHaveBeenCalledTimes(1); // only the captioned one is fetched
+    });
+
+    it("attaches exact imageIndexes (including uncaptioned), overriding the cap", async () => {
+      mockFetch.mockResolvedValue(imageResponse(Buffer.from("x"), "image/png"));
+      const images = [
+        { url: "https://cdn.prod.website-files.com/x/0.png", caption: "" },
+        { url: "https://cdn.prod.website-files.com/x/1.png", caption: "One" },
+        { url: "https://cdn.prod.website-files.com/x/2.png", caption: "Two" },
+        { url: "https://cdn.prod.website-files.com/x/3.png", caption: "Three" },
+        { url: "https://cdn.prod.website-files.com/x/4.png", caption: "Four" },
+      ];
+      const result = await collectArticleImages(images, { indexes: [0, 4, 2, 3], max: 1 });
+      expect(result.map(r => r.index)).toEqual([0, 4, 2, 3]); // requested order, cap ignored
+      expect(mockFetch).toHaveBeenCalledTimes(4);
+    });
+  });
+
+  describe("selectImageIndexes", () => {
+    const imgs = (caps: string[]) => caps.map((caption, i) => ({ url: `https://x/${i}.png`, caption }));
+
+    it("defaults to captioned images only, in document order", () => {
+      expect(selectImageIndexes(imgs(["", "A", "", "B"]))).toEqual([1, 3]);
+    });
+
+    it("caps the default selection at max (default 3)", () => {
+      expect(selectImageIndexes(imgs(["A", "B", "C", "D", "E"]))).toEqual([0, 1, 2]);
+      expect(selectImageIndexes(imgs(["A", "B", "C", "D", "E"]), { max: 2 })).toEqual([0, 1]);
+    });
+
+    it("returns [] when there are no captioned images", () => {
+      expect(selectImageIndexes(imgs(["", "", ""]))).toEqual([]);
+    });
+
+    it("honours explicit indexes verbatim, deduped, ignoring the cap and captions", () => {
+      expect(selectImageIndexes(imgs(["", "A", "B", "C", "D"]), { indexes: [4, 0, 2, 4], max: 1 }))
+        .toEqual([4, 0, 2]);
+    });
+
+    it("drops out-of-range explicit indexes", () => {
+      expect(selectImageIndexes(imgs(["A", "B"]), { indexes: [0, 5, -1, 1] })).toEqual([0, 1]);
+    });
+  });
+
+  describe("clampMaxImages", () => {
+    it("defaults to 3 for undefined or invalid input", () => {
+      expect(clampMaxImages(undefined)).toBe(3);
+      expect(clampMaxImages(0)).toBe(3);
+      expect(clampMaxImages(-2)).toBe(3);
+      expect(clampMaxImages(NaN)).toBe(3);
+    });
+
+    it("clamps to the upper bound of 6", () => {
+      expect(clampMaxImages(10)).toBe(6);
+      expect(clampMaxImages(6)).toBe(6);
+    });
+
+    it("passes through and floors values in range", () => {
+      expect(clampMaxImages(1)).toBe(1);
+      expect(clampMaxImages(4)).toBe(4);
+      expect(clampMaxImages(2.9)).toBe(2);
     });
   });
 });
