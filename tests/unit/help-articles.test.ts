@@ -14,6 +14,7 @@ import {
   clampMaxImages,
   htmlToMarkdown,
 } from "../../src/help/articles.js";
+import { Jimp } from "jimp";
 
 describe("help articles", () => {
   let mockFetch: ReturnType<typeof vi.fn>;
@@ -548,6 +549,24 @@ Some text
       await fetchImageAsBase64(PNG);
       await fetchImageAsBase64(PNG);
       expect(mockFetch).toHaveBeenCalledOnce();
+    });
+
+    it("downscales a wide image to JPEG within the width cap", async () => {
+      const widePng = Buffer.from(await new Jimp({ width: 2000, height: 1000, color: 0xff0000ff }).getBuffer("image/png"));
+      mockFetch.mockResolvedValueOnce(imageResponse(widePng, "image/png"));
+      const result = await fetchImageAsBase64("https://cdn.prod.website-files.com/x/wide.png");
+      expect(result?.mimeType).toBe("image/jpeg");
+      const decoded = await Jimp.read(Buffer.from(result!.data, "base64"));
+      expect(decoded.width).toBe(1200);
+      expect(decoded.height).toBe(600); // aspect preserved
+    });
+
+    it("leaves an image within the width cap unchanged (no re-encode)", async () => {
+      const smallPng = Buffer.from(await new Jimp({ width: 400, height: 300, color: 0x00ff00ff }).getBuffer("image/png"));
+      mockFetch.mockResolvedValueOnce(imageResponse(smallPng, "image/png"));
+      const result = await fetchImageAsBase64("https://cdn.prod.website-files.com/x/small.png");
+      expect(result?.mimeType).toBe("image/png");
+      expect(result?.data).toBe(smallPng.toString("base64"));
     });
   });
 
