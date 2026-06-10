@@ -72,7 +72,7 @@ export function findPrimeLabels(labels: string[] | undefined): string[] {
 export function validatePrimeLabels(labels: string[] | undefined): void {
   const prime = findPrimeLabels(labels);
   if (prime.length <= 1) return;
-  const implied = new Set(prime.map(l => PRIME_IMPLICATIONS.get(l)));
+  const implied = new Set(prime.flatMap(l => PRIME_IMPLICATIONS.get(l) ?? []));
   const effective = prime.filter(l => !implied.has(l));
   if (effective.length > 1) {
     throw new PrimeLabelConflictError(prime);
