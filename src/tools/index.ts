@@ -1054,7 +1054,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_nest",
-    description: "Create a nest under a parent. Use labels to define type (e.g., ['project'], ['role']). Apply at most ONE prime label per nest (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback) — they define the nest's core identity and cannot coexist. For governance changes in established workspaces, prefer the tension flow. See nestr_help('labels') for available types.",
+    description: "Create a nest under a parent. Use labels to define type (e.g., ['project'], ['role']). Apply at most ONE prime label per nest (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback, userstory, sprint, epic, milestone) — they define the nest's core identity and cannot coexist. Sole exception: userstory may pair with project (userstory implies project); sprint/epic/milestone may not, and stories link to those containers via graph relations instead. For governance changes in established workspaces, prefer the tension flow. See nestr_help('labels') for available types.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1097,7 +1097,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_nest",
-    description: "Update nest properties. Set parentId to move. Only send fields you want to change. When replacing `labels`, keep at most ONE prime label (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback) — they define the nest's core identity. For governance changes, prefer tensions. See nestr_help('nest-model') for fields and data namespacing.",
+    description: "Update nest properties. Set parentId to move. Only send fields you want to change. When replacing `labels`, keep at most ONE prime label (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback, userstory, sprint, epic, milestone) — they define the nest's core identity. Sole exception: userstory may pair with project (userstory implies project). For governance changes, prefer tensions. See nestr_help('nest-model') for fields and data namespacing.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3070,7 +3070,7 @@ async function _handleToolCall(
         code: "VALIDATION",
         message: error.message,
         retryable: false,
-        hint: `Prime labels (one per nest): ${[...PRIME_LABELS].join(", ")}. Drop one label and retry, or create separate nests linked via nestr_add_graph_link.`,
+        hint: `Prime labels (one per nest): ${[...PRIME_LABELS].join(", ")}. Sole allowed pair: userstory+project (userstory implies project). Drop one label and retry, or create separate nests linked via nestr_add_graph_link (stories link to containers via userstory_sprint / userstory_epic / userstory_milestone).`,
         correlationId: getCorrelationId(),
       });
     }

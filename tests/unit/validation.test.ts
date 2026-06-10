@@ -20,6 +20,10 @@ describe("PRIME_LABELS", () => {
       "result",
       "checklist",
       "feedback",
+      "userstory",
+      "sprint",
+      "epic",
+      "milestone",
     ];
     for (const label of expected) {
       expect(PRIME_LABELS.has(label)).toBe(true);
@@ -89,5 +93,42 @@ describe("validatePrimeLabels", () => {
     expect(() => validatePrimeLabels(["project", "tension", "meeting"])).toThrow(
       PrimeLabelConflictError
     );
+  });
+
+  describe("scrum labels", () => {
+    it("allows userstory combined with project (userstory implies project)", () => {
+      expect(() => validatePrimeLabels(["userstory", "project"])).not.toThrow();
+      expect(() => validatePrimeLabels(["project", "userstory", "governance"])).not.toThrow();
+    });
+
+    it("rejects sprint, epic, and milestone combined with project", () => {
+      expect(() => validatePrimeLabels(["sprint", "project"])).toThrow(PrimeLabelConflictError);
+      expect(() => validatePrimeLabels(["epic", "project"])).toThrow(PrimeLabelConflictError);
+      expect(() => validatePrimeLabels(["milestone", "project"])).toThrow(PrimeLabelConflictError);
+    });
+
+    it("rejects any combination of scrum labels on one nest", () => {
+      expect(() => validatePrimeLabels(["userstory", "sprint"])).toThrow(PrimeLabelConflictError);
+      expect(() => validatePrimeLabels(["userstory", "epic"])).toThrow(PrimeLabelConflictError);
+      expect(() => validatePrimeLabels(["userstory", "milestone"])).toThrow(PrimeLabelConflictError);
+      expect(() => validatePrimeLabels(["sprint", "epic"])).toThrow(PrimeLabelConflictError);
+      expect(() => validatePrimeLabels(["sprint", "milestone"])).toThrow(PrimeLabelConflictError);
+      expect(() => validatePrimeLabels(["epic", "milestone"])).toThrow(PrimeLabelConflictError);
+    });
+
+    it("rejects adding another prime label to a userstory+project nest", () => {
+      expect(() => validatePrimeLabels(["userstory", "project", "epic"])).toThrow(
+        PrimeLabelConflictError
+      );
+      expect(() => validatePrimeLabels(["userstory", "project", "tension"])).toThrow(
+        PrimeLabelConflictError
+      );
+    });
+
+    it("allows each scrum label on its own", () => {
+      for (const label of ["userstory", "sprint", "epic", "milestone"]) {
+        expect(() => validatePrimeLabels([label])).not.toThrow();
+      }
+    });
   });
 });
