@@ -20,6 +20,24 @@ export const PRIME_LABELS: ReadonlySet<string> = new Set([
   "result",
   "checklist",
   "feedback",
+  // Scrum app labels — a nest is a story OR a sprint OR an epic OR a
+  // milestone, never several at once. Stories relate to the containers via
+  // graph links (userstory_sprint / userstory_epic / userstory_milestone),
+  // not by sharing labels.
+  "userstory",
+  "sprint",
+  "epic",
+  "milestone",
+]);
+
+/**
+ * Prime labels that imply another prime label in Nestr's data model.
+ * `userstory` carries `implies: ['project']` server-side — every story IS a
+ * project — so that pair may coexist on one nest. Sprint, epic and milestone
+ * carry no such implication and must not be combined with `project`.
+ */
+export const PRIME_IMPLICATIONS: ReadonlyMap<string, string> = new Map([
+  ["userstory", "project"],
 ]);
 
 export class PrimeLabelConflictError extends Error {
@@ -46,10 +64,17 @@ export function findPrimeLabels(labels: string[] | undefined): string[] {
   return [...seen];
 }
 
-/** Throws PrimeLabelConflictError if more than one prime label is present. */
+/**
+ * Throws PrimeLabelConflictError if more than one prime label is present.
+ * Prime labels implied by another present prime label don't count as
+ * conflicts (e.g. `project` alongside `userstory`).
+ */
 export function validatePrimeLabels(labels: string[] | undefined): void {
   const prime = findPrimeLabels(labels);
-  if (prime.length > 1) {
+  if (prime.length <= 1) return;
+  const implied = new Set(prime.flatMap(l => PRIME_IMPLICATIONS.get(l) ?? []));
+  const effective = prime.filter(l => !implied.has(l));
+  if (effective.length > 1) {
     throw new PrimeLabelConflictError(prime);
   }
 }
