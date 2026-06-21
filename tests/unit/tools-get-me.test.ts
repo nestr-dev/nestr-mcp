@@ -150,3 +150,69 @@ describe("nestr_get_me error handling", () => {
     expect((parsed.user as { _id: string })._id).toBe("user-1");
   });
 });
+
+describe("public (guest) mode tool gating", () => {
+  let mockFetch: ReturnType<typeof vi.fn>;
+  let client: NestrClient;
+
+  beforeEach(() => {
+    // Any Nestr API call in public mode is a bug — make fetch throw so a
+    // regression that reaches the network fails the test loudly.
+    mockFetch = vi.fn(async (url: string) => {
+      throw new Error(`Public mode must not call the Nestr API. Hit: ${url}`);
+    });
+    vi.stubGlobal("fetch", mockFetch);
+    client = new NestrClient({ apiKey: "sentinel", baseUrl: "https://api.test.io/api" });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("nestr_get_me returns the guest payload without any Nestr API call", async () => {
+    const result = await handleToolCall(client, "nestr_get_me", {}, { isPublic: true });
+    expect(result.isError).toBeFalsy();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed).toEqual({
+      authMode: "public",
+      user: null,
+      mode: "guest",
+      hint: "Guest mode: product help only. Add AI credit / sign in for workspace tools.",
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a workspace tool with AUTH_SCOPE_INSUFFICIENT and never calls the API", async () => {
+    const result = await handleToolCall(
+      client,
+      "nestr_list_workspaces",
+      {},
+      { isPublic: true },
+    );
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.code).toBe("AUTH_SCOPE_INSUFFICIENT");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a mutating workspace tool (defense in depth) and never calls the API", async () => {
+    const result = await handleToolCall(
+      client,
+      "nestr_create_nest",
+      { parentId: "p1", title: "x" },
+      { isPublic: true },
+    );
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.code).toBe("AUTH_SCOPE_INSUFFICIENT");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("still allows nestr_diagnose in public mode", async () => {
+    const result = await handleToolCall(client, "nestr_diagnose", {}, { isPublic: true });
+    expect(result.isError).toBeFalsy();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.serverVersion).toBeTruthy();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});

@@ -11,6 +11,26 @@ import { VERSION } from "../version.js";
 import type { DiagnoseSnapshot } from "../util/diagnose.js";
 import { PRIME_LABELS, PrimeLabelConflictError, validatePrimeLabels } from "./validation.js";
 
+// Tools exposed on the PUBLIC (unauthenticated) MCP surface. These three make
+// zero authenticated Nestr API calls: nestr_help and nestr_diagnose never touch
+// the API, and nestr_get_me is short-circuited to a guest payload in public mode
+// (see _handleToolCall). Everything else stays behind auth on POST /mcp.
+export const PUBLIC_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "nestr_help",
+  "nestr_diagnose",
+  "nestr_get_me",
+]);
+
+// Guest identity returned by nestr_get_me on the public surface. No Nestr API
+// call is made — this is a fixed payload telling the agent it has product-help
+// access only and how to unlock workspace tools.
+export const PUBLIC_GUEST_ME = {
+  authMode: "public",
+  user: null,
+  mode: "guest",
+  hint: "Guest mode: product help only. Add AI credit / sign in for workspace tools.",
+} as const;
+
 // MCP Apps UI metadata for tools that can render in the completable list app.
 // IMPORTANT: Only use for completable items (tasks, projects, todos, inbox items).
 // Do NOT use for structural nests like roles, circles, metrics, policies, etc.
@@ -2069,6 +2089,12 @@ export function unescapeRichTextFields(args: Record<string, unknown>): Record<st
  */
 export interface ToolCallContext {
   getDiagnose?: () => DiagnoseSnapshot;
+  /**
+   * When true, this call came in on the PUBLIC (unauthenticated) MCP surface.
+   * Only PUBLIC_TOOL_NAMES are permitted, and nestr_get_me returns a guest
+   * payload without contacting the Nestr API. Any other tool is refused.
+   */
+  isPublic?: boolean;
 }
 
 export async function handleToolCall(
@@ -2103,6 +2129,26 @@ async function _handleToolCall(
   context?: ToolCallContext,
 ): Promise<ToolResult> {
   try {
+    // PUBLIC surface gate (defense in depth — the public route also filters the
+    // advertised tool list). Refuse anything outside the public allow-list so a
+    // hand-crafted tools/call can never reach an authenticated Nestr path, and
+    // serve nestr_get_me from a fixed guest payload without an API call.
+    if (context?.isPublic) {
+      if (!PUBLIC_TOOL_NAMES.has(name)) {
+        return formatError({
+          error: true,
+          code: "AUTH_SCOPE_INSUFFICIENT",
+          message: `Tool '${name}' is not available on the public Nestr MCP. Guest mode exposes product help only (${[...PUBLIC_TOOL_NAMES].join(", ")}).`,
+          retryable: false,
+          hint: "Add AI credit / sign in and connect to the authenticated MCP endpoint to use workspace tools.",
+        });
+      }
+      if (name === "nestr_get_me") {
+        schemas.getMe.parse(args);
+        return formatResult(PUBLIC_GUEST_ME);
+      }
+    }
+
     switch (name) {
       case "nestr_help": {
         const parsed = schemas.help.parse(args);

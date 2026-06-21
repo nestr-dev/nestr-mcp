@@ -12,7 +12,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { NestrClient, createClientFromEnv } from "./api/client.js";
 import { VERSION } from "./version.js";
-import { toolDefinitions, handleToolCall } from "./tools/index.js";
+import { toolDefinitions, handleToolCall, PUBLIC_TOOL_NAMES } from "./tools/index.js";
 import { getCompletableListHtml, appResources } from "./apps/index.js";
 // Skills instructions are now served on-demand via nestr_help tool (see src/help/topics.ts)
 import * as mcpcat from "mcpcat";
@@ -31,6 +31,13 @@ export interface NestrMcpServerConfig {
   userName?: string;
   /** Builds a fresh diagnose snapshot from session state. Required for nestr_diagnose. */
   getDiagnose?: () => DiagnoseSnapshot;
+  /**
+   * Public (unauthenticated) mode. When true the server advertises only the
+   * public help tools (PUBLIC_TOOL_NAMES) and every tool call is run with
+   * isPublic=true, so it can never reach authenticated Nestr data. Defaults to
+   * false — the standard authenticated /mcp surface is unchanged.
+   */
+  isPublic?: boolean;
 }
 
 // Server instructions provide context to AI assistants about what Nestr is and how to use it
@@ -120,9 +127,13 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
     }
   );
 
-  // Register tool list handler
+  // Register tool list handler. On the public surface, advertise only the
+  // unauthenticated help tools so guest agents never see workspace tools.
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools: toolDefinitions };
+    const tools = config.isPublic
+      ? toolDefinitions.filter((t) => PUBLIC_TOOL_NAMES.has(t.name))
+      : toolDefinitions;
+    return { tools };
   });
 
   // Register tool call handler
@@ -133,6 +144,7 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
     try {
       const result = await handleToolCall(client, name, toolArgs, {
         getDiagnose: config.getDiagnose,
+        isPublic: config.isPublic,
       });
 
       // Track successful tool call

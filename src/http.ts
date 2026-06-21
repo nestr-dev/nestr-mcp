@@ -34,7 +34,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createServer } from "./server.js";
-import { toolDefinitions } from "./tools/index.js";
+import { toolDefinitions, PUBLIC_TOOL_NAMES } from "./tools/index.js";
 import { NestrClient, NestrApiError, tokenFingerprint } from "./api/client.js";
 import {
   getProtectedResourceMetadata,
@@ -1027,6 +1027,7 @@ export interface SessionData {
   mcpClient?: string; // MCP client name (e.g., "claude-desktop")
   mcpClientVersion?: string; // MCP client version from clientInfo.version (e.g., "1.4.2")
   isApiKey: boolean; // Whether the auth came in via X-Nestr-API-Key
+  isPublic?: boolean; // Public (unauthenticated) guest session — exposes only the help tools, never touches Nestr data
   wantsJsonOnly: boolean; // Whether the client preferred JSON over SSE at init
   hasStoredOAuthSession: boolean; // Whether the server holds a refreshable OAuth session for this token
   userId?: string; // Resolved user ID (or workspace ID for API keys)
@@ -1062,6 +1063,11 @@ export interface SessionData {
 // revoked token slip past for too long.
 const AUTH_VERIFY_TTL_MS = 60 * 1000;
 export const sessions: Record<string, SessionData> = {};
+// Public (unauthenticated) guest sessions live in their own map, fully isolated
+// from authenticated `sessions`. They never carry a token, never persist to
+// Redis, and never participate in coalescing/rehydration — so a guest session id
+// can never be confused with (or escalate into) an authenticated one.
+export const publicSessions: Record<string, SessionData> = {};
 let shuttingDown = false;
 let inFlightRequests = 0;
 
@@ -1090,9 +1096,8 @@ const SSE_KEEPALIVE_INTERVAL_MS = 25 * 1000; // 25 seconds
 // We only drop the in-memory entry — the persistent Redis record lives on until
 // its own TTL so a late-returning client can still rehydrate.
 // .unref() so this timer doesn't prevent process exit (tests, graceful shutdown)
-setInterval(() => {
-  const now = Date.now();
-  for (const [sid, session] of Object.entries(sessions)) {
+function sweepStaleSessions(map: Record<string, SessionData>, now: number): void {
+  for (const [sid, session] of Object.entries(map)) {
     const sseAlive = session.sseResponse && !session.sseResponse.writableEnded;
     const stale = (now - session.lastActivityAt) > SESSION_STALE_TIMEOUT_MS;
     if (!sseAlive && stale) {
@@ -1100,9 +1105,15 @@ setInterval(() => {
         clearInterval(session.sseKeepaliveTimer);
         session.sseKeepaliveTimer = undefined;
       }
-      delete sessions[sid];
+      delete map[sid];
     }
   }
+}
+
+setInterval(() => {
+  const now = Date.now();
+  sweepStaleSessions(sessions, now);
+  sweepStaleSessions(publicSessions, now);
 }, 60000).unref();
 
 /**
@@ -1219,6 +1230,8 @@ function cacheIdentity(token: string, userId: string, userName?: string) {
 function buildMcpSession(opts: {
   authToken: string;
   isApiKey: boolean;
+  /** Public (unauthenticated) guest session — only the help tools, no Nestr data access. */
+  isPublic?: boolean;
   mcpClient?: string;
   /** MCP `clientInfo.version` from the initialize handshake. Forwarded to OAuth + diagnose. */
   mcpClientVersion?: string;
@@ -1275,6 +1288,7 @@ function buildMcpSession(opts: {
 
   const server = createServer({
     client,
+    isPublic: opts.isPublic,
     userId: opts.userId,
     userName: opts.userName,
     onToolCall: (toolName, args, success, error) => {
@@ -1321,6 +1335,7 @@ function buildMcpSession(opts: {
         mcpClient: opts.mcpClient,
         mcpClientVersion: opts.mcpClientVersion,
         isApiKey: opts.isApiKey,
+        isPublic: opts.isPublic,
         wantsJsonOnly: opts.wantsJsonOnly,
         hasStoredOAuthSession: opts.hasStoredOAuthSession,
         userId: opts.userId,
@@ -1335,8 +1350,10 @@ function buildMcpSession(opts: {
       sessions[newSessionId] = sessionData;
       sessionRef = sessionData;
 
-      // Persist for rehydration after restart
-      getStore().storeMcpSession(newSessionId, {
+      // Persist for rehydration after restart. Public guest sessions are never
+      // persisted: they hold no token, so rehydration's token cross-check could
+      // never match, and there's no user state worth surviving a restart.
+      if (!opts.isPublic) getStore().storeMcpSession(newSessionId, {
         authToken: opts.authToken,
         mcpClient: opts.mcpClient,
         mcpClientVersion: opts.mcpClientVersion,
@@ -1404,6 +1421,7 @@ function buildMcpSession(opts: {
       mcpClient: opts.mcpClient,
       mcpClientVersion: opts.mcpClientVersion,
       isApiKey: opts.isApiKey,
+      isPublic: opts.isPublic,
       wantsJsonOnly: opts.wantsJsonOnly,
       hasStoredOAuthSession: opts.hasStoredOAuthSession,
       userId: opts.userId,
@@ -1430,6 +1448,7 @@ function buildMcpSession(opts: {
     mcpClient: opts.mcpClient,
     mcpClientVersion: opts.mcpClientVersion,
     isApiKey: opts.isApiKey,
+    isPublic: opts.isPublic,
     wantsJsonOnly: opts.wantsJsonOnly,
     hasStoredOAuthSession: opts.hasStoredOAuthSession,
     userId: opts.userId,
@@ -2015,6 +2034,231 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
     }
   }
 }
+
+// ─── PUBLIC (unauthenticated) MCP surface ──────────────────────────────────
+//
+// POST /mcp/public is a credential-free "guest" surface for support-only AI
+// agents that have no workspace AI credit. It exposes ONLY the three help tools
+// (nestr_help, nestr_diagnose, nestr_get_me) and can NEVER reach authenticated
+// Nestr data:
+//   - Any Authorization / X-Nestr-API-Key / Cookie header is stripped on entry
+//     and ignored — there is no code path here that reads a credential.
+//   - Sessions are built with isPublic:true, which (a) filters tools/list to the
+//     three help tools and (b) makes handleToolCall refuse every other tool and
+//     serve nestr_get_me from a fixed guest payload with no Nestr API call.
+//   - The NestrClient is constructed with a sentinel token it never uses, since
+//     none of the three public tools issue an authenticated request.
+//   - Guest sessions live in their own `publicSessions` map, isolated from the
+//     authenticated `sessions` map (no coalescing, no Redis rehydration).
+const PUBLIC_SENTINEL_TOKEN = "public-guest-no-auth";
+
+app.post("/mcp/public", async (req: Request, res: Response) => {
+  const correlationId = randomUUID();
+  await runWithContext({ correlationId }, () => handlePublicMcpPost(req, res));
+});
+
+async function handlePublicMcpPost(req: Request, res: Response): Promise<void> {
+  const sessionId = req.headers["mcp-session-id"] as string | undefined;
+
+  // Hard requirement: never read or honour credentials on the public surface.
+  // Strip them before anything else so they can't leak into the MCP SDK's
+  // requestInfo / MCPCat or be picked up by any downstream code.
+  delete req.headers.authorization;
+  delete req.headers["x-nestr-api-key"];
+  delete req.headers.cookie;
+
+  try {
+    const acceptHeader = req.headers.accept || "";
+    const wantsJsonOnly = acceptHeader.includes("application/json") && !acceptHeader.includes("text/event-stream");
+    if (wantsJsonOnly) {
+      req.headers.accept = `${acceptHeader}, text/event-stream`;
+    }
+
+    // Existing public session — route straight through. No token checks: public
+    // sessions have no credential to compare.
+    if (sessionId) {
+      const session = publicSessions[sessionId];
+      if (session) {
+        session.lastActivityAt = Date.now();
+        await session.transport.handleRequest(req, res, req.body);
+        return;
+      }
+      res.status(404).json({
+        jsonrpc: "2.0",
+        error: { code: -32001, message: "Session not found" },
+        id: req.body?.id ?? null,
+      });
+      return;
+    }
+
+    if (shuttingDown) {
+      res.status(503).json({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Server is shutting down, please retry" },
+        id: req.body?.id ?? null,
+      });
+      return;
+    }
+
+    // Unauthenticated tools/list (no session yet) — return the public tool list
+    // directly, mirroring the authed surface's scanner-friendly shortcut.
+    if (req.body?.method === "tools/list") {
+      res.json({
+        jsonrpc: "2.0",
+        result: { tools: toolDefinitions.filter((t) => PUBLIC_TOOL_NAMES.has(t.name)) },
+        id: req.body?.id ?? null,
+      });
+      return;
+    }
+
+    // New session must be an initialize request (same contract as authed /mcp).
+    if (!isInitializeRequest(req.body)) {
+      res.status(400).json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32000,
+          message: "Bad Request: No valid session ID provided, and request is not an initialization request",
+        },
+        id: req.body?.id ?? null,
+      });
+      return;
+    }
+
+    const mcpClientName = req.body?.params?.clientInfo?.name as string | undefined;
+    const mcpClientVersion = req.body?.params?.clientInfo?.version as string | undefined;
+
+    const session = buildMcpSession({
+      authToken: PUBLIC_SENTINEL_TOKEN,
+      isApiKey: false,
+      isPublic: true,
+      mcpClient: mcpClientName,
+      mcpClientVersion,
+      wantsJsonOnly,
+      hasStoredOAuthSession: false,
+    });
+
+    // buildMcpSession's onsessioninitialized registers fresh sessions in the
+    // authenticated `sessions` map. Re-home this guest session into the isolated
+    // publicSessions map once its id is known, so it never lives alongside authed
+    // sessions. The onclose handler also targets `sessions`, so we override it to
+    // clean up publicSessions instead.
+    const transport = session.transport;
+    await session.server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+    const sid = transport.sessionId;
+    if (sid) {
+      const created = sessions[sid] ?? session;
+      delete sessions[sid];
+      publicSessions[sid] = created;
+      transport.onclose = () => {
+        if (created.sseKeepaliveTimer) {
+          clearInterval(created.sseKeepaliveTimer);
+          created.sseKeepaliveTimer = undefined;
+        }
+        delete publicSessions[sid];
+      };
+    }
+  } catch (error) {
+    console.error(`${cidTag()}Error handling public MCP POST request:`, error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32603,
+          message: error instanceof Error ? error.message : "Internal server error",
+        },
+        id: req.body?.id ?? null,
+      });
+    }
+  }
+}
+
+// Public SSE stream (server-initiated messages for a guest session).
+app.get("/mcp/public", async (req: Request, res: Response) => {
+  delete req.headers.authorization;
+  delete req.headers["x-nestr-api-key"];
+  delete req.headers.cookie;
+
+  const sessionId = req.headers["mcp-session-id"] as string | undefined;
+  const session = sessionId ? publicSessions[sessionId] : undefined;
+  if (!session) {
+    res.status(404).json({
+      jsonrpc: "2.0",
+      error: { code: -32001, message: "Session not found" },
+      id: null,
+    });
+    return;
+  }
+
+  session.sseResponse = res;
+  if (session.sseKeepaliveTimer) clearInterval(session.sseKeepaliveTimer);
+  session.sseKeepaliveTimer = setInterval(() => {
+    if (res.writableEnded || res.destroyed) return;
+    try {
+      res.write(": keepalive\n\n");
+    } catch (e) {
+      console.error("[PublicSession] SSE keepalive write failed:", e instanceof Error ? e.message : e);
+    }
+  }, SSE_KEEPALIVE_INTERVAL_MS);
+  session.sseKeepaliveTimer.unref?.();
+
+  res.on("close", () => {
+    if (session.sseKeepaliveTimer) {
+      clearInterval(session.sseKeepaliveTimer);
+      session.sseKeepaliveTimer = undefined;
+    }
+    if (session.sseResponse === res) session.sseResponse = undefined;
+    try {
+      session.transport.closeStandaloneSSEStream();
+    } catch (e) {
+      console.error("[PublicSession] closeStandaloneSSEStream on socket close failed:", e instanceof Error ? e.message : e);
+    }
+  });
+
+  try {
+    await session.transport.handleRequest(req, res);
+  } catch (error) {
+    console.error("Error handling public MCP GET request:", error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: { code: -32603, message: "Internal server error" },
+        id: null,
+      });
+    }
+  }
+});
+
+// Public session termination.
+app.delete("/mcp/public", async (req: Request, res: Response) => {
+  delete req.headers.authorization;
+  delete req.headers["x-nestr-api-key"];
+  delete req.headers.cookie;
+
+  const sessionId = req.headers["mcp-session-id"] as string | undefined;
+  const session = sessionId ? publicSessions[sessionId] : undefined;
+  if (!session) {
+    res.status(404).json({
+      jsonrpc: "2.0",
+      error: { code: -32001, message: "Session not found" },
+      id: null,
+    });
+    return;
+  }
+
+  try {
+    await session.transport.handleRequest(req, res);
+  } catch (error) {
+    console.error("Error handling public MCP DELETE request:", error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: { code: -32603, message: "Internal server error" },
+        id: null,
+      });
+    }
+  }
+});
 
 /**
  * MCP GET endpoint - handles SSE streams for server-initiated messages
