@@ -78,3 +78,24 @@ export function validatePrimeLabels(labels: string[] | undefined): void {
     throw new PrimeLabelConflictError(prime);
   }
 }
+
+/**
+ * Modifier labels that give a `meeting` nest a concrete type. A bare `meeting`
+ * has no type and the web UI does not render it, so every meeting needs one.
+ */
+export const MEETING_MODIFIERS: ReadonlySet<string> = new Set([
+  "circle-meeting",
+  "governance",
+]);
+
+/**
+ * Ensure a `meeting` nest carries a modifier the UI can render. When `meeting`
+ * is present without `circle-meeting` or `governance`, default to
+ * `circle-meeting` (a tactical/operational meeting). Returns the labels
+ * unchanged when there is no `meeting` label or a modifier is already present.
+ */
+export function ensureMeetingModifier(labels: string[] | undefined): string[] | undefined {
+  if (!labels?.includes("meeting")) return labels;
+  if (labels.some(l => MEETING_MODIFIERS.has(l))) return labels;
+  return [...labels, "circle-meeting"];
+}

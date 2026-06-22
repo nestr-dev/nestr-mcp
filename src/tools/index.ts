@@ -9,7 +9,7 @@ import { appResources } from "../apps/index.js";
 import { getCorrelationId } from "../util/request-context.js";
 import { VERSION } from "../version.js";
 import type { DiagnoseSnapshot } from "../util/diagnose.js";
-import { PRIME_LABELS, PrimeLabelConflictError, validatePrimeLabels } from "./validation.js";
+import { PRIME_LABELS, PrimeLabelConflictError, validatePrimeLabels, ensureMeetingModifier } from "./validation.js";
 
 // Tools exposed on the PUBLIC (unauthenticated) MCP surface. These three make
 // zero authenticated Nestr API calls: nestr_help and nestr_diagnose never touch
@@ -2392,6 +2392,7 @@ async function _handleToolCall(
       case "nestr_create_nest": {
         const parsed = schemas.createNest.parse(args);
         validatePrimeLabels(parsed.labels);
+        parsed.labels = ensureMeetingModifier(parsed.labels);
         const hasGovernanceLabels = parsed.labels?.some(l =>
           ["role", "circle"].includes(l)
         );
@@ -2443,6 +2444,7 @@ async function _handleToolCall(
       case "nestr_update_nest": {
         const parsed = schemas.updateNest.parse(args);
         validatePrimeLabels(parsed.labels);
+        parsed.labels = ensureMeetingModifier(parsed.labels);
         const hasInlineGovernance = parsed.accountabilities?.length || parsed.domains?.length;
 
         // Route to self-organization API when updating roles/circles with accountabilities/domains
