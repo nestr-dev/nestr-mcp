@@ -235,6 +235,7 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     bodyParams: new Set([
       "_id", "title", "labels", "description", "purpose",
       "parentId", "users", "due", "accountabilities", "domains",
+      "roleId", // election mode
     ]),
   },
   // PATCH /parts (body has _id) — propose a change to an existing item.
@@ -808,14 +809,21 @@ export const schemas = {
     description: z.string().optional().describe("The primary content field — detailed information about the item. Supports Markdown and HTML."),
     purpose: z.string().optional().describe("ONLY for roles/circles — a short aspirational statement. Do NOT put detailed information here; use description instead. Supports HTML."),
     parentId: z.string().optional().describe("Parent ID — use to move/restructure items (e.g., move role to different circle)"),
-    users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign (e.g., for role elections: assign the elected user to the role)"),
-    due: z.string().optional().describe("Due date / re-election date (ISO format)"),
+    users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign. For an election (with roleId), the single user being elected, e.g. [\"userId\"]."),
+    due: z.string().optional().describe("Due date / re-election date (ISO format). For an election (with roleId), the term end — omit to elect without a term."),
     accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles to set on a role (replaces all — use children endpoint for individual management)"),
     domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles to set on a role (replaces all — use children endpoint for individual management)"),
+    roleId: z.string().optional().describe("Hold an ELECTION: the electable role to fill (Facilitator/Secretary/Rep Link or any electable role). Assigns or reconfirms the role's filler for a term WITHOUT changing its accountabilities/domains — provide users:[userId] (one person) and optional due (term). Do not combine with _id."),
     removeNest: z.boolean().optional().describe("Set true with _id to propose deletion of the referenced governance item (when the proposal is accepted, the item is removed). Distinct from nestr_remove_tension_part, which undoes a proposal part you already added. Requires _id; other body fields are ignored."),
   }).refine(
     (data) => !data.removeNest || !!data._id,
     { message: "removeNest:true requires _id to identify which item to propose for deletion" }
+  ).refine(
+    (data) => !data.roleId || (Array.isArray(data.users) && data.users.length === 1),
+    { message: "An election (roleId) requires exactly one user to elect — users: [userId]." }
+  ).refine(
+    (data) => !(data.roleId && data._id),
+    { message: "Provide either roleId (to hold an election) or _id (to change/delete an existing item), not both." }
   ),
 
   modifyTensionPart: z.object({
@@ -1817,7 +1825,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_tension_part",
-    description: "Add a governance proposal part to a tension. Three modes: (1) propose a new item — omit _id, provide title/labels/etc.; (2) propose changes to an existing item — provide _id plus the fields to change; (3) propose deletion of an existing item — provide _id and removeNest:true. See nestr_help('tension-processing').",
+    description: "Add a governance proposal part to a tension. Four modes: (1) propose a new item — omit _id, provide title/labels/etc.; (2) propose changes to an existing item — provide _id plus the fields to change (note: editing a role this way copies its existing accountabilities/domains into the proposal, so it reads as a full role edit); (3) propose deletion of an existing item — provide _id and removeNest:true; (4) hold an election — provide roleId (the electable role to fill) plus users:[userId] and optional due (term), which assigns/reconfirms the role's filler WITHOUT changing its accountabilities/domains. See nestr_help('tension-processing').",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1829,10 +1837,11 @@ export const toolDefinitions = [
         description: { type: "string", description: "The primary content field — detailed information about the item. Supports Markdown and HTML." },
         purpose: { type: "string", description: "ONLY for roles/circles — a short aspirational statement. Do NOT put detailed information here; use description instead. Supports HTML." },
         parentId: { type: "string", description: "Parent ID — use to move/restructure items (e.g., move role to different circle)" },
-        users: { type: "array", items: { type: "string" }, description: "User IDs to assign (e.g., for elections: assign elected user to the role)" },
-        due: { type: "string", description: "Due date / re-election date (ISO format)" },
+        users: { type: "array", items: { type: "string" }, description: "User IDs to assign. For an election (with roleId), the single user being elected, e.g. [\"userId\"]." },
+        due: { type: "string", description: "Due date / re-election date (ISO format). For an election (with roleId), the term end — omit to elect without a term." },
         accountabilities: { type: "array", items: { type: "string" }, description: "Accountability titles to set on a role (replaces all — use children endpoint for individual management)" },
         domains: { type: "array", items: { type: "string" }, description: "Domain titles to set on a role (replaces all — use children endpoint for individual management)" },
+        roleId: { type: "string", description: "Hold an ELECTION: the electable role to fill (Facilitator/Secretary/Rep Link or any electable role). Assigns/reconfirms the role's filler for a term WITHOUT changing its accountabilities/domains — provide users:[userId] (one person) and optional due (term). Do not combine with _id." },
         removeNest: { type: "boolean", description: "Set true with _id to propose deletion of the referenced governance item (when the proposal is accepted, the item is removed). Distinct from nestr_remove_tension_part, which undoes a proposal part you already added." },
       },
       required: ["nestId", "tensionId"],
@@ -2957,9 +2966,19 @@ async function _handleToolCall(
 
       case "nestr_add_tension_part": {
         const parsed = schemas.addTensionPart.parse(args);
-        const { nestId, tensionId, removeNest, ...body } = parsed;
+        const { nestId, tensionId, removeNest, roleId, ...body } = parsed;
 
-        if (body._id && removeNest === true) {
+        if (roleId) {
+          // Hold an election: assign/reconfirm the role's filler for a term without
+          // changing its accountabilities/domains. Reuses `users` (the elected person)
+          // and `due` (the term). The schema guarantees exactly one user here.
+          const part = await client.createElection(nestId, tensionId, {
+            roleId,
+            users: body.users ?? [],
+            ...(body.due !== undefined ? { due: body.due } : {}),
+          });
+          return formatResult({ message: "Election added to the tension successfully", part });
+        } else if (body._id && removeNest === true) {
           // Propose deletion of an existing structural item.
           const part = await client.proposeTensionDeletion(nestId, tensionId, body._id);
           return formatResult({ message: "Deletion proposal added successfully", part });
