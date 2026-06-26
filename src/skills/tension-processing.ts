@@ -114,6 +114,7 @@ Then identify the **next physical action** — the very next concrete step.
    - **New governance item**: title + labels (e.g., \`["role"]\`). For roles, include accountabilities/domains as bulk shorthand.
    - **Change existing item**: \`_id\` of existing item + fields to change. Existing children auto-copied if accountabilities/domains not provided.
    - **Remove existing item**: Use \`nestr_remove_tension_part\`.
+   - **Hold an election** (assign/reconfirm a role's filler for a term): provide \`roleId\` + \`users: ["userId"]\` + optional \`due\` — see Elections below.
 
 3. **Manage children individually** (optional): \`nestr_get_tension_part_children\`, \`nestr_create_tension_part_child\`, \`nestr_update_tension_part_child\`, \`nestr_delete_tension_part_child\`.
 
@@ -125,7 +126,16 @@ Then identify the **next physical action** — the very next concrete step.
 
 ### Elections
 
-Elections are governance proposals: create tension on circle, add part with role's \`_id\` and \`users: ["newUserId"]\`, optionally set \`due\` for re-election date, submit for consent.
+An election assigns or reconfirms a role's filler for a term — it does NOT change the role's accountabilities or domains. Hold one by calling \`nestr_add_tension_part\` with a \`roleId\` (the election mode), NOT with the role's \`_id\` (that is a role edit).
+
+Electable roles are typically the core roles — Facilitator, Secretary, and Rep Link — plus any role marked electable. Hold the election in the role's circle:
+
+1. \`nestr_create_tension(circleId, "Elect a Secretary")\` — create the tension on the circle.
+2. \`nestr_add_tension_part(circleId, tensionId, { roleId, users: ["userId"], due })\` — \`roleId\` is the electable role being filled, \`users\` is the one person being elected, \`due\` is the optional term end date (omit to elect without a term).
+3. \`nestr_get_tension_parts\` — review: the part shows as an election (elected user + term) with no accountability/domain changes.
+4. \`nestr_update_tension_status(circleId, tensionId, "proposed")\` — submit for consent.
+
+Do NOT run an election by passing the role's \`_id\` with \`users\`: that path is a role *edit* — it copies the role's existing accountabilities/domains into the proposal and reads as a full governance change rather than a clean election. Use \`roleId\` instead.
 
 ### Questions and Reactions
 
