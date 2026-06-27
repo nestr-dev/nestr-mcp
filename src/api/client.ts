@@ -154,6 +154,87 @@ export interface WorkspaceApp {
   enabled: boolean;
 }
 
+/** Per-type transport config for a connector. Holds no secret. */
+export interface ConnectorConfig {
+  /** mcp / api transports: the endpoint URL. */
+  url?: string;
+  /** cli transport: the command to run. */
+  command?: string;
+  /** Non-secret headers sent on every call. */
+  headers?: Record<string, string>;
+  [key: string]: unknown;
+}
+
+/** Capability descriptor advertised by a connector. */
+export interface ConnectorCapabilities {
+  /** Whether the connector can self-describe its tools at runtime. */
+  discover?: boolean;
+  tools?: Array<{
+    name: string;
+    description?: string;
+    inputSchema?: Record<string, unknown>;
+  }>;
+  [key: string]: unknown;
+}
+
+/** Admin exposure policy: which owner types may bind this connector. */
+export interface ConnectorExposure {
+  /** May an individual user/agent bind it for themselves. */
+  userAgent?: boolean;
+  /** May it be bound to a role's domain (gated governance access). */
+  domainGated?: boolean;
+}
+
+/**
+ * A connector catalog entry: a workspace-curated mcp / cli / api template.
+ * Holds no secret (a secret is only ever captured on an authorization).
+ */
+export interface Connector {
+  _id: string;
+  workspaceId: string;
+  type: "mcp" | "cli" | "api";
+  name: string;
+  authStrategy: "secret" | "oauth2";
+  config: ConnectorConfig;
+  capabilities: ConnectorCapabilities;
+  exposure: ConnectorExposure;
+  enabled: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** The owner a connector binds to. */
+export interface ConnectionOwner {
+  type: "user" | "agent" | "workspace" | "role-domain";
+  /** user/agent: user id. workspace: workspace id. role-domain: domain nest id. */
+  id: string;
+}
+
+/**
+ * A connection: a connector bound to an owner. Holds no secret; the secret
+ * lives on an authorization captured out-of-band via the Connect button.
+ * For a role-domain owner, `credentialsField` describes the credentials field
+ * materialised on the domain nest so the role can use the connector.
+ */
+export interface Connection {
+  _id: string;
+  workspaceId: string;
+  provider?: string;
+  owner: ConnectionOwner;
+  metadata?: Record<string, unknown>;
+  status?: "active" | "disabled";
+  /** Present only for a role-domain binding. */
+  credentialsField?: {
+    domainId: string;
+    fieldId?: string;
+    fieldCode?: string;
+    /** Set when the connection bound but the field could not be materialised. */
+    error?: string;
+  };
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface Tension extends Nest {
   status?: "draft" | "proposed" | "accepted" | "objected";
 }
@@ -1545,6 +1626,75 @@ export class NestrClient {
     if (options?.fullWorkspaces) params.set("fullWorkspaces", "true");
     const query = params.toString();
     return this.fetch<User>(`/users/me${query ? `?${query}` : ""}`);
+  }
+
+  // ============ CONNECTORS ============
+
+  /**
+   * List the workspace's connector catalog. Each entry is a non-secret
+   * mcp / cli / api template an admin has registered.
+   * Wraps GET /workspaces/:workspaceId/connectors. The route returns
+   * { status, data: [...] }; this unwraps to the connector array.
+   */
+  async listConnectors(workspaceId: string): Promise<Connector[]> {
+    const response = await this.fetch<{ status: string; data: Connector[] }>(
+      `/workspaces/${workspaceId}/connectors`
+    );
+    return response.data;
+  }
+
+  /**
+   * Register a connector in the workspace catalog. Workspace-admin only: the
+   * REST route enforces it and returns 403 (mapped to AUTH_SCOPE_INSUFFICIENT)
+   * for a non-admin caller. Holds no secret.
+   * Wraps POST /workspaces/:workspaceId/connectors. The route returns
+   * { status, data }; this unwraps to the created connector.
+   */
+  async registerConnector(
+    workspaceId: string,
+    body: {
+      type: "mcp" | "cli" | "api";
+      name: string;
+      config?: ConnectorConfig;
+      capabilities?: ConnectorCapabilities;
+      exposure?: ConnectorExposure;
+      authStrategy?: "secret" | "oauth2";
+    }
+  ): Promise<Connector> {
+    const response = await this.fetch<{ status: string; data: Connector }>(
+      `/workspaces/${workspaceId}/connectors`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      }
+    );
+    return response.data;
+  }
+
+  /**
+   * Bind a connector to an owner. Workspace-admin only (403 maps to
+   * AUTH_SCOPE_INSUFFICIENT for a non-admin caller). For a role-domain owner
+   * the response also carries credentialsField, the credentials field
+   * materialised on the domain nest so the role can use the connector and the
+   * Connect button renders. The secret is captured out-of-band, never here.
+   * Wraps POST /workspaces/:workspaceId/connections. The route returns
+   * { status, data }; this unwraps to the connection.
+   */
+  async bindConnector(
+    workspaceId: string,
+    body: {
+      connectorId: string;
+      owner: ConnectionOwner;
+    }
+  ): Promise<Connection> {
+    const response = await this.fetch<{ status: string; data: Connection }>(
+      `/workspaces/${workspaceId}/connections`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      }
+    );
+    return response.data;
   }
 }
 
