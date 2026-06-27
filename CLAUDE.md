@@ -246,7 +246,7 @@ analytics.register(new MixpanelTracker());
 ## Key Files
 
 - **src/server.ts** - Creates the MCP server, registers tools and resources
-- **src/tools/index.ts** - Defines all 33 MCP tools with Zod schemas and handlers
+- **src/tools/index.ts** - Defines all MCP tools with Zod schemas and handlers
 - **src/api/client.ts** - Type-safe wrapper for Nestr REST API
 - **src/apps/index.ts** - MCP Apps with inlined HTML for interactive UI components
 - **src/analytics/index.ts** - Generic event tracking interface with pluggable trackers
@@ -313,7 +313,7 @@ The server exposes these tools to AI assistants:
 | `nestr_update_tension` | `PATCH /nests/{id}/tensions/{tid}` |
 | `nestr_delete_tension` | `DELETE /nests/{id}/tensions/{tid}` |
 | `nestr_get_tension_parts` | `GET /nests/{id}/tensions/{tid}/parts` |
-| `nestr_add_tension_part` | `POST/PATCH /nests/{id}/tensions/{tid}/parts` |
+| `nestr_add_tension_part` | `POST/PATCH /nests/{id}/tensions/{tid}/parts` (incl. elections via `roleId`) |
 | `nestr_modify_tension_part` | `PATCH /nests/{id}/tensions/{tid}/parts/{pid}` |
 | `nestr_remove_tension_part` | `DELETE /nests/{id}/tensions/{tid}/parts/{pid}` |
 | `nestr_get_tension_part_children` | `GET /nests/{id}/tensions/{tid}/parts/{pid}/children` |

@@ -335,6 +335,44 @@ describe("NestrClient", () => {
       client.registerConnector("ws1", { type: "mcp", name: "Slack" })
     ).rejects.toMatchObject({ code: "AUTH_SCOPE_INSUFFICIENT", status: 403 });
   });
+
+  // ─── Elections ──────────────────────────────────────────────────
+
+  it("createElection POSTs an election part to the tension parts endpoint", async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(200, { _id: "part-1", items: [{ _id: "role-1", labels: ["election"], users: ["user-1"] }] })
+    );
+    const client = createClient();
+    const result = await client.createElection("circle-1", "tension-1", {
+      roleId: "role-1",
+      users: ["user-1"],
+      due: "2027-01-01T00:00:00.000Z",
+    });
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/circle-1/tensions/tension-1/parts");
+    expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body)).toEqual({
+      labels: ["election"],
+      roleId: "role-1",
+      users: ["user-1"],
+      due: "2027-01-01T00:00:00.000Z",
+    });
+    expect(result.items).toHaveLength(1);
+  });
+
+  it("createElection omits due when no term is given", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, { _id: "part-1" }));
+    const client = createClient();
+    await client.createElection("circle-1", "tension-1", { roleId: "role-1", users: ["user-1"] });
+
+    const [, opts] = mockFetch.mock.calls[0];
+    expect(JSON.parse(opts.body)).toEqual({
+      labels: ["election"],
+      roleId: "role-1",
+      users: ["user-1"],
+    });
+  });
 });
 
 // ─── NestrApiError ────────────────────────────────────────────────

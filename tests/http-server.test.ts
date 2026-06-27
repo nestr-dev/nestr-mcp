@@ -21,7 +21,7 @@ vi.mock("mcpcat", () => ({
   default: { wrap: (_server: unknown) => _server },
 }));
 
-const { app, sessions, findCoalescableSession, SESSION_COALESCE_WINDOW_MS } = await import("../src/http.js");
+const { app, sessions, publicSessions, findCoalescableSession, SESSION_COALESCE_WINDOW_MS } = await import("../src/http.js");
 
 describe("HTTP Server", () => {
   beforeEach(() => {
@@ -923,6 +923,176 @@ describe("HTTP Server", () => {
       expect(parsed.tokenPresented).toBe(true);
       expect(parsed.serverVersion).toBeTruthy();
       expect(parsed.tokenFingerprint).toMatch(/^\d+:[a-f0-9]+/);
+    });
+  });
+
+  // ─── Public (unauthenticated) MCP surface ─────────────────────────
+  // POST /mcp/public is a credential-free guest surface. It must expose ONLY
+  // the three help tools and must never reach authenticated Nestr data, even
+  // when an Authorization / X-Nestr-API-Key header is supplied.
+
+  describe("POST /mcp/public", () => {
+    beforeEach(() => {
+      for (const key of Object.keys(publicSessions)) delete publicSessions[key];
+    });
+
+    /** Parse a JSON-mode MCP response (transport returns SSE-framed text even in JSON mode for tool calls). */
+    function parseBody(res: { text: string; body: any }): any {
+      if (res.body && Object.keys(res.body).length > 0 && res.body.jsonrpc) return res.body;
+      const dataLine = res.text.split("\n").find((l) => l.startsWith("data: "));
+      if (!dataLine) throw new Error(`No JSON-RPC payload in: ${res.text.slice(0, 200)}`);
+      return JSON.parse(dataLine.slice("data: ".length));
+    }
+
+    async function initPublicSession(extraHeaders: Record<string, string> = {}): Promise<string> {
+      const reqB = request(app)
+        .post("/mcp/public")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream");
+      for (const [k, v] of Object.entries(extraHeaders)) reqB.set(k, v);
+      const res = await reqB.send({
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-03-26",
+          capabilities: {},
+          clientInfo: { name: "support-agent", version: "1.0" },
+        },
+        id: 1,
+      });
+      expect(res.status).toBe(200);
+      const sid = res.headers["mcp-session-id"];
+      expect(sid).toBeDefined();
+      return sid;
+    }
+
+    it("creates a guest session with NO credentials at all", async () => {
+      const sid = await initPublicSession();
+      expect(publicSessions[sid]).toBeDefined();
+      expect(publicSessions[sid].isPublic).toBe(true);
+      // Must never leak into the authenticated session map.
+      expect(sessions[sid]).toBeUndefined();
+    });
+
+    it("tools/list (no session) returns ONLY the three public help tools", async () => {
+      const res = await request(app)
+        .post("/mcp/public")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 1 });
+
+      expect(res.status).toBe(200);
+      const names = res.body.result.tools.map((t: { name: string }) => t.name).sort();
+      expect(names).toEqual(["nestr_diagnose", "nestr_get_me", "nestr_help"]);
+    });
+
+    it("tools/list within a session also returns only the three public tools", async () => {
+      const sid = await initPublicSession();
+      const res = await request(app)
+        .post("/mcp/public")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("mcp-session-id", sid)
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 2 });
+
+      expect(res.status).toBe(200);
+      const payload = parseBody(res);
+      const names = payload.result.tools.map((t: { name: string }) => t.name).sort();
+      expect(names).toEqual(["nestr_diagnose", "nestr_get_me", "nestr_help"]);
+    });
+
+    it("nestr_get_me returns the guest payload (no Nestr API call)", async () => {
+      const sid = await initPublicSession();
+      // Make any outbound fetch throw — proves the guest path never hits Nestr.
+      const noNet = vi.fn(async () => { throw new Error("public get_me must not call Nestr"); });
+      vi.stubGlobal("fetch", noNet);
+
+      const res = await request(app)
+        .post("/mcp/public")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("mcp-session-id", sid)
+        .send({ jsonrpc: "2.0", method: "tools/call", params: { name: "nestr_get_me", arguments: {} }, id: 3 });
+
+      expect(res.status).toBe(200);
+      const payload = parseBody(res);
+      const text = payload.result.content[0].text;
+      const parsed = JSON.parse(text);
+      expect(parsed).toEqual({
+        authMode: "public",
+        user: null,
+        mode: "guest",
+        hint: "Guest mode: product help only. Add AI credit / sign in for workspace tools.",
+      });
+      expect(noNet).not.toHaveBeenCalled();
+      vi.unstubAllGlobals();
+    });
+
+    it("refuses a workspace tool (nestr_list_workspaces) and never reaches Nestr", async () => {
+      const sid = await initPublicSession();
+      const noNet = vi.fn(async () => { throw new Error("public surface must not call Nestr"); });
+      vi.stubGlobal("fetch", noNet);
+
+      const res = await request(app)
+        .post("/mcp/public")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("mcp-session-id", sid)
+        .send({ jsonrpc: "2.0", method: "tools/call", params: { name: "nestr_list_workspaces", arguments: {} }, id: 4 });
+
+      expect(res.status).toBe(200); // tool-level refusal, not transport error
+      const payload = parseBody(res);
+      expect(payload.result.isError).toBe(true);
+      const parsed = JSON.parse(payload.result.content[0].text);
+      expect(parsed.code).toBe("AUTH_SCOPE_INSUFFICIENT");
+      expect(noNet).not.toHaveBeenCalled();
+      vi.unstubAllGlobals();
+    });
+
+    it("IGNORES an Authorization header — a supplied bearer must not unlock workspace tools or reach Nestr", async () => {
+      // Even with a (would-be valid) bearer, the public surface must refuse
+      // workspace tools and never contact Nestr.
+      const noNet = vi.fn(async () => { throw new Error("public surface must never call Nestr, even with a bearer"); });
+      vi.stubGlobal("fetch", noNet);
+
+      const sid = await initPublicSession({ Authorization: "Bearer real-looking-token" });
+      // Session is still a guest session, not an authed one.
+      expect(publicSessions[sid].isPublic).toBe(true);
+      expect(publicSessions[sid].authToken).not.toBe("real-looking-token");
+
+      const res = await request(app)
+        .post("/mcp/public")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", "Bearer real-looking-token")
+        .set("X-Nestr-API-Key", "real-looking-api-key")
+        .set("mcp-session-id", sid)
+        .send({ jsonrpc: "2.0", method: "tools/call", params: { name: "nestr_search", arguments: { workspaceId: "w", query: "x" } }, id: 5 });
+
+      expect(res.status).toBe(200);
+      const payload = parseBody(res);
+      expect(payload.result.isError).toBe(true);
+      const parsed = JSON.parse(payload.result.content[0].text);
+      expect(parsed.code).toBe("AUTH_SCOPE_INSUFFICIENT");
+      expect(noNet).not.toHaveBeenCalled();
+      vi.unstubAllGlobals();
+    });
+
+    it("does not require auth (the authed /mcp would 401 here, public does not)", async () => {
+      // Sanity: the same no-auth init that 401s on /mcp succeeds on /mcp/public.
+      const authed = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .send({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "x", version: "1" } }, id: 1 });
+      expect(authed.status).toBe(401);
+
+      const guest = await request(app)
+        .post("/mcp/public")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .send({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "x", version: "1" } }, id: 1 });
+      expect(guest.status).toBe(200);
     });
   });
 });

@@ -1322,6 +1322,31 @@ export class NestrClient {
     );
   }
 
+  /**
+   * Add an election part to a tension: assign/reconfirm a role's filler for a term
+   * WITHOUT changing the role's accountabilities/domains. This is distinct from
+   * proposeTensionChange (PATCH on a role _id), which is a role edit and copies the
+   * role's existing governance children into the proposal.
+   *
+   * Posts a governance part labeled `election` to
+   * POST /nests/:id/tensions/:tensionId/parts. The API creates a circleplus-election
+   * item linked to `roleId`; when the tension is enacted the role gets `users[0]`
+   * assigned and `due` set as the re-election term.
+   */
+  async createElection(
+    nestId: string,
+    tensionId: string,
+    data: { roleId: string; users: string[]; due?: string }
+  ): Promise<TensionPart> {
+    return this.fetch<TensionPart>(
+      `/nests/${nestId}/tensions/${tensionId}/parts`,
+      {
+        method: "POST",
+        body: JSON.stringify({ labels: ["election"], ...data }),
+      }
+    );
+  }
+
   async proposeTensionChange(
     nestId: string,
     tensionId: string,
