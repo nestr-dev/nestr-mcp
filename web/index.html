@@ -384,6 +384,12 @@
               <p class="tip" style="margin-bottom: 0;">Already set up Nestr as a <strong>Claude.ai connector</strong>? You can reuse it in Claude Code by enabling the flag:<br>
                 <code>claude config set --global tengu_claudeai_mcp_connectors true</code><br>
                 This makes all your Claude.ai connectors available in Claude Code &mdash; no separate MCP setup needed.</p>
+              <div class="cli-note">
+                <p>Prefer deterministic terminal commands? <a href="https://github.com/nestr-dev/nestr-cli" target="_blank"><code>nestr-cli</code></a> is a complementary option for agentic workflows &mdash; install it and drop ready-made Nestr skills straight into Claude Code:</p>
+                <pre><code>brew install nestr-dev/tap/nestr-cli   <span class="cli-comment"># install the CLI</span>
+npx skills add nestr-dev/nestr-cli     <span class="cli-comment"># add the agent skills</span></code></pre>
+                <p style="margin-bottom: 0;"><a href="https://github.com/nestr-dev/nestr-cli" target="_blank">Explore nestr-cli &rarr;</a></p>
+              </div>
             </div>
 
             <div class="tab-content" id="cursor">
@@ -973,6 +979,24 @@
               <li>"Who has the accountability for customer onboarding?"</li>
               <li>"Help me prepare for tomorrow's governance meeting"</li>
             </ul>
+          </div>
+        </div>
+
+        <div class="cli-cta-box">
+          <div class="cli-cta-content">
+            <span class="cli-cta-eyebrow">Bonus &mdash; prefer the terminal?</span>
+            <h2>Add the Nestr CLI</h2>
+            <p>
+              <code>nestr-cli</code> puts your whole Nestr workspace in your shell &mdash;
+              built for scripting, automation, and coding agents, with JSON output you can pipe to <code>jq</code>.
+            </p>
+            <pre><code>brew install nestr-dev/tap/nestr-cli   <span class="cli-comment"># install the CLI</span>
+npx skills add nestr-dev/nestr-cli     <span class="cli-comment"># add the agent skills</span></code></pre>
+            <p class="cli-cta-note">
+              One Homebrew command to install, one more to drop ready-made Nestr skills into
+              Claude Code, Cursor, or Copilot.
+            </p>
+            <a href="https://github.com/nestr-dev/nestr-cli" target="_blank" class="btn primary">Explore nestr-cli &rarr;</a>
           </div>
         </div>
       </div>
