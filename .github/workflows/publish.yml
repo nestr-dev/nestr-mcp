@@ -70,6 +70,11 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
 
+      # Trusted Publishing (OIDC) requires npm CLI >= 11.5.1; Node 22 ships npm 10.x.
+      # Without this, npm falls back to token auth and OIDC never engages.
+      - name: Update npm to latest
+        run: npm install -g npm@latest
+
       - name: Update package.json version
         run: npm version ${{ needs.build-and-test.outputs.version }} --no-git-tag-version --allow-same-version
 
@@ -82,10 +87,10 @@ jobs:
           name: build
           path: build/
 
+      # No NODE_AUTH_TOKEN: authentication is via OIDC Trusted Publishing.
+      # Provenance is generated automatically when publishing this way.
       - name: Publish to npm
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
 
   publish-mcp-registry:
     needs: [build-and-test, publish-npm]
