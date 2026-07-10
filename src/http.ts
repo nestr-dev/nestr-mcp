@@ -1090,15 +1090,6 @@ export const publicSessions: Record<string, SessionData> = {};
 let shuttingDown = false;
 let inFlightRequests = 0;
 
-/**
- * Find a prior session that a re-initializing client is likely trying to replace.
- *
- * Matches on (authToken, mcpClient) within a 10-minute window. The POST /mcp
- * init path closes and drops the match so the client gets a fresh, clean
- * session — this prevents "Server already initialized" 400s when a client
- * reconnects after an SSE drop (the transport can only be initialized once).
- */
-export const SESSION_COALESCE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 // Bumped from 30 → 60min: AI assistants commonly gap 30+ min between Nestr
 // tool bursts (long codebase work between status updates). Keeping the in-memory
 // session avoids a rehydration round-trip on the next call.
@@ -1183,32 +1174,6 @@ async function dropSessionOnTokenSwap(
   delete sessions[sessionId];
   await getStore().removeMcpSession(sessionId).catch(() => {});
   return true;
-}
-
-export function findCoalescableSession(authToken: string, mcpClient: string | undefined): { sessionId: string; session: SessionData } | undefined {
-  const now = Date.now();
-  let bestMatch: { sessionId: string; session: SessionData; lastActivity: number; sseAlive: boolean } | undefined;
-
-  for (const [sid, session] of Object.entries(sessions)) {
-    if (
-      session.authToken === authToken &&
-      session.mcpClient === mcpClient &&
-      (now - session.lastActivityAt) < SESSION_COALESCE_WINDOW_MS
-    ) {
-      const sseAlive = !!(session.sseResponse && !session.sseResponse.writableEnded);
-
-      // Pick the best session: prefer live SSE, then most recently active
-      if (
-        !bestMatch ||
-        (sseAlive && !bestMatch.sseAlive) || // prefer live SSE over dead
-        (sseAlive === bestMatch.sseAlive && session.lastActivityAt > bestMatch.lastActivity)
-      ) {
-        bestMatch = { sessionId: sid, session, lastActivity: session.lastActivityAt, sseAlive };
-      }
-    }
-  }
-
-  return bestMatch ? { sessionId: bestMatch.sessionId, session: bestMatch.session } : undefined;
 }
 
 /**
@@ -1891,26 +1856,14 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Drop any lingering session for the same (auth token, client) before creating a
-    // new one. This happens when a client reconnects after an SSE drop: the old
-    // session is still in memory but its transport is already initialized, so we
-    // can't route a fresh `initialize` through it — the SDK would 400 with
-    // "Server already initialized". Creating a second session alongside the stale
-    // one also leaks memory over time. Close-and-replace is the only safe option.
-    const stale = findCoalescableSession(authToken, mcpClientName);
-    if (stale) {
-      const { sessionId: staleSid, session: staleSession } = stale;
-      console.log(`Replacing stale session ${staleSid} for ${mcpClientName || "unknown client"} on re-init`);
-      try {
-        await staleSession.transport.close();
-      } catch (e) {
-        console.error("[Session] Failed to close stale transport:", e instanceof Error ? e.message : e);
-      }
-      delete sessions[staleSid];
-      await getStore().removeMcpSession(staleSid).catch(e =>
-        console.error("[McpSession] Failed to remove persisted stale session:", e instanceof Error ? e.message : e)
-      );
-    }
+    // Concurrent sessions per (auth token, client name) are intentional.
+    // Parallel clients routinely share one identity (agent jobs, Claude Code
+    // subagents, Codex workers), so an initialize must NEVER touch another
+    // connection's session — doing so caused the 2026-07-10 incident where
+    // sessions were killed ~1s after creation. A fresh initialize carries no
+    // Mcp-Session-Id, so it can't collide with an existing transport
+    // ("Server already initialized" is impossible on this path). Stale
+    // sessions are reaped non-destructively by sweepStaleSessions instead.
     if (mcpClientName) {
       console.log(`MCP client: ${mcpClientName}`);
     }

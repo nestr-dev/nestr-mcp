@@ -21,7 +21,7 @@ vi.mock("mcpcat", () => ({
   default: { wrap: (_server: unknown) => _server },
 }));
 
-const { app, sessions, publicSessions, findCoalescableSession, SESSION_COALESCE_WINDOW_MS } = await import("../src/http.js");
+const { app, sessions, publicSessions } = await import("../src/http.js");
 
 describe("HTTP Server", () => {
   beforeEach(() => {
@@ -210,12 +210,13 @@ describe("HTTP Server", () => {
       expect(res.headers["mcp-session-id"]).toBeDefined();
     });
 
-    // Regression: Claude Desktop's mcp-remote reconnects after an SSE drop by
-    // sending a fresh `initialize` (no session ID) with the same auth token.
-    // Before the fix, session coalescing routed the new init into the old
-    // already-initialized transport and the SDK returned 400 "Server already
-    // initialized", permanently breaking reconnects until the session idled out.
-    it("replaces a stale same-client session on re-initialize instead of 400ing", async () => {
+    // Regression (2026-07-10 incident): parallel clients sharing one auth
+    // token and client name (agent jobs, Claude Code subagents) must be able
+    // to hold concurrent sessions. The old "session coalescing" closed the
+    // previous session (and deleted its Redis record) on every re-initialize,
+    // killing the sibling's session ~1s after creation: its SSE GET stream
+    // 404'd in a reconnect loop and tool POSTs surfaced as "Session terminated".
+    it("keeps the first session usable when a second same-identity client initializes", async () => {
       const authHeader = "Bearer reconnect-token";
       const initBody = {
         jsonrpc: "2.0",
@@ -240,7 +241,7 @@ describe("HTTP Server", () => {
       expect(firstSid).toBeDefined();
       expect(sessions[firstSid]).toBeDefined();
 
-      // Simulate a reconnect: same auth + client, no session ID.
+      // A second client with the SAME token and client name initializes.
       const second = await request(app)
         .post("/mcp")
         .set("Content-Type", "application/json")
@@ -252,132 +253,22 @@ describe("HTTP Server", () => {
       const secondSid = second.headers["mcp-session-id"];
       expect(secondSid).toBeDefined();
       expect(secondSid).not.toBe(firstSid);
-      expect(sessions[firstSid]).toBeUndefined();
+
+      // Both sessions coexist.
+      expect(sessions[firstSid]).toBeDefined();
       expect(sessions[secondSid]).toBeDefined();
-    });
-  });
 
-  // ─── Session Coalescing ───────────────────────────────────────────
+      // The first session still serves requests — this is the exact call
+      // that used to 404 with "Session not found".
+      const followUp = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", authHeader)
+        .set("mcp-session-id", firstSid)
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 3 });
 
-  describe("findCoalescableSession", () => {
-    it("returns undefined when no sessions exist", () => {
-      expect(findCoalescableSession("token-a", "client-a")).toBeUndefined();
-    });
-
-    it("matches session with same auth token and client name", () => {
-      const sessionId = "test-session-1";
-      sessions[sessionId] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-      } as any;
-
-      const result = findCoalescableSession("token-a", "client-a");
-      expect(result).toBeDefined();
-      expect(result!.sessionId).toBe(sessionId);
-    });
-
-    it("does not match different auth token", () => {
-      sessions["test-session-1"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-      } as any;
-
-      expect(findCoalescableSession("token-b", "client-a")).toBeUndefined();
-    });
-
-    it("does not match different client name", () => {
-      sessions["test-session-1"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-      } as any;
-
-      expect(findCoalescableSession("token-a", "client-b")).toBeUndefined();
-    });
-
-    it("does not match stale sessions", () => {
-      sessions["test-session-1"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now() - SESSION_COALESCE_WINDOW_MS - 60_000, // past the window
-      } as any;
-
-      expect(findCoalescableSession("token-a", "client-a")).toBeUndefined();
-    });
-
-    it("still matches dead SSE session (but deprioritized)", () => {
-      sessions["test-session-1"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-        sseResponse: { writableEnded: true } as any,
-      } as any;
-
-      // Dead SSE sessions are still eligible — just deprioritized vs live ones
-      const result = findCoalescableSession("token-a", "client-a");
-      expect(result).toBeDefined();
-    });
-
-    it("matches when no SSE stream was ever opened", () => {
-      sessions["test-session-1"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-        sseResponse: undefined,
-      } as any;
-
-      const result = findCoalescableSession("token-a", "client-a");
-      expect(result).toBeDefined();
-    });
-
-    it("matches when SSE stream is alive", () => {
-      sessions["test-session-1"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-        sseResponse: { writableEnded: false } as any,
-      } as any;
-
-      const result = findCoalescableSession("token-a", "client-a");
-      expect(result).toBeDefined();
-    });
-
-    it("prefers live SSE session over dead SSE session", () => {
-      sessions["dead-sse"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-        sseResponse: { writableEnded: true } as any,
-      } as any;
-
-      sessions["live-sse"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now() - 5000, // older but live SSE
-        sseResponse: { writableEnded: false } as any,
-      } as any;
-
-      const result = findCoalescableSession("token-a", "client-a");
-      expect(result!.sessionId).toBe("live-sse");
-    });
-
-    it("picks the most recently active session when SSE status is equal", () => {
-      sessions["older"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now() - 5000,
-      } as any;
-
-      sessions["newer"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-      } as any;
-
-      const result = findCoalescableSession("token-a", "client-a");
-      expect(result!.sessionId).toBe("newer");
+      expect(followUp.status).not.toBe(404);
     });
   });
 
