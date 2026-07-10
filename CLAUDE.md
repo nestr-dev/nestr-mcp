@@ -61,7 +61,7 @@ tests/
 - Mock `getStore()` from `src/oauth/store.js` using the in-memory mock store — never hit Redis/filesystem in tests
 - Mock `globalThis.fetch` with `vi.stubGlobal` for NestrClient and OAuth proxy tests
 - The Express app is exported from `src/http.ts` and the startup IIFE is guarded by `isDirectRun` so importing it for tests doesn't start a server
-- `src/http.ts` exports session helpers (`sessions`, `findCoalescableSession`) for direct unit testing of coalescing logic
+- `src/http.ts` exports session helpers (`sessions`, `sweepStaleSessions`, `SSE_DEAD_IDLE_TIMEOUT_MS`) for direct unit testing of the stale-session sweep. Concurrent sessions per (auth token, client name) are intentional — an `initialize` must never close another connection's session
 
 ## Environment Variables
 
