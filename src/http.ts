@@ -2284,8 +2284,9 @@ app.get("/mcp", async (req: Request, res: Response) => {
   }
 
   console.log(`SSE stream requested for session: ${sessionId}`);
+  session.lastActivityAt = Date.now();
 
-  // Track the SSE response for liveness detection (used by session coalescing)
+  // Track the SSE response for liveness detection (used by the stale-session sweep)
   session.sseResponse = res;
 
   // Heartbeat: SSE comment lines (`:keepalive`) keep the connection alive

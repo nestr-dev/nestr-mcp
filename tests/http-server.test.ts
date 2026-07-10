@@ -268,7 +268,7 @@ describe("HTTP Server", () => {
         .set("mcp-session-id", firstSid)
         .send({ jsonrpc: "2.0", method: "tools/list", id: 3 });
 
-      expect(followUp.status).not.toBe(404);
+      expect(followUp.status).toBe(200);
     });
   });
 
@@ -357,6 +357,7 @@ describe("HTTP Server", () => {
       expect(followUp.status).not.toBe(404);
       expect(sessions[sid]).toBeDefined();
       expect(sessions[sid].authToken).toBe(token);
+      expect(sessions[sid].mcpClient).toBe("test-client");
     });
 
     it("refuses rehydration when the request token doesn't match the stored token", async () => {
@@ -1099,7 +1100,7 @@ describe("HTTP Server", () => {
   // returning client rehydrate.
 
   describe("sweepStaleSessions", () => {
-    it("evicts an SSE-dead session idle past the timeout, without touching the store", async () => {
+    it("evicts an SSE-dead session idle past the timeout, without touching the store", () => {
       const removeSpy = vi.spyOn(mockStore, "removeMcpSession");
       const timer = setInterval(() => {}, 60_000);
       const session = {
