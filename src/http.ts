@@ -271,17 +271,33 @@ app.post("/oauth/register", registerLimiter, express.json(), async (req: Request
       return;
     }
 
-    // Validate required fields
-    if (!redirect_uris || !Array.isArray(redirect_uris) || redirect_uris.length === 0) {
+    // RFC 7591: redirect_uris is only required for redirect-based grants.
+    // Device-code-only clients (headless agents) never redirect and may omit it.
+    const requestedGrantTypes: string[] =
+      Array.isArray(grant_types) && grant_types.length > 0
+        ? grant_types
+        : ["authorization_code", "refresh_token"];
+    const usesRedirectGrant =
+      requestedGrantTypes.includes("authorization_code") || requestedGrantTypes.includes("implicit");
+
+    if (redirect_uris !== undefined && !Array.isArray(redirect_uris)) {
       res.status(400).json({
         error: "invalid_client_metadata",
-        error_description: "redirect_uris is required and must be a non-empty array",
+        error_description: "redirect_uris must be an array",
+      });
+      return;
+    }
+    const redirectUris: string[] = redirect_uris ?? [];
+    if (usesRedirectGrant && redirectUris.length === 0) {
+      res.status(400).json({
+        error: "invalid_client_metadata",
+        error_description: "redirect_uris is required and must be a non-empty array for redirect-based grant types",
       });
       return;
     }
 
     // Validate redirect URIs (must be localhost or HTTPS)
-    for (const uri of redirect_uris) {
+    for (const uri of redirectUris) {
       try {
         const parsed = new URL(uri);
         const isLocalhost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
@@ -303,19 +319,22 @@ app.post("/oauth/register", registerLimiter, express.json(), async (req: Request
       }
     }
 
-    // Generate client credentials
+    // Generate client credentials. RFC 7591: do not issue credentials the
+    // client cannot use, so public clients (auth method "none") get no secret.
     const clientId = `mcp-${randomUUID()}`;
-    const clientSecret = randomBytes(32).toString("base64url");
+    const tokenEndpointAuthMethod = token_endpoint_auth_method || "client_secret_post";
+    const clientSecret =
+      tokenEndpointAuthMethod === "none" ? undefined : randomBytes(32).toString("base64url");
 
     // Create registered client
     const client: RegisteredClient = {
       client_id: clientId,
-      client_secret: clientSecret,
+      ...(clientSecret ? { client_secret: clientSecret } : {}),
       client_name: client_name || "MCP Client",
-      redirect_uris,
-      grant_types: grant_types || ["authorization_code", "refresh_token"],
+      redirect_uris: redirectUris,
+      grant_types: requestedGrantTypes,
       response_types: response_types || ["code"],
-      token_endpoint_auth_method: token_endpoint_auth_method || "client_secret_post",
+      token_endpoint_auth_method: tokenEndpointAuthMethod,
       scope: scope || "user nest",
       registered_at: Date.now(),
     };
@@ -326,7 +345,7 @@ app.post("/oauth/register", registerLimiter, express.json(), async (req: Request
     // Return registration response (RFC 7591)
     res.status(201).json({
       client_id: clientId,
-      client_secret: clientSecret,
+      ...(clientSecret ? { client_secret: clientSecret } : {}),
       client_name: client.client_name,
       redirect_uris: client.redirect_uris,
       grant_types: client.grant_types,
