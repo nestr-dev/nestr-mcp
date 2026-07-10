@@ -40,3 +40,6 @@ temp/
 
 # Local test files
 test-app.html
+
+# Local design docs (not committed)
+docs/superpowers/

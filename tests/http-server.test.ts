@@ -21,7 +21,7 @@ vi.mock("mcpcat", () => ({
   default: { wrap: (_server: unknown) => _server },
 }));
 
-const { app, sessions, publicSessions, findCoalescableSession, SESSION_COALESCE_WINDOW_MS } = await import("../src/http.js");
+const { app, sessions, publicSessions, sweepStaleSessions, SSE_DEAD_IDLE_TIMEOUT_MS } = await import("../src/http.js");
 
 describe("HTTP Server", () => {
   beforeEach(() => {
@@ -210,12 +210,13 @@ describe("HTTP Server", () => {
       expect(res.headers["mcp-session-id"]).toBeDefined();
     });
 
-    // Regression: Claude Desktop's mcp-remote reconnects after an SSE drop by
-    // sending a fresh `initialize` (no session ID) with the same auth token.
-    // Before the fix, session coalescing routed the new init into the old
-    // already-initialized transport and the SDK returned 400 "Server already
-    // initialized", permanently breaking reconnects until the session idled out.
-    it("replaces a stale same-client session on re-initialize instead of 400ing", async () => {
+    // Regression (2026-07-10 incident): parallel clients sharing one auth
+    // token and client name (agent jobs, Claude Code subagents) must be able
+    // to hold concurrent sessions. The old "session coalescing" closed the
+    // previous session (and deleted its Redis record) on every re-initialize,
+    // killing the sibling's session ~1s after creation: its SSE GET stream
+    // 404'd in a reconnect loop and tool POSTs surfaced as "Session terminated".
+    it("keeps the first session usable when a second same-identity client initializes", async () => {
       const authHeader = "Bearer reconnect-token";
       const initBody = {
         jsonrpc: "2.0",
@@ -240,7 +241,7 @@ describe("HTTP Server", () => {
       expect(firstSid).toBeDefined();
       expect(sessions[firstSid]).toBeDefined();
 
-      // Simulate a reconnect: same auth + client, no session ID.
+      // A second client with the SAME token and client name initializes.
       const second = await request(app)
         .post("/mcp")
         .set("Content-Type", "application/json")
@@ -252,132 +253,22 @@ describe("HTTP Server", () => {
       const secondSid = second.headers["mcp-session-id"];
       expect(secondSid).toBeDefined();
       expect(secondSid).not.toBe(firstSid);
-      expect(sessions[firstSid]).toBeUndefined();
+
+      // Both sessions coexist.
+      expect(sessions[firstSid]).toBeDefined();
       expect(sessions[secondSid]).toBeDefined();
-    });
-  });
 
-  // ─── Session Coalescing ───────────────────────────────────────────
+      // The first session still serves requests — this is the exact call
+      // that used to 404 with "Session not found".
+      const followUp = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", authHeader)
+        .set("mcp-session-id", firstSid)
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 3 });
 
-  describe("findCoalescableSession", () => {
-    it("returns undefined when no sessions exist", () => {
-      expect(findCoalescableSession("token-a", "client-a")).toBeUndefined();
-    });
-
-    it("matches session with same auth token and client name", () => {
-      const sessionId = "test-session-1";
-      sessions[sessionId] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-      } as any;
-
-      const result = findCoalescableSession("token-a", "client-a");
-      expect(result).toBeDefined();
-      expect(result!.sessionId).toBe(sessionId);
-    });
-
-    it("does not match different auth token", () => {
-      sessions["test-session-1"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-      } as any;
-
-      expect(findCoalescableSession("token-b", "client-a")).toBeUndefined();
-    });
-
-    it("does not match different client name", () => {
-      sessions["test-session-1"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-      } as any;
-
-      expect(findCoalescableSession("token-a", "client-b")).toBeUndefined();
-    });
-
-    it("does not match stale sessions", () => {
-      sessions["test-session-1"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now() - SESSION_COALESCE_WINDOW_MS - 60_000, // past the window
-      } as any;
-
-      expect(findCoalescableSession("token-a", "client-a")).toBeUndefined();
-    });
-
-    it("still matches dead SSE session (but deprioritized)", () => {
-      sessions["test-session-1"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-        sseResponse: { writableEnded: true } as any,
-      } as any;
-
-      // Dead SSE sessions are still eligible — just deprioritized vs live ones
-      const result = findCoalescableSession("token-a", "client-a");
-      expect(result).toBeDefined();
-    });
-
-    it("matches when no SSE stream was ever opened", () => {
-      sessions["test-session-1"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-        sseResponse: undefined,
-      } as any;
-
-      const result = findCoalescableSession("token-a", "client-a");
-      expect(result).toBeDefined();
-    });
-
-    it("matches when SSE stream is alive", () => {
-      sessions["test-session-1"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-        sseResponse: { writableEnded: false } as any,
-      } as any;
-
-      const result = findCoalescableSession("token-a", "client-a");
-      expect(result).toBeDefined();
-    });
-
-    it("prefers live SSE session over dead SSE session", () => {
-      sessions["dead-sse"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-        sseResponse: { writableEnded: true } as any,
-      } as any;
-
-      sessions["live-sse"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now() - 5000, // older but live SSE
-        sseResponse: { writableEnded: false } as any,
-      } as any;
-
-      const result = findCoalescableSession("token-a", "client-a");
-      expect(result!.sessionId).toBe("live-sse");
-    });
-
-    it("picks the most recently active session when SSE status is equal", () => {
-      sessions["older"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now() - 5000,
-      } as any;
-
-      sessions["newer"] = {
-        authToken: "token-a",
-        mcpClient: "client-a",
-        lastActivityAt: Date.now(),
-      } as any;
-
-      const result = findCoalescableSession("token-a", "client-a");
-      expect(result!.sessionId).toBe("newer");
+      expect(followUp.status).toBe(200);
     });
   });
 
@@ -419,6 +310,54 @@ describe("HTTP Server", () => {
       expect(sessions[sessionId]).toBeDefined();
       expect(sessions[sessionId].authToken).toBe(token);
       expect(sessions[sessionId].mcpClient).toBe("claude-code");
+    });
+
+    // Full recovery loop for the sweep in Task "tiered sweep": a session
+    // evicted from memory (but preserved in the store) must serve the very
+    // next request via rehydration — the client never notices the eviction.
+    it("rehydrates a session that the sweep evicted", async () => {
+      const token = "evict-rehydrate-token";
+      const init = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", `Bearer ${token}`)
+        .send({
+          jsonrpc: "2.0",
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "test-client", version: "1.0" },
+          },
+          id: 1,
+        });
+
+      expect(init.status).toBe(200);
+      const sid = init.headers["mcp-session-id"];
+      expect(sessions[sid]).toBeDefined();
+
+      // Make the session eligible and run the sweep.
+      sessions[sid].lastActivityAt = Date.now() - SSE_DEAD_IDLE_TIMEOUT_MS - 1_000;
+      sweepStaleSessions(sessions, Date.now());
+      expect(sessions[sid]).toBeUndefined();
+
+      // The persisted record must have survived the eviction.
+      expect(await mockStore.getMcpSession(sid)).toBeDefined();
+
+      // Next request rehydrates and is served.
+      const followUp = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", `Bearer ${token}`)
+        .set("mcp-session-id", sid)
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 2 });
+
+      expect(followUp.status).not.toBe(404);
+      expect(sessions[sid]).toBeDefined();
+      expect(sessions[sid].authToken).toBe(token);
+      expect(sessions[sid].mcpClient).toBe("test-client");
     });
 
     it("refuses rehydration when the request token doesn't match the stored token", async () => {
@@ -1151,6 +1090,63 @@ describe("HTTP Server", () => {
         .set("Accept", "application/json, text/event-stream")
         .send({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "x", version: "1" } }, id: 1 });
       expect(guest.status).toBe(200);
+    });
+  });
+
+  // ─── Stale-Session Sweep ──────────────────────────────────────────
+  // The sweep is the ONLY reaper of idle sessions. It must be
+  // non-destructive: in-memory eviction only, never transport.close(),
+  // never store.removeMcpSession() — the persisted record is what lets a
+  // returning client rehydrate.
+
+  describe("sweepStaleSessions", () => {
+    it("evicts an SSE-dead session idle past the timeout, without touching the store", () => {
+      const removeSpy = vi.spyOn(mockStore, "removeMcpSession");
+      const timer = setInterval(() => {}, 60_000);
+      const session = {
+        authToken: "token-a",
+        mcpClient: "client-a",
+        lastActivityAt: Date.now() - SSE_DEAD_IDLE_TIMEOUT_MS - 1_000,
+        sseResponse: undefined,
+        sseKeepaliveTimer: timer,
+        transport: { close: vi.fn() },
+      } as any;
+      sessions["idle-dead"] = session;
+
+      sweepStaleSessions(sessions, Date.now());
+
+      expect(sessions["idle-dead"]).toBeUndefined();
+      expect(session.sseKeepaliveTimer).toBeUndefined(); // timer cleared
+      expect(session.transport.close).not.toHaveBeenCalled(); // non-destructive
+      expect(removeSpy).not.toHaveBeenCalled(); // Redis record survives
+      removeSpy.mockRestore();
+      clearInterval(timer); // belt-and-braces if the sweep didn't clear it
+    });
+
+    it("keeps an SSE-dead session that is within the idle timeout", () => {
+      sessions["idle-recent"] = {
+        authToken: "token-a",
+        mcpClient: "client-a",
+        lastActivityAt: Date.now() - SSE_DEAD_IDLE_TIMEOUT_MS + 60_000, // 1 min inside
+        sseResponse: undefined,
+      } as any;
+
+      sweepStaleSessions(sessions, Date.now());
+
+      expect(sessions["idle-recent"]).toBeDefined();
+    });
+
+    it("never evicts a session with a live SSE stream, regardless of idle time", () => {
+      sessions["live-sse"] = {
+        authToken: "token-a",
+        mcpClient: "client-a",
+        lastActivityAt: Date.now() - 24 * 60 * 60 * 1000, // idle a full day
+        sseResponse: { writableEnded: false },
+      } as any;
+
+      sweepStaleSessions(sessions, Date.now());
+
+      expect(sessions["live-sse"]).toBeDefined();
     });
   });
 });
