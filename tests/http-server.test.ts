@@ -77,6 +77,18 @@ describe("HTTP Server", () => {
       expect(res.body.grant_types_supported).toContain("refresh_token");
       expect(res.body.code_challenge_methods_supported).toContain("S256");
     });
+
+    it("advertises agent_auth registration metadata (auth.md convention)", async () => {
+      const res = await request(app).get("/.well-known/oauth-authorization-server");
+      expect(res.status).toBe(200);
+      expect(res.body.agent_auth).toBeDefined();
+      expect(res.body.agent_auth.skill).toBe("https://nestr.io/auth.md");
+      expect(res.body.agent_auth.register_uri).toMatch(/\/oauth\/register$/);
+      expect(res.body.agent_auth.identity_types_supported).toContain("anonymous");
+      expect(res.body.agent_auth.claim_uri).toBeTruthy();
+      expect(res.body.agent_auth.anonymous.credential_types_supported.length).toBeGreaterThan(0);
+      expect(res.body.agent_auth.anonymous.claim_uri).toBe(res.body.agent_auth.claim_uri);
+    });
   });
 
   // ─── Security Headers ─────────────────────────────────────────────
@@ -674,6 +686,52 @@ describe("HTTP Server", () => {
         });
 
       expect(res.status).toBe(201);
+    });
+
+    it("registers a device-only client without redirect_uris", async () => {
+      const res = await request(app)
+        .post("/oauth/register")
+        .set("Content-Type", "application/json")
+        .send({
+          client_name: "Headless Agent",
+          grant_types: ["urn:ietf:params:oauth:grant-type:device_code", "refresh_token"],
+          token_endpoint_auth_method: "none",
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.client_id).toMatch(/^mcp-/);
+      expect(res.body.redirect_uris).toEqual([]);
+      expect(res.body.grant_types).toEqual([
+        "urn:ietf:params:oauth:grant-type:device_code",
+        "refresh_token",
+      ]);
+      expect(res.body.token_endpoint_auth_method).toBe("none");
+    });
+
+    it("does not issue a client_secret when token_endpoint_auth_method is none", async () => {
+      const res = await request(app)
+        .post("/oauth/register")
+        .set("Content-Type", "application/json")
+        .send({
+          redirect_uris: ["http://localhost:3000/callback"],
+          token_endpoint_auth_method: "none",
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.client_secret).toBeUndefined();
+    });
+
+    it("still requires redirect_uris when grant_types include authorization_code", async () => {
+      const res = await request(app)
+        .post("/oauth/register")
+        .set("Content-Type", "application/json")
+        .send({
+          client_name: "Redirect Client",
+          grant_types: ["authorization_code", "refresh_token"],
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_client_metadata");
     });
   });
 

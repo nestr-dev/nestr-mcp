@@ -87,6 +87,25 @@ export function getProtectedResourceMetadata(mcpServerBaseUrl?: string): Protect
 }
 
 /**
+ * Auth.md agent registration metadata (workos/auth.md convention).
+ *
+ * Advertises how autonomous agents can self-register. Our RFC 7591 dynamic
+ * client registration is the convention's "anonymous" identity path, and the
+ * claim ceremony is Nestr's device verification page, where a user approves
+ * the agent's pending authorization.
+ */
+export interface AgentAuthMetadata {
+  skill: string;
+  register_uri: string;
+  identity_types_supported: string[];
+  claim_uri: string;
+  anonymous: {
+    credential_types_supported: string[];
+    claim_uri: string;
+  };
+}
+
+/**
  * Authorization Server Metadata (RFC 8414)
  *
  * Describes our OAuth server capabilities.
@@ -102,6 +121,7 @@ export interface AuthorizationServerMetadata {
   grant_types_supported: string[];
   code_challenge_methods_supported: string[];
   scopes_supported: string[];
+  agent_auth?: AgentAuthMetadata;
 }
 
 /**
@@ -132,6 +152,18 @@ export function getAuthorizationServerMetadata(mcpServerBaseUrl?: string): Autho
       ],
       code_challenge_methods_supported: ["S256"], // We handle PKCE in our proxy
       scopes_supported: config.scopes,
+      agent_auth: {
+        // Agent onboarding guide published on the marketing site
+        skill: "https://nestr.io/auth.md",
+        register_uri: `${mcpServerBaseUrl}/oauth/register`,
+        identity_types_supported: ["anonymous"],
+        // Nestr's device verification page, where a user approves the agent
+        claim_uri: config.deviceAuthorizationEndpoint,
+        anonymous: {
+          credential_types_supported: ["oauth2_authorization_code", "oauth2_device_code"],
+          claim_uri: config.deviceAuthorizationEndpoint,
+        },
+      },
     };
   }
 
