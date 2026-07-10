@@ -21,7 +21,7 @@ vi.mock("mcpcat", () => ({
   default: { wrap: (_server: unknown) => _server },
 }));
 
-const { app, sessions, publicSessions } = await import("../src/http.js");
+const { app, sessions, publicSessions, sweepStaleSessions, SSE_DEAD_IDLE_TIMEOUT_MS } = await import("../src/http.js");
 
 describe("HTTP Server", () => {
   beforeEach(() => {
@@ -1042,6 +1042,63 @@ describe("HTTP Server", () => {
         .set("Accept", "application/json, text/event-stream")
         .send({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "x", version: "1" } }, id: 1 });
       expect(guest.status).toBe(200);
+    });
+  });
+
+  // ─── Stale-Session Sweep ──────────────────────────────────────────
+  // The sweep is the ONLY reaper of idle sessions. It must be
+  // non-destructive: in-memory eviction only, never transport.close(),
+  // never store.removeMcpSession() — the persisted record is what lets a
+  // returning client rehydrate.
+
+  describe("sweepStaleSessions", () => {
+    it("evicts an SSE-dead session idle past the timeout, without touching the store", async () => {
+      const removeSpy = vi.spyOn(mockStore, "removeMcpSession");
+      const timer = setInterval(() => {}, 60_000);
+      const session = {
+        authToken: "token-a",
+        mcpClient: "client-a",
+        lastActivityAt: Date.now() - SSE_DEAD_IDLE_TIMEOUT_MS - 1_000,
+        sseResponse: undefined,
+        sseKeepaliveTimer: timer,
+        transport: { close: vi.fn() },
+      } as any;
+      sessions["idle-dead"] = session;
+
+      sweepStaleSessions(sessions, Date.now());
+
+      expect(sessions["idle-dead"]).toBeUndefined();
+      expect(session.sseKeepaliveTimer).toBeUndefined(); // timer cleared
+      expect(session.transport.close).not.toHaveBeenCalled(); // non-destructive
+      expect(removeSpy).not.toHaveBeenCalled(); // Redis record survives
+      removeSpy.mockRestore();
+      clearInterval(timer); // belt-and-braces if the sweep didn't clear it
+    });
+
+    it("keeps an SSE-dead session that is within the idle timeout", () => {
+      sessions["idle-recent"] = {
+        authToken: "token-a",
+        mcpClient: "client-a",
+        lastActivityAt: Date.now() - SSE_DEAD_IDLE_TIMEOUT_MS + 60_000, // 1 min inside
+        sseResponse: undefined,
+      } as any;
+
+      sweepStaleSessions(sessions, Date.now());
+
+      expect(sessions["idle-recent"]).toBeDefined();
+    });
+
+    it("never evicts a session with a live SSE stream, regardless of idle time", () => {
+      sessions["live-sse"] = {
+        authToken: "token-a",
+        mcpClient: "client-a",
+        lastActivityAt: Date.now() - 24 * 60 * 60 * 1000, // idle a full day
+        sseResponse: { writableEnded: false },
+      } as any;
+
+      sweepStaleSessions(sessions, Date.now());
+
+      expect(sessions["live-sse"]).toBeDefined();
     });
   });
 });

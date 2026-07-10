@@ -1090,10 +1090,12 @@ export const publicSessions: Record<string, SessionData> = {};
 let shuttingDown = false;
 let inFlightRequests = 0;
 
-// Bumped from 30 → 60min: AI assistants commonly gap 30+ min between Nestr
-// tool bursts (long codebase work between status updates). Keeping the in-memory
-// session avoids a rehydration round-trip on the next call.
-const SESSION_STALE_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes without activity
+// Idle timeout for sessions WITHOUT a live SSE stream. Eviction is in-memory
+// only (no transport.close(), no Redis delete) so a returning client — e.g.
+// an AI assistant gapping 30+ min between tool bursts — transparently
+// rehydrates from the persisted record (7-day TTL). Sessions holding a live
+// SSE stream are never swept: an open stream means a connected client.
+export const SSE_DEAD_IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 // Debounce for touchMcpSession. We refresh the Redis TTL at most this often
 // so a chatty client doesn't hammer the store.
 const MCP_SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -1102,21 +1104,26 @@ const MCP_SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 // every 25s keeps the connection alive — the SDK doesn't ping on its own.
 const SSE_KEEPALIVE_INTERVAL_MS = 25 * 1000; // 25 seconds
 
-// Periodically clean up dead sessions (closed SSE + stale).
-// We only drop the in-memory entry — the persistent Redis record lives on until
-// its own TTL so a late-returning client can still rehydrate.
-// .unref() so this timer doesn't prevent process exit (tests, graceful shutdown)
-function sweepStaleSessions(map: Record<string, SessionData>, now: number): void {
+// Periodically evict idle sessions that hold no live SSE stream. In-memory
+// eviction only — the persistent Redis record lives on until its own TTL so
+// a late-returning client rehydrates transparently (same mechanism as
+// deploys). This sweep is the ONLY reaper of idle sessions; nothing else may
+// close or delete a session another client might still be using.
+export function sweepStaleSessions(map: Record<string, SessionData>, now: number): void {
+  let evicted = 0;
   for (const [sid, session] of Object.entries(map)) {
     const sseAlive = session.sseResponse && !session.sseResponse.writableEnded;
-    const stale = (now - session.lastActivityAt) > SESSION_STALE_TIMEOUT_MS;
-    if (!sseAlive && stale) {
-      if (session.sseKeepaliveTimer) {
-        clearInterval(session.sseKeepaliveTimer);
-        session.sseKeepaliveTimer = undefined;
-      }
-      delete map[sid];
+    if (sseAlive) continue;
+    if (now - session.lastActivityAt <= SSE_DEAD_IDLE_TIMEOUT_MS) continue;
+    if (session.sseKeepaliveTimer) {
+      clearInterval(session.sseKeepaliveTimer);
+      session.sseKeepaliveTimer = undefined;
     }
+    delete map[sid];
+    evicted++;
+  }
+  if (evicted > 0) {
+    console.log(`[Sweep] Evicted ${evicted} idle session(s) from memory (persisted records preserved for rehydration)`);
   }
 }
 
