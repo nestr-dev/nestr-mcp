@@ -312,6 +312,53 @@ describe("HTTP Server", () => {
       expect(sessions[sessionId].mcpClient).toBe("claude-code");
     });
 
+    // Full recovery loop for the sweep in Task "tiered sweep": a session
+    // evicted from memory (but preserved in the store) must serve the very
+    // next request via rehydration — the client never notices the eviction.
+    it("rehydrates a session that the sweep evicted", async () => {
+      const token = "evict-rehydrate-token";
+      const init = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", `Bearer ${token}`)
+        .send({
+          jsonrpc: "2.0",
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "test-client", version: "1.0" },
+          },
+          id: 1,
+        });
+
+      expect(init.status).toBe(200);
+      const sid = init.headers["mcp-session-id"];
+      expect(sessions[sid]).toBeDefined();
+
+      // Make the session eligible and run the sweep.
+      sessions[sid].lastActivityAt = Date.now() - SSE_DEAD_IDLE_TIMEOUT_MS - 1_000;
+      sweepStaleSessions(sessions, Date.now());
+      expect(sessions[sid]).toBeUndefined();
+
+      // The persisted record must have survived the eviction.
+      expect(await mockStore.getMcpSession(sid)).toBeDefined();
+
+      // Next request rehydrates and is served.
+      const followUp = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", `Bearer ${token}`)
+        .set("mcp-session-id", sid)
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 2 });
+
+      expect(followUp.status).not.toBe(404);
+      expect(sessions[sid]).toBeDefined();
+      expect(sessions[sid].authToken).toBe(token);
+    });
+
     it("refuses rehydration when the request token doesn't match the stored token", async () => {
       const sessionId = "mismatch-session";
       await mockStore.storeMcpSession(sessionId, {
