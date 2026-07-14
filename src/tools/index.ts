@@ -955,9 +955,12 @@ export const schemas = {
 
   uploadFile: z.object({
     nestId: z.string().describe("Nest or comment ID to attach the file to"),
-    name: z.string().describe('File name including extension (e.g. "report.pdf")'),
-    contentType: z.string().describe('MIME type of the file (e.g. "application/pdf", "image/png")'),
-    dataBase64: z.string().describe("The file bytes, base64-encoded"),
+    name: z.string().describe('File name including extension (e.g. "notes.md", "data.csv")'),
+    contentType: z.string().describe('MIME type of the file (e.g. "text/markdown", "text/csv", "image/png")'),
+    content: z.string().optional().describe("File content as UTF-8 text. Use for text-native files you author directly (.md, .txt, .csv, .json, .html, .svg, code). Stored verbatim. Provide this OR dataBase64, not both."),
+    dataBase64: z.string().optional().describe("File bytes, base64-encoded. Use for binary content you already hold as base64. Provide this OR content, not both."),
+  }).refine((v) => (v.content !== undefined) !== (v.dataBase64 !== undefined), {
+    message: "Provide exactly one of content (UTF-8 text) or dataBase64 (base64 bytes).",
   }),
 
   deleteFile: z.object({
@@ -2104,16 +2107,17 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_upload_file",
-    description: "Upload a file and attach it to a nest (or comment; files are keyed by nestId, so a comment ID attaches the file to that comment). Send the file bytes base64-encoded in dataBase64, plus its name and MIME contentType. Any content type is accepted; the upload is rejected if it exceeds the server's maximum size (default 10MB). Returns the new file's descriptor (id, name, contentType, size). Auth: a token with write access to the nest.",
+    description: "Upload a file and attach it to a nest (or comment; files are keyed by nestId, so a comment ID attaches the file to that comment). Provide the file one of two ways: content (UTF-8 text, for text-native files you author directly such as .md, .csv, .json, .html, .svg, or code) or dataBase64 (base64-encoded bytes you already have). Any content type is accepted; the upload is rejected if it exceeds the server's maximum size (default 10MB). Returns the new file's descriptor (id, name, contentType, size). Auth: a token with write access to the nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest or comment ID to attach the file to" },
-        name: { type: "string", description: 'File name including extension (e.g. "report.pdf")' },
-        contentType: { type: "string", description: 'MIME type of the file (e.g. "application/pdf", "image/png")' },
-        dataBase64: { type: "string", description: "The file bytes, base64-encoded" },
+        name: { type: "string", description: 'File name including extension (e.g. "notes.md", "data.csv")' },
+        contentType: { type: "string", description: 'MIME type (e.g. "text/markdown", "text/csv", "image/png")' },
+        content: { type: "string", description: "File content as UTF-8 text (for text-native files: .md, .txt, .csv, .json, .html, .svg, code). Stored verbatim. Provide this OR dataBase64." },
+        dataBase64: { type: "string", description: "File bytes, base64-encoded. Provide this OR content." },
       },
-      required: ["nestId", "name", "contentType", "dataBase64"],
+      required: ["nestId", "name", "contentType"],
     },
     ...mutating,
   },
@@ -3331,10 +3335,13 @@ async function _handleToolCall(
 
       case "nestr_upload_file": {
         const parsed = schemas.uploadFile.parse(args);
+        // The REST API takes base64 bytes; base64-encode the text convenience here
+        // so the model can hand over content it authored without encoding it itself.
+        const dataBase64 = parsed.dataBase64 ?? Buffer.from(parsed.content ?? "", "utf-8").toString("base64");
         const file = await client.createNestFile(parsed.nestId, {
           name: parsed.name,
           contentType: parsed.contentType,
-          dataBase64: parsed.dataBase64,
+          dataBase64,
         });
         return formatResult({
           message: `Uploaded ${file.name} (${formatBytes(file.size)}) to ${parsed.nestId}.`,
