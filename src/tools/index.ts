@@ -471,10 +471,17 @@ const coerceIntArray = <T extends z.ZodTypeAny>(schema: T) =>
     return val;
   }, schema) as z.ZodEffects<T, z.output<T>, unknown>;
 
+// Shared description for the sort parameter on list/fetch tools. All of these
+// endpoints honor a `sort` query param server-side (field name, '-' prefix for
+// descending) — the same fields the search `sort:` operator uses.
+const SORT_DESCRIPTION =
+  "Field to sort by, e.g. 'title', 'createdAt', 'updatedAt', 'due', 'order' (manual order). Prefix with '-' for descending, e.g. '-updatedAt'.";
+
 // Tool input schemas using Zod
 export const schemas = {
   listWorkspaces: z.object({
     search: z.string().optional().describe("Search query to filter workspaces"),
+    sort: z.string().optional().describe(SORT_DESCRIPTION),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number (1-indexed) for pagination"),
   }),
@@ -498,6 +505,7 @@ export const schemas = {
   search: z.object({
     workspaceId: z.string().describe("Workspace ID to search in"),
     query: z.string().describe("Search query"),
+    sort: z.string().optional().describe(`${SORT_DESCRIPTION} Takes precedence over sort:/sort-order: operators in the query.`),
     limit: z.number().optional().describe("Max results per page. Omit on first call to see meta.total count."),
     page: z.number().optional().describe("Page number (1-indexed) for pagination"),
     _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Marketing projects\", \"Overdue tasks\"). Omit for default."),
@@ -511,6 +519,7 @@ export const schemas = {
 
   getNestChildren: z.object({
     nestId: z.string().describe("Parent nest ID"),
+    sort: z.string().optional().describe(SORT_DESCRIPTION),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
     hints: z.boolean().optional().describe("Include contextual hints on each child nest (default: true). Set to false for large result sets or bulk operations where contextual signals aren't needed."),
@@ -569,6 +578,7 @@ export const schemas = {
 
   listCircles: z.object({
     workspaceId: z.string().describe("Workspace ID"),
+    sort: z.string().optional().describe(SORT_DESCRIPTION),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
   }),
@@ -576,12 +586,14 @@ export const schemas = {
   getCircleRoles: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     circleId: z.string().describe("Circle ID"),
+    sort: z.string().optional().describe(SORT_DESCRIPTION),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
   }),
 
   listRoles: z.object({
     workspaceId: z.string().describe("Workspace ID"),
+    sort: z.string().optional().describe(SORT_DESCRIPTION),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
   }),
@@ -615,6 +627,7 @@ export const schemas = {
 
   getProjects: z.object({
     workspaceId: z.string().describe("Workspace ID"),
+    sort: z.string().optional().describe(SORT_DESCRIPTION),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
     _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Engineering projects\"). Omit for default."),
@@ -777,8 +790,10 @@ export const schemas = {
   listTensions: z.object({
     nestId: z.string().describe("ID of the circle or role to list tensions for"),
     search: z.string().optional().describe("Search query to filter tensions"),
+    sort: z.string().optional().describe(SORT_DESCRIPTION),
     limit: z.number().optional().describe("Max results to return"),
-    order: z.string().optional().describe("Sort order (e.g., 'createdAt', '-createdAt')"),
+    page: z.number().optional().describe("Page number for pagination"),
+    order: z.string().optional().describe("Deprecated alias of sort"),
   }),
 
   updateTension: z.object({
@@ -967,6 +982,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         search: { type: "string", description: "Search query to filter workspaces" },
+        sort: { type: "string", description: SORT_DESCRIPTION },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed) for pagination" },
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for bulk/index operations." },
@@ -1035,6 +1051,7 @@ export const toolDefinitions = [
       properties: {
         workspaceId: { type: "string", description: "Workspace ID to search in" },
         query: { type: "string", description: "Search query with optional operators (e.g., 'label:role', 'assignee:me completed:false')" },
+        sort: { type: "string", description: `${SORT_DESCRIPTION} Takes precedence over sort:/sort-order: operators in the query.` },
         limit: { type: "number", description: "Max results per page. Do NOT set on first call - let API return default with meta.total count showing total matches." },
         page: { type: "number", description: "Page number (1-indexed) for fetching additional pages" },
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for bulk/index operations." },
@@ -1068,6 +1085,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Parent nest ID" },
+        sort: { type: "string", description: SORT_DESCRIPTION },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
         hints: { type: "boolean", description: "Include contextual hints (default: true). Set to false for large result sets or bulk operations." },
@@ -1246,6 +1264,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
+        sort: { type: "string", description: SORT_DESCRIPTION },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large workspaces." },
@@ -1262,6 +1281,7 @@ export const toolDefinitions = [
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         circleId: { type: "string", description: "Circle ID" },
+        sort: { type: "string", description: SORT_DESCRIPTION },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large circles." },
@@ -1277,6 +1297,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
+        sort: { type: "string", description: SORT_DESCRIPTION },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large workspaces." },
@@ -1351,6 +1372,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
+        sort: { type: "string", description: SORT_DESCRIPTION },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large workspaces." },
@@ -1773,8 +1795,12 @@ export const toolDefinitions = [
       properties: {
         nestId: { type: "string", description: "ID of the circle or role to list tensions for" },
         search: { type: "string", description: "Search query to filter tensions" },
+        sort: { type: "string", description: SORT_DESCRIPTION },
         limit: { type: "number", description: "Max results to return" },
-        order: { type: "string", description: "Sort order (e.g., 'createdAt', '-createdAt')" },
+        page: { type: "number", description: "Page number (1-indexed)" },
+        // The legacy `order` alias is deliberately not advertised — the Zod
+        // schema still accepts it so existing callers keep working, but new
+        // clients should only learn the canonical `sort` param.
       },
       required: ["nestId"],
     },
@@ -2092,6 +2118,43 @@ export function unescapeRichTextFields(args: Record<string, unknown>): Record<st
 }
 
 /**
+ * Extract sort:/sort-order:/limit: directives from a search query string.
+ *
+ * The REST API only honors sorting and limits via the `sort`/`limit` query
+ * params — these operators inside the search string are dropped from free-text
+ * matching and otherwise ignored. Translating them here keeps the documented
+ * search syntax (see nestr_help('search')) working. The query string itself is
+ * sent unmodified: the server strips operator terms from text matching anyway.
+ *
+ * First occurrence wins for each directive, matching the server-side parsing
+ * of these operators elsewhere in Nestr.
+ */
+export function extractSearchDirectives(query: string): { sort?: string; limit?: number } {
+  let sortField: string | undefined;
+  let sortOrder: string | undefined;
+  let limit: number | undefined;
+
+  for (const term of query.split(/\s+/)) {
+    const lower = term.toLowerCase();
+    if (sortField === undefined && lower.startsWith("sort:")) {
+      sortField = term.slice("sort:".length);
+    } else if (sortOrder === undefined && lower.startsWith("sort-order:")) {
+      sortOrder = lower.slice("sort-order:".length);
+    } else if (limit === undefined && lower.startsWith("limit:")) {
+      const parsed = Number.parseInt(lower.slice("limit:".length), 10);
+      if (!Number.isNaN(parsed) && parsed > 0) limit = parsed;
+    }
+  }
+
+  let sort: string | undefined;
+  if (sortField) {
+    sort = sortOrder === "desc" && !sortField.startsWith("-") ? `-${sortField}` : sortField;
+  }
+
+  return { sort, limit };
+}
+
+/**
  * Per-tool-call context. Carries session-level info that diagnose-style
  * tools need but ordinary tools don't. Optional so tests/callers that don't
  * have a session (CLI, stdio mode) can still call handleToolCall.
@@ -2336,6 +2399,7 @@ async function _handleToolCall(
         const parsed = schemas.listWorkspaces.parse(args);
         const workspaces = await client.listWorkspaces({
           search: parsed.search,
+          sort: parsed.sort,
           limit: parsed.limit,
           page: parsed.page,
           cleanText: true,
@@ -2369,10 +2433,16 @@ async function _handleToolCall(
 
       case "nestr_search": {
         const parsed = schemas.search.parse(args);
+        const directives = extractSearchDirectives(parsed.query);
         const results = await client.searchWorkspace(
           parsed.workspaceId,
           parsed.query,
-          { limit: parsed.limit, page: parsed.page, cleanText: true }
+          {
+            sort: parsed.sort ?? directives.sort,
+            limit: parsed.limit ?? directives.limit,
+            page: parsed.page,
+            cleanText: true,
+          }
         );
         return formatResult(completableResponse(compactResponse(results), "search", parsed._listTitle || `Search: ${parsed.query}`));
       }
@@ -2390,6 +2460,7 @@ async function _handleToolCall(
       case "nestr_get_nest_children": {
         const parsed = schemas.getNestChildren.parse(args);
         const children = await client.getNestChildren(parsed.nestId, {
+          sort: parsed.sort,
           limit: parsed.limit,
           page: parsed.page,
           cleanText: true,
@@ -2529,6 +2600,7 @@ async function _handleToolCall(
       case "nestr_list_circles": {
         const parsed = schemas.listCircles.parse(args);
         const circles = await client.listCircles(parsed.workspaceId, {
+          sort: parsed.sort,
           limit: parsed.limit,
           page: parsed.page,
           cleanText: true,
@@ -2541,7 +2613,7 @@ async function _handleToolCall(
         const roles = await client.getCircleRoles(
           parsed.workspaceId,
           parsed.circleId,
-          { limit: parsed.limit, page: parsed.page, cleanText: true }
+          { sort: parsed.sort, limit: parsed.limit, page: parsed.page, cleanText: true }
         );
         return formatResult(compactResponse(roles, "role"));
       }
@@ -2549,6 +2621,7 @@ async function _handleToolCall(
       case "nestr_list_roles": {
         const parsed = schemas.listRoles.parse(args);
         const roles = await client.listRoles(parsed.workspaceId, {
+          sort: parsed.sort,
           limit: parsed.limit,
           page: parsed.page,
           cleanText: true,
@@ -2596,6 +2669,7 @@ async function _handleToolCall(
       case "nestr_get_projects": {
         const parsed = schemas.getProjects.parse(args);
         const projects = await client.getWorkspaceProjects(parsed.workspaceId, {
+          sort: parsed.sort,
           limit: parsed.limit,
           page: parsed.page,
           cleanText: true,
@@ -2928,7 +3002,14 @@ async function _handleToolCall(
         const tensions = await client.listTensions(
           parsed.nestId,
           parsed.search,
-          { limit: parsed.limit, order: parsed.order, cleanText: true }
+          {
+            // `order` is the legacy name for this option — it was never honored
+            // by the API (which reads `sort`), so route both through sort.
+            sort: parsed.sort ?? parsed.order,
+            limit: parsed.limit,
+            page: parsed.page,
+            cleanText: true,
+          }
         );
         return formatResult(compactResponse(enrichHints(tensions)));
       }

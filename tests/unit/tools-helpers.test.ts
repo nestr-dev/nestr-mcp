@@ -6,6 +6,9 @@ import {
   completableResponse,
   unescapeRichTextFields,
   addNestUrls,
+  extractSearchDirectives,
+  schemas,
+  toolDefinitions,
 } from "../../src/tools/index.js";
 
 // ─── compactResponse ────────────────────────────────────────────────
@@ -370,5 +373,84 @@ describe("unescapeRichTextFields", () => {
     const args = { description: "col1\\rcol2" };
     const result = unescapeRichTextFields(args);
     expect(result.description).toBe("col1\rcol2");
+  });
+});
+
+// ─── extractSearchDirectives ────────────────────────────────────────
+
+describe("extractSearchDirectives", () => {
+  it("returns no directives for a plain query", () => {
+    expect(extractSearchDirectives("label:project completed:false")).toEqual({
+      sort: undefined,
+      limit: undefined,
+    });
+  });
+
+  it("extracts sort: field", () => {
+    expect(extractSearchDirectives("label:project sort:createdAt").sort).toBe("createdAt");
+  });
+
+  it("combines sort: with sort-order:desc into a '-' prefix", () => {
+    expect(extractSearchDirectives("sort:updatedAt sort-order:desc").sort).toBe("-updatedAt");
+  });
+
+  it("treats sort-order:asc as ascending (no prefix)", () => {
+    expect(extractSearchDirectives("sort:title sort-order:asc").sort).toBe("title");
+  });
+
+  it("handles sort-order: appearing before sort:", () => {
+    expect(extractSearchDirectives("sort-order:desc sort:due").sort).toBe("-due");
+  });
+
+  it("does not double-prefix an already-descending field", () => {
+    expect(extractSearchDirectives("sort:-due sort-order:desc").sort).toBe("-due");
+  });
+
+  it("preserves field-name case and dotted paths", () => {
+    expect(
+      extractSearchDirectives("label:sprint sort:fieldValues.sprint_term.to sort-order:desc").sort
+    ).toBe("-fieldValues.sprint_term.to");
+  });
+
+  it("extracts limit:", () => {
+    expect(extractSearchDirectives("label:todo limit:10").limit).toBe(10);
+  });
+
+  it("ignores invalid or non-positive limit values", () => {
+    expect(extractSearchDirectives("limit:abc").limit).toBeUndefined();
+    expect(extractSearchDirectives("limit:0").limit).toBeUndefined();
+    expect(extractSearchDirectives("limit:-5").limit).toBeUndefined();
+  });
+
+  it("first occurrence wins for repeated directives", () => {
+    const result = extractSearchDirectives("sort:createdAt sort:title limit:5 limit:50");
+    expect(result.sort).toBe("createdAt");
+    expect(result.limit).toBe(5);
+  });
+
+  it("ignores sort-order: without a sort: field", () => {
+    expect(extractSearchDirectives("label:project sort-order:desc").sort).toBeUndefined();
+  });
+
+  it("matches directives case-insensitively", () => {
+    expect(extractSearchDirectives("Sort:due Sort-Order:DESC").sort).toBe("-due");
+  });
+});
+
+// ─── list_tensions legacy `order` alias ─────────────────────────────
+// `order` predates `sort` and was never honored by the API. It stays
+// parseable for existing callers but is no longer advertised to clients.
+
+describe("nestr_list_tensions order alias", () => {
+  it("Zod still accepts the legacy order field", () => {
+    const parsed = schemas.listTensions.parse({ nestId: "n1", order: "-createdAt" });
+    expect(parsed.order).toBe("-createdAt");
+  });
+
+  it("the advertised inputSchema exposes sort but not order", () => {
+    const tool = toolDefinitions.find((t) => t.name === "nestr_list_tensions")!;
+    const properties = (tool.inputSchema as { properties: Record<string, unknown> }).properties;
+    expect(properties.sort).toBeDefined();
+    expect(properties.order).toBeUndefined();
   });
 });

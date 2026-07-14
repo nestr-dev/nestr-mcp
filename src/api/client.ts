@@ -487,12 +487,14 @@ export class NestrClient {
 
   async listWorkspaces(options?: {
     search?: string;
+    sort?: string;
     limit?: number;
     page?: number;
     cleanText?: boolean;
   }): Promise<Nest[]> {
     const params = new URLSearchParams();
     if (options?.search) params.set("search", options.search);
+    if (options?.sort) params.set("sort", options.sort);
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
@@ -537,9 +539,10 @@ export class NestrClient {
   async searchWorkspace(
     workspaceId: string,
     search: string,
-    options?: { limit?: number; page?: number; cleanText?: boolean }
+    options?: { sort?: string; limit?: number; page?: number; cleanText?: boolean }
   ): Promise<Nest[]> {
     const params = new URLSearchParams({ search });
+    if (options?.sort) params.set("sort", options.sort);
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
@@ -549,9 +552,10 @@ export class NestrClient {
 
   async getWorkspaceProjects(
     workspaceId: string,
-    options?: { limit?: number; page?: number; cleanText?: boolean }
+    options?: { sort?: string; limit?: number; page?: number; cleanText?: boolean }
   ): Promise<Nest[]> {
     const params = new URLSearchParams();
+    if (options?.sort) params.set("sort", options.sort);
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
@@ -582,9 +586,10 @@ export class NestrClient {
 
   async getNestChildren(
     nestId: string,
-    options?: { limit?: number; page?: number; cleanText?: boolean; hints?: boolean }
+    options?: { sort?: string; limit?: number; page?: number; cleanText?: boolean; hints?: boolean }
   ): Promise<Nest[]> {
     const params = new URLSearchParams();
+    if (options?.sort) params.set("sort", options.sort);
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
@@ -800,9 +805,10 @@ export class NestrClient {
 
   async listCircles(
     workspaceId: string,
-    options?: { limit?: number; page?: number; cleanText?: boolean }
+    options?: { sort?: string; limit?: number; page?: number; cleanText?: boolean }
   ): Promise<Role[]> {
     const params = new URLSearchParams();
+    if (options?.sort) params.set("sort", options.sort);
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
@@ -827,9 +833,10 @@ export class NestrClient {
   async getCircleRoles(
     workspaceId: string,
     circleId: string,
-    options?: { limit?: number; page?: number; cleanText?: boolean }
+    options?: { sort?: string; limit?: number; page?: number; cleanText?: boolean }
   ): Promise<Role[]> {
     const params = new URLSearchParams();
+    if (options?.sort) params.set("sort", options.sort);
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
@@ -842,9 +849,10 @@ export class NestrClient {
 
   async listRoles(
     workspaceId: string,
-    options?: { limit?: number; page?: number; cleanText?: boolean }
+    options?: { sort?: string; limit?: number; page?: number; cleanText?: boolean }
   ): Promise<Role[]> {
     const params = new URLSearchParams();
+    if (options?.sort) params.set("sort", options.sort);
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
@@ -1184,12 +1192,14 @@ export class NestrClient {
   async listTensions(
     nestId: string,
     search?: string,
-    options?: { limit?: number; order?: string; cleanText?: boolean }
+    options?: { sort?: string; limit?: number; page?: number; cleanText?: boolean }
   ): Promise<Tension[]> {
     const params = new URLSearchParams();
     if (search) params.set("search", search);
+    // The API sorts via the `sort` query param (an `order` param is ignored).
+    if (options?.sort) params.set("sort", options.sort);
     if (options?.limit) params.set("limit", options.limit.toString());
-    if (options?.order) params.set("order", options.order);
+    if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
     const query = params.toString();
     return this.fetch<Tension[]>(

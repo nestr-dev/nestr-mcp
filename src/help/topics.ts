@@ -628,9 +628,9 @@ Use \`sort:\` to specify the sort field and \`sort-order:\` to set direction.
 - \`sort-order:asc\` - Ascending (default)
 - \`sort-order:desc\` - Descending
 
-**Defaults:**
-- Roles and circles: \`sort:title\` (alphabetical)
-- Work items (tasks, projects): \`sort:searchOrder\` (manual ordering set by users)
+**Default:** without an explicit sort, results come back in the API's natural order — always pass a sort when ordering matters.
+
+**Same sorting on fetch tools:** the list/fetch tools (\`nestr_get_projects\`, \`nestr_get_nest_children\`, \`nestr_list_circles\`, \`nestr_list_roles\`, \`nestr_get_circle_roles\`, \`nestr_list_workspaces\`, \`nestr_list_tensions\`) accept the same fields via their \`sort\` parameter — prefix with \`-\` for descending (e.g. \`sort: '-updatedAt'\`). No need to switch to search just to order results.
 
 **Examples:**
 \`\`\`
