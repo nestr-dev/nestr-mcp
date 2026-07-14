@@ -894,6 +894,34 @@ export class NestrClient {
     return response.data;
   }
 
+  /**
+   * Upload a file and attach it to a nest (a comment id works too). Wraps
+   * POST /nests/:id/files with a JSON body { name, contentType, dataBase64 },
+   * which returns { status, data }; this unwraps to the new file's descriptor
+   * (metadata only, no bytes).
+   */
+  async createNestFile(
+    nestId: string,
+    file: { name: string; contentType: string; dataBase64: string }
+  ): Promise<NestFileMeta> {
+    const response = await this.fetch<{ status: string; data: NestFileMeta }>(
+      `/nests/${nestId}/files`,
+      { method: "POST", body: JSON.stringify(file) }
+    );
+    return response.data;
+  }
+
+  /**
+   * Remove a file attachment from a nest (a comment id works too). Wraps
+   * DELETE /nests/:id/files/:fileId.
+   */
+  async deleteNestFile(nestId: string, fileId: string): Promise<void> {
+    await this.fetch<{ status: string }>(
+      `/nests/${nestId}/files/${fileId}`,
+      { method: "DELETE" }
+    );
+  }
+
   // ============ POSTS/COMMENTS ============
 
   async getNestPosts(
