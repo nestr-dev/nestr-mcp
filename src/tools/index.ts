@@ -3285,7 +3285,11 @@ async function _handleToolCall(
         // per-image limit of the model API the agent forwards it to, so inlining
         // the base64 would just make that call fail. Degrade to a metadata note.
         if (contentType.startsWith("image/")) {
-          const imageBytes = file.size || Buffer.byteLength(file.dataBase64, "base64");
+          // Not `??`: size can legitimately be 0 when a legacy file's metadata was
+          // lost (the API descriptor falls back to 0), and there we want the real
+          // byte length so the cap still applies. `> 0` recomputes on a zero/missing
+          // size; trusting a 0 would skip the guard on a large legacy image.
+          const imageBytes = file.size > 0 ? file.size : Buffer.byteLength(file.dataBase64, "base64");
           if (imageBytes > MAX_IMAGE_INLINE_BYTES) {
             return {
               content: [
