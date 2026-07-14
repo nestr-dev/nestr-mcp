@@ -127,6 +127,25 @@ export interface Label {
   userId?: string;
 }
 
+/** Metadata for a nest's file attachment (no contents). */
+export interface NestFileMeta {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  createdBy?: string;
+  createdAt?: string;
+}
+
+/** A nest's file attachment with its base64-encoded contents. */
+export interface NestFile {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  dataBase64: string;
+}
+
 export interface Role extends Nest {
   accountabilities?: string[];
   domains?: string[];
@@ -771,6 +790,60 @@ export class NestrClient {
     if (options?.cleanText) params.set("cleanText", "true");
 
     return this.fetch<Nest[]>(`/nests/${nestId}/search?${params}`);
+  }
+
+  // ============ FILE ATTACHMENTS ============
+
+  /**
+   * List file attachments on a nest (a comment id works too — files are keyed
+   * by nestId). Wraps GET /nests/:id/files, which returns { status, data: [...] };
+   * this unwraps to the metadata array.
+   */
+  async getNestFiles(nestId: string): Promise<NestFileMeta[]> {
+    const response = await this.fetch<{ status: string; data: NestFileMeta[] }>(
+      `/nests/${nestId}/files`
+    );
+    return response.data;
+  }
+
+  /**
+   * Read a single file attachment, including its base64-encoded contents.
+   * Wraps GET /nests/:id/files/:fileId, which returns { status, data }; this
+   * unwraps to the file object with dataBase64.
+   */
+  async getNestFile(nestId: string, fileId: string): Promise<NestFile> {
+    const response = await this.fetch<{ status: string; data: NestFile }>(
+      `/nests/${nestId}/files/${fileId}`
+    );
+    return response.data;
+  }
+
+  /**
+   * Upload a file and attach it to a nest (a comment id works too). Wraps
+   * POST /nests/:id/files with a JSON body { name, contentType, dataBase64 },
+   * which returns { status, data }; this unwraps to the new file's descriptor
+   * (metadata only, no bytes).
+   */
+  async createNestFile(
+    nestId: string,
+    file: { name: string; contentType: string; dataBase64: string }
+  ): Promise<NestFileMeta> {
+    const response = await this.fetch<{ status: string; data: NestFileMeta }>(
+      `/nests/${nestId}/files`,
+      { method: "POST", body: JSON.stringify(file) }
+    );
+    return response.data;
+  }
+
+  /**
+   * Remove a file attachment from a nest (a comment id works too). Wraps
+   * DELETE /nests/:id/files/:fileId.
+   */
+  async deleteNestFile(nestId: string, fileId: string): Promise<void> {
+    await this.fetch<{ status: string }>(
+      `/nests/${nestId}/files/${fileId}`,
+      { method: "DELETE" }
+    );
   }
 
   // ============ POSTS/COMMENTS ============

@@ -145,6 +145,8 @@ const HINT_URL_PATTERNS: Array<{
   },
   // /nests/{id}/posts → nestr_get_comments
   { pattern: /^\/nests\/([^/]+)\/posts$/, tool: "nestr_get_comments", params: (m) => ({ nestId: m[1] }) },
+  // /nests/{id}/files → nestr_get_nest_files
+  { pattern: /^\/nests\/([^/]+)\/files$/, tool: "nestr_get_nest_files", params: (m) => ({ nestId: m[1] }) },
   // /nests/{id}/tensions → nestr_list_tensions
   { pattern: /^\/nests\/([^/]+)\/tensions$/, tool: "nestr_list_tensions", params: (m) => ({ nestId: m[1] }) },
   // /nests/{id} → nestr_get_nest (must be last — catches all /nests/{id} patterns)
@@ -941,6 +943,30 @@ export const schemas = {
   ),
 
   diagnose: z.object({}).describe("No arguments — diagnose reads session state from the server."),
+  // File attachments (a comment id works as the nestId — files are keyed by nestId)
+  getNestFiles: z.object({
+    nestId: z.string().describe("Nest or comment ID whose file attachments to list"),
+  }),
+
+  readFile: z.object({
+    nestId: z.string().describe("Nest or comment ID the file is attached to"),
+    fileId: z.string().describe("File ID from nestr_get_nest_files"),
+  }),
+
+  uploadFile: z.object({
+    nestId: z.string().describe("Nest or comment ID to attach the file to"),
+    name: z.string().describe('File name including extension (e.g. "notes.md", "data.csv")'),
+    contentType: z.string().describe('MIME type of the file (e.g. "text/markdown", "text/csv", "image/png")'),
+    content: z.string().optional().describe("File content as UTF-8 text. Use for text-native files you author directly (.md, .txt, .csv, .json, .html, .svg, code). Stored verbatim. Provide this OR dataBase64, not both."),
+    dataBase64: z.string().optional().describe("File bytes, base64-encoded. Use for binary content you already hold as base64. Provide this OR content, not both."),
+  }).refine((v) => (v.content !== undefined) !== (v.dataBase64 !== undefined), {
+    message: "Provide exactly one of content (UTF-8 text) or dataBase64 (base64 bytes).",
+  }),
+
+  deleteFile: z.object({
+    nestId: z.string().describe("Nest or comment ID the file is attached to"),
+    fileId: z.string().describe("File ID from nestr_get_nest_files"),
+  }),
 };
 
 // Tool annotations for MCP - hints for clients on tool behavior
@@ -2051,6 +2077,60 @@ export const toolDefinitions = [
         targetId: { type: "string", description: "Target nest ID to unlink" },
       },
       required: ["nestId", "relation", "targetId"],
+    },
+    ...destructive,
+  },
+  {
+    name: "nestr_get_nest_files",
+    description: "List a nest's file attachments. A comment ID works too — files are keyed by nestId, so pass a comment ID to see files attached to that comment. Returns each file's id, name, contentType and size. Use nestr_read_file with a returned id to read one (images come back as viewable image content). Auth: any valid token with access to the nest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest or comment ID whose file attachments to list" },
+      },
+      required: ["nestId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_read_file",
+    description: "Read a single file attachment on a nest (or comment). Branches on contentType: images (image/*) return as viewable image content so you can see them (very large images return metadata only); JSON and text (application/json, text/*) return as decoded UTF-8 text (large text is truncated); PDFs and other types return their metadata only (cannot be inlined yet). Get file ids from nestr_get_nest_files. A comment ID works as the nestId. Auth: any valid token with access to the nest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest or comment ID the file is attached to" },
+        fileId: { type: "string", description: "File ID from nestr_get_nest_files" },
+      },
+      required: ["nestId", "fileId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_upload_file",
+    description: "Upload a file and attach it to a nest (or comment; files are keyed by nestId, so a comment ID attaches the file to that comment). Provide the file one of two ways: content (UTF-8 text, for text-native files you author directly such as .md, .csv, .json, .html, .svg, or code) or dataBase64 (base64-encoded bytes you already have). Any content type is accepted; the upload is rejected if it exceeds the server's maximum size (default 10MB). Returns the new file's descriptor (id, name, contentType, size). Auth: a token with write access to the nest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest or comment ID to attach the file to" },
+        name: { type: "string", description: 'File name including extension (e.g. "notes.md", "data.csv")' },
+        contentType: { type: "string", description: 'MIME type (e.g. "text/markdown", "text/csv", "image/png")' },
+        content: { type: "string", description: "File content as UTF-8 text (for text-native files: .md, .txt, .csv, .json, .html, .svg, code). Stored verbatim. Provide this OR dataBase64." },
+        dataBase64: { type: "string", description: "File bytes, base64-encoded. Provide this OR content." },
+      },
+      required: ["nestId", "name", "contentType"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_delete_file",
+    description: "Delete a file attachment from a nest (or comment). Get the file id from nestr_get_nest_files. A comment ID works as the nestId. This permanently removes the file. Auth: a token with delete access to the nest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest or comment ID the file is attached to" },
+        fileId: { type: "string", description: "File ID from nestr_get_nest_files" },
+      },
+      required: ["nestId", "fileId"],
     },
     ...destructive,
   },
@@ -3182,6 +3262,103 @@ async function _handleToolCall(
         return formatResult({ message: "Graph link removed" });
       }
 
+      case "nestr_get_nest_files": {
+        const parsed = schemas.getNestFiles.parse(args);
+        const files = await client.getNestFiles(parsed.nestId);
+        if (files.length === 0) {
+          return { content: [{ type: "text", text: `No file attachments on ${parsed.nestId}.` }] };
+        }
+        const lines = files.map(
+          (f) => `- ${f.id} — ${f.name} (${f.contentType}, ${formatBytes(f.size)})`
+        );
+        const text = `${files.length} file${files.length === 1 ? "" : "s"} attached to ${parsed.nestId}. Read one with nestr_read_file({ nestId: "${parsed.nestId}", fileId: "<id>" }).\n\n${lines.join("\n")}`;
+        return { content: [{ type: "text", text }] };
+      }
+
+      case "nestr_read_file": {
+        const parsed = schemas.readFile.parse(args);
+        const file = await client.getNestFile(parsed.nestId, parsed.fileId);
+        const contentType = file.contentType || "application/octet-stream";
+
+        // Images: return as a viewable image content item (mirrors nestr_help).
+        // Guard the size first — an image over MAX_IMAGE_INLINE_BYTES exceeds the
+        // per-image limit of the model API the agent forwards it to, so inlining
+        // the base64 would just make that call fail. Degrade to a metadata note.
+        if (contentType.startsWith("image/")) {
+          // Not `??`: size can legitimately be 0 when a legacy file's metadata was
+          // lost (the API descriptor falls back to 0), and there we want the real
+          // byte length so the cap still applies. `> 0` recomputes on a zero/missing
+          // size; trusting a 0 would skip the guard on a large legacy image.
+          const imageBytes = file.size > 0 ? file.size : Buffer.byteLength(file.dataBase64, "base64");
+          if (imageBytes > MAX_IMAGE_INLINE_BYTES) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `File: ${file.name}\nContent type: ${contentType}\nSize: ${formatBytes(imageBytes)}\n\nThis image is too large to inline (limit ${formatBytes(MAX_IMAGE_INLINE_BYTES)}). Download it directly to view the content.`,
+                },
+              ],
+            };
+          }
+          return {
+            content: [
+              { type: "text", text: `File: ${file.name} (${contentType}, ${formatBytes(file.size)})` },
+              { type: "image", data: file.dataBase64, mimeType: contentType },
+            ],
+          };
+        }
+
+        // JSON / text / CSV: decode to UTF-8 and return as a text block.
+        if (
+          contentType.startsWith("text/") ||
+          contentType.startsWith("application/json")
+        ) {
+          const decoded = Buffer.from(file.dataBase64, "base64").toString("utf-8");
+          const { text: body, truncated } = capText(decoded);
+          const note = truncated
+            ? `\n\n_(truncated — file is ${formatBytes(file.size)}; showing the first ${MAX_TEXT_FILE_CHARS} characters)_`
+            : "";
+          return {
+            content: [
+              { type: "text", text: `File: ${file.name} (${contentType}, ${formatBytes(file.size)})\n\n${body}${note}` },
+            ],
+          };
+        }
+
+        // PDFs and everything else: metadata only. The ToolResult content type
+        // supports text + image blocks, so a non-image binary can't be inlined yet.
+        return {
+          content: [
+            {
+              type: "text",
+              text: `File: ${file.name}\nContent type: ${contentType}\nSize: ${formatBytes(file.size)}\n\nThis file type can't be inlined yet — only images (returned as viewable image content) and text/JSON (returned as decoded text) are supported.`,
+            },
+          ],
+        };
+      }
+
+      case "nestr_upload_file": {
+        const parsed = schemas.uploadFile.parse(args);
+        // The REST API takes base64 bytes; base64-encode the text convenience here
+        // so the model can hand over content it authored without encoding it itself.
+        const dataBase64 = parsed.dataBase64 ?? Buffer.from(parsed.content ?? "", "utf-8").toString("base64");
+        const file = await client.createNestFile(parsed.nestId, {
+          name: parsed.name,
+          contentType: parsed.contentType,
+          dataBase64,
+        });
+        return formatResult({
+          message: `Uploaded ${file.name} (${formatBytes(file.size)}) to ${parsed.nestId}.`,
+          file,
+        });
+      }
+
+      case "nestr_delete_file": {
+        const parsed = schemas.deleteFile.parse(args);
+        await client.deleteNestFile(parsed.nestId, parsed.fileId);
+        return formatResult({ message: `Deleted file ${parsed.fileId} from ${parsed.nestId}.` });
+      }
+
       default:
         return formatError({
           error: true,
@@ -3252,6 +3429,35 @@ function buildDiagnoseHint(snapshot: DiagnoseSnapshot | undefined): string {
     return "Bearer is expired (exp < now). The client should refresh.";
   }
   return "Server-side state looks healthy. If a tool is failing, include sessionCorrelationId in the bug report.";
+}
+
+// Cap on decoded text-file content returned by nestr_read_file, to bound token
+// cost on large files. ~200 KB of characters.
+const MAX_TEXT_FILE_CHARS = 200_000;
+
+/** Truncate decoded text to MAX_TEXT_FILE_CHARS, flagging whether it was cut. */
+function capText(text: string): { text: string; truncated: boolean } {
+  if (text.length <= MAX_TEXT_FILE_CHARS) return { text, truncated: false };
+  return { text: text.slice(0, MAX_TEXT_FILE_CHARS), truncated: true };
+}
+
+// Cap on an image returned inline by nestr_read_file. Above this the base64 blob
+// exceeds the ~5MB-per-image limit of the model API the agent forwards it to, so
+// we return metadata instead of an image block that call would reject.
+const MAX_IMAGE_INLINE_BYTES = 5 * 1024 * 1024;
+
+/** Human-readable byte size (e.g. "12.3 KB"). */
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "unknown size";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let size = bytes / 1024;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit++;
+  }
+  return `${size.toFixed(1)} ${units[unit]}`;
 }
 
 function formatResult(data: unknown): ToolResult {
