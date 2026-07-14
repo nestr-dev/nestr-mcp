@@ -941,6 +941,15 @@ export const schemas = {
   ),
 
   diagnose: z.object({}).describe("No arguments — diagnose reads session state from the server."),
+  // File attachments (a comment id works as the nestId — files are keyed by nestId)
+  getNestFiles: z.object({
+    nestId: z.string().describe("Nest or comment ID whose file attachments to list"),
+  }),
+
+  readFile: z.object({
+    nestId: z.string().describe("Nest or comment ID the file is attached to"),
+    fileId: z.string().describe("File ID from nestr_get_nest_files"),
+  }),
 };
 
 // Tool annotations for MCP - hints for clients on tool behavior
@@ -2053,6 +2062,31 @@ export const toolDefinitions = [
       required: ["nestId", "relation", "targetId"],
     },
     ...destructive,
+  },
+  {
+    name: "nestr_get_nest_files",
+    description: "List a nest's file attachments. A comment ID works too — files are keyed by nestId, so pass a comment ID to see files attached to that comment. Returns each file's id, name, contentType and size. Use nestr_read_file with a returned id to read one (images come back as viewable image content). Auth: any valid token with access to the nest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest or comment ID whose file attachments to list" },
+      },
+      required: ["nestId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_read_file",
+    description: "Read a single file attachment on a nest (or comment). Branches on contentType: images (image/*) return as viewable image content so you can see them; JSON and text (application/json, text/*) return as decoded UTF-8 text (large text is truncated); PDFs and other types return their metadata only (cannot be inlined yet). Get file ids from nestr_get_nest_files. A comment ID works as the nestId. Auth: any valid token with access to the nest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest or comment ID the file is attached to" },
+        fileId: { type: "string", description: "File ID from nestr_get_nest_files" },
+      },
+      required: ["nestId", "fileId"],
+    },
+    ...readOnly,
   },
 ];
 
@@ -3182,6 +3216,63 @@ async function _handleToolCall(
         return formatResult({ message: "Graph link removed" });
       }
 
+      case "nestr_get_nest_files": {
+        const parsed = schemas.getNestFiles.parse(args);
+        const files = await client.getNestFiles(parsed.nestId);
+        if (files.length === 0) {
+          return { content: [{ type: "text", text: `No file attachments on ${parsed.nestId}.` }] };
+        }
+        const lines = files.map(
+          (f) => `- ${f.id} — ${f.name} (${f.contentType}, ${formatBytes(f.size)})`
+        );
+        const text = `${files.length} file${files.length === 1 ? "" : "s"} attached to ${parsed.nestId}. Read one with nestr_read_file({ nestId: "${parsed.nestId}", fileId: "<id>" }).\n\n${lines.join("\n")}`;
+        return { content: [{ type: "text", text }] };
+      }
+
+      case "nestr_read_file": {
+        const parsed = schemas.readFile.parse(args);
+        const file = await client.getNestFile(parsed.nestId, parsed.fileId);
+        const contentType = file.contentType || "application/octet-stream";
+
+        // Images: return as a viewable image content item (mirrors nestr_help).
+        if (contentType.startsWith("image/")) {
+          return {
+            content: [
+              { type: "text", text: `File: ${file.name} (${contentType}, ${formatBytes(file.size)})` },
+              { type: "image", data: file.dataBase64, mimeType: contentType },
+            ],
+          };
+        }
+
+        // JSON / text / CSV: decode to UTF-8 and return as a text block.
+        if (
+          contentType.startsWith("text/") ||
+          contentType === "application/json"
+        ) {
+          const decoded = Buffer.from(file.dataBase64, "base64").toString("utf-8");
+          const { text: body, truncated } = capText(decoded);
+          const note = truncated
+            ? `\n\n_(truncated — file is ${formatBytes(file.size)}; showing the first ${MAX_TEXT_FILE_CHARS} characters)_`
+            : "";
+          return {
+            content: [
+              { type: "text", text: `File: ${file.name} (${contentType}, ${formatBytes(file.size)})\n\n${body}${note}` },
+            ],
+          };
+        }
+
+        // PDFs and everything else: metadata only. The ToolResult content type
+        // supports text + image blocks, so a non-image binary can't be inlined yet.
+        return {
+          content: [
+            {
+              type: "text",
+              text: `File: ${file.name}\nContent type: ${contentType}\nSize: ${formatBytes(file.size)}\n\nThis file type can't be inlined yet — only images (returned as viewable image content) and text/JSON (returned as decoded text) are supported.`,
+            },
+          ],
+        };
+      }
+
       default:
         return formatError({
           error: true,
@@ -3252,6 +3343,30 @@ function buildDiagnoseHint(snapshot: DiagnoseSnapshot | undefined): string {
     return "Bearer is expired (exp < now). The client should refresh.";
   }
   return "Server-side state looks healthy. If a tool is failing, include sessionCorrelationId in the bug report.";
+}
+
+// Cap on decoded text-file content returned by nestr_read_file, to bound token
+// cost on large files. ~200 KB of characters.
+const MAX_TEXT_FILE_CHARS = 200_000;
+
+/** Truncate decoded text to MAX_TEXT_FILE_CHARS, flagging whether it was cut. */
+function capText(text: string): { text: string; truncated: boolean } {
+  if (text.length <= MAX_TEXT_FILE_CHARS) return { text, truncated: false };
+  return { text: text.slice(0, MAX_TEXT_FILE_CHARS), truncated: true };
+}
+
+/** Human-readable byte size (e.g. "12.3 KB"). */
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "unknown size";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let size = bytes / 1024;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit++;
+  }
+  return `${size.toFixed(1)} ${units[unit]}`;
 }
 
 function formatResult(data: unknown): ToolResult {
