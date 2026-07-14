@@ -1798,7 +1798,9 @@ export const toolDefinitions = [
         sort: { type: "string", description: SORT_DESCRIPTION },
         limit: { type: "number", description: "Max results to return" },
         page: { type: "number", description: "Page number (1-indexed)" },
-        order: { type: "string", description: "Deprecated alias of sort" },
+        // The legacy `order` alias is deliberately not advertised — the Zod
+        // schema still accepts it so existing callers keep working, but new
+        // clients should only learn the canonical `sort` param.
       },
       required: ["nestId"],
     },

@@ -7,6 +7,8 @@ import {
   unescapeRichTextFields,
   addNestUrls,
   extractSearchDirectives,
+  schemas,
+  toolDefinitions,
 } from "../../src/tools/index.js";
 
 // ─── compactResponse ────────────────────────────────────────────────
@@ -432,5 +434,23 @@ describe("extractSearchDirectives", () => {
 
   it("matches directives case-insensitively", () => {
     expect(extractSearchDirectives("Sort:due Sort-Order:DESC").sort).toBe("-due");
+  });
+});
+
+// ─── list_tensions legacy `order` alias ─────────────────────────────
+// `order` predates `sort` and was never honored by the API. It stays
+// parseable for existing callers but is no longer advertised to clients.
+
+describe("nestr_list_tensions order alias", () => {
+  it("Zod still accepts the legacy order field", () => {
+    const parsed = schemas.listTensions.parse({ nestId: "n1", order: "-createdAt" });
+    expect(parsed.order).toBe("-createdAt");
+  });
+
+  it("the advertised inputSchema exposes sort but not order", () => {
+    const tool = toolDefinitions.find((t) => t.name === "nestr_list_tensions")!;
+    const properties = (tool.inputSchema as { properties: Record<string, unknown> }).properties;
+    expect(properties.sort).toBeDefined();
+    expect(properties.order).toBeUndefined();
   });
 });
