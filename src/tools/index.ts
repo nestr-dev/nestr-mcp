@@ -950,6 +950,18 @@ export const schemas = {
     nestId: z.string().describe("Nest or comment ID the file is attached to"),
     fileId: z.string().describe("File ID from nestr_get_nest_files"),
   }),
+
+  uploadFile: z.object({
+    nestId: z.string().describe("Nest or comment ID to attach the file to"),
+    name: z.string().describe('File name including extension (e.g. "report.pdf")'),
+    contentType: z.string().describe('MIME type of the file (e.g. "application/pdf", "image/png")'),
+    dataBase64: z.string().describe("The file bytes, base64-encoded"),
+  }),
+
+  deleteFile: z.object({
+    nestId: z.string().describe("Nest or comment ID the file is attached to"),
+    fileId: z.string().describe("File ID from nestr_get_nest_files"),
+  }),
 };
 
 // Tool annotations for MCP - hints for clients on tool behavior
@@ -2087,6 +2099,34 @@ export const toolDefinitions = [
       required: ["nestId", "fileId"],
     },
     ...readOnly,
+  },
+  {
+    name: "nestr_upload_file",
+    description: "Upload a file and attach it to a nest (or comment; files are keyed by nestId, so a comment ID attaches the file to that comment). Send the file bytes base64-encoded in dataBase64, plus its name and MIME contentType. Any content type is accepted; the upload is rejected if it exceeds the server's maximum size (default 10MB). Returns the new file's descriptor (id, name, contentType, size). Auth: a token with write access to the nest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest or comment ID to attach the file to" },
+        name: { type: "string", description: 'File name including extension (e.g. "report.pdf")' },
+        contentType: { type: "string", description: 'MIME type of the file (e.g. "application/pdf", "image/png")' },
+        dataBase64: { type: "string", description: "The file bytes, base64-encoded" },
+      },
+      required: ["nestId", "name", "contentType", "dataBase64"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_delete_file",
+    description: "Delete a file attachment from a nest (or comment). Get the file id from nestr_get_nest_files. A comment ID works as the nestId. This permanently removes the file. Auth: a token with delete access to the nest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest or comment ID the file is attached to" },
+        fileId: { type: "string", description: "File ID from nestr_get_nest_files" },
+      },
+      required: ["nestId", "fileId"],
+    },
+    ...destructive,
   },
 ];
 
@@ -3285,6 +3325,25 @@ async function _handleToolCall(
             },
           ],
         };
+      }
+
+      case "nestr_upload_file": {
+        const parsed = schemas.uploadFile.parse(args);
+        const file = await client.createNestFile(parsed.nestId, {
+          name: parsed.name,
+          contentType: parsed.contentType,
+          dataBase64: parsed.dataBase64,
+        });
+        return formatResult({
+          message: `Uploaded ${file.name} (${formatBytes(file.size)}) to ${parsed.nestId}.`,
+          file,
+        });
+      }
+
+      case "nestr_delete_file": {
+        const parsed = schemas.deleteFile.parse(args);
+        await client.deleteNestFile(parsed.nestId, parsed.fileId);
+        return formatResult({ message: `Deleted file ${parsed.fileId} from ${parsed.nestId}.` });
       }
 
       default:

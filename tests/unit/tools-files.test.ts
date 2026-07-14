@@ -246,4 +246,101 @@ describe("file attachment tools", () => {
     const [url] = mockFetch.mock.calls[0];
     expect(url).toBe("https://api.test.io/api/nests/nest-1/files/f1");
   });
+
+  // ─── nestr_upload_file ──────────────────────────────────────────
+
+  it("nestr_upload_file POSTs the file body and returns its descriptor", async () => {
+    const dataBase64 = Buffer.from("hello").toString("base64");
+    const descriptor = { id: "f9", name: "greeting.txt", contentType: "text/plain", size: 5, createdBy: "u1", createdAt: "2026-07-14" };
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: descriptor }));
+
+    const result = await handleToolCall(client, "nestr_upload_file", {
+      nestId: "nest-1", name: "greeting.txt", contentType: "text/plain", dataBase64,
+    });
+    expect(result.isError).toBeFalsy();
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/nest-1/files");
+    expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body as string)).toEqual({ name: "greeting.txt", contentType: "text/plain", dataBase64 });
+
+    const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+    expect((parsed.file as { id: string }).id).toBe("f9");
+    expect(parsed.message).toContain("greeting.txt");
+  });
+
+  it("nestr_upload_file attaches to a comment id (files keyed by nestId)", async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(200, { status: "success", data: { id: "f1", name: "a.png", contentType: "image/png", size: 3 } })
+    );
+    await handleToolCall(client, "nestr_upload_file", {
+      nestId: "comment-7", name: "a.png", contentType: "image/png", dataBase64: "AAAA",
+    });
+    const [url] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/comment-7/files");
+  });
+
+  it("nestr_upload_file requires name, contentType and dataBase64", async () => {
+    const result = await handleToolCall(client, "nestr_upload_file", { nestId: "nest-1" });
+    expect(result.isError).toBe(true);
+    const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+    expect(parsed.code).toBe("VALIDATION");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("nestr_upload_file surfaces an over-size rejection as an error", async () => {
+    mockFetch.mockResolvedValue(mockResponse(422, { message: "File exceeds the maximum upload size of 10485760 bytes" }));
+    const result = await handleToolCall(client, "nestr_upload_file", {
+      nestId: "nest-1", name: "big.bin", contentType: "application/octet-stream", dataBase64: "AAAA",
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  // ─── nestr_delete_file ──────────────────────────────────────────
+
+  it("nestr_delete_file DELETEs /nests/:id/files/:fileId", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success" }));
+    const result = await handleToolCall(client, "nestr_delete_file", { nestId: "nest-1", fileId: "f9" });
+    expect(result.isError).toBeFalsy();
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/nest-1/files/f9");
+    expect(opts.method).toBe("DELETE");
+    const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+    expect(parsed.message).toContain("f9");
+  });
+
+  it("nestr_delete_file requires nestId and fileId", async () => {
+    const result = await handleToolCall(client, "nestr_delete_file", { nestId: "nest-1" });
+    expect(result.isError).toBe(true);
+    const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+    expect(parsed.code).toBe("VALIDATION");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("nestr_delete_file surfaces a 404 as NOT_FOUND", async () => {
+    mockFetch.mockResolvedValue(mockResponse(404, { message: "Could not find file" }));
+    const result = await handleToolCall(client, "nestr_delete_file", { nestId: "nest-1", fileId: "missing" });
+    expect(result.isError).toBe(true);
+    const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+    expect(parsed.code).toBe("NOT_FOUND");
+  });
+
+  it("createNestFile unwraps { status, data } and POSTs", async () => {
+    const descriptor = { id: "f1", name: "a.txt", contentType: "text/plain", size: 2 };
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: descriptor }));
+    const result = await client.createNestFile("nest-1", { name: "a.txt", contentType: "text/plain", dataBase64: "AAA=" });
+    expect(result).toEqual(descriptor);
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/nest-1/files");
+    expect(opts.method).toBe("POST");
+  });
+
+  it("deleteNestFile issues a DELETE to the file URL", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success" }));
+    await client.deleteNestFile("nest-1", "f1");
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/nest-1/files/f1");
+    expect(opts.method).toBe("DELETE");
+  });
 });
