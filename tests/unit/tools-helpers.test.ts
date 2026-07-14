@@ -139,6 +139,18 @@ describe("enrichHints", () => {
     });
   });
 
+  it("adds toolCall to /nests/{id}/files URL", () => {
+    const data = {
+      _id: "nest1",
+      hints: [{ type: "files", label: "Files", severity: "info", url: "/nests/abc123/files" }],
+    };
+    const result = enrichHints(data) as any;
+    expect(result.hints[0].toolCall).toEqual({
+      tool: "nestr_get_nest_files",
+      params: { nestId: "abc123" },
+    });
+  });
+
   it("adds toolCall to /nests/{id}/tensions URL", () => {
     const data = {
       _id: "nest1",

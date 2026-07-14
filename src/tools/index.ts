@@ -145,6 +145,8 @@ const HINT_URL_PATTERNS: Array<{
   },
   // /nests/{id}/posts → nestr_get_comments
   { pattern: /^\/nests\/([^/]+)\/posts$/, tool: "nestr_get_comments", params: (m) => ({ nestId: m[1] }) },
+  // /nests/{id}/files → nestr_get_nest_files
+  { pattern: /^\/nests\/([^/]+)\/files$/, tool: "nestr_get_nest_files", params: (m) => ({ nestId: m[1] }) },
   // /nests/{id}/tensions → nestr_list_tensions
   { pattern: /^\/nests\/([^/]+)\/tensions$/, tool: "nestr_list_tensions", params: (m) => ({ nestId: m[1] }) },
   // /nests/{id} → nestr_get_nest (must be last — catches all /nests/{id} patterns)
