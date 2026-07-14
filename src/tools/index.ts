@@ -2077,7 +2077,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_read_file",
-    description: "Read a single file attachment on a nest (or comment). Branches on contentType: images (image/*) return as viewable image content so you can see them; JSON and text (application/json, text/*) return as decoded UTF-8 text (large text is truncated); PDFs and other types return their metadata only (cannot be inlined yet). Get file ids from nestr_get_nest_files. A comment ID works as the nestId. Auth: any valid token with access to the nest.",
+    description: "Read a single file attachment on a nest (or comment). Branches on contentType: images (image/*) return as viewable image content so you can see them (very large images return metadata only); JSON and text (application/json, text/*) return as decoded UTF-8 text (large text is truncated); PDFs and other types return their metadata only (cannot be inlined yet). Get file ids from nestr_get_nest_files. A comment ID works as the nestId. Auth: any valid token with access to the nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3235,7 +3235,21 @@ async function _handleToolCall(
         const contentType = file.contentType || "application/octet-stream";
 
         // Images: return as a viewable image content item (mirrors nestr_help).
+        // Guard the size first — an image over MAX_IMAGE_INLINE_BYTES exceeds the
+        // per-image limit of the model API the agent forwards it to, so inlining
+        // the base64 would just make that call fail. Degrade to a metadata note.
         if (contentType.startsWith("image/")) {
+          const imageBytes = file.size || Buffer.byteLength(file.dataBase64, "base64");
+          if (imageBytes > MAX_IMAGE_INLINE_BYTES) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `File: ${file.name}\nContent type: ${contentType}\nSize: ${formatBytes(imageBytes)}\n\nThis image is too large to inline (limit ${formatBytes(MAX_IMAGE_INLINE_BYTES)}). Download it directly to view the content.`,
+                },
+              ],
+            };
+          }
           return {
             content: [
               { type: "text", text: `File: ${file.name} (${contentType}, ${formatBytes(file.size)})` },
@@ -3247,7 +3261,7 @@ async function _handleToolCall(
         // JSON / text / CSV: decode to UTF-8 and return as a text block.
         if (
           contentType.startsWith("text/") ||
-          contentType === "application/json"
+          contentType.startsWith("application/json")
         ) {
           const decoded = Buffer.from(file.dataBase64, "base64").toString("utf-8");
           const { text: body, truncated } = capText(decoded);
@@ -3354,6 +3368,11 @@ function capText(text: string): { text: string; truncated: boolean } {
   if (text.length <= MAX_TEXT_FILE_CHARS) return { text, truncated: false };
   return { text: text.slice(0, MAX_TEXT_FILE_CHARS), truncated: true };
 }
+
+// Cap on an image returned inline by nestr_read_file. Above this the base64 blob
+// exceeds the ~5MB-per-image limit of the model API the agent forwards it to, so
+// we return metadata instead of an image block that call would reject.
+const MAX_IMAGE_INLINE_BYTES = 5 * 1024 * 1024;
 
 /** Human-readable byte size (e.g. "12.3 KB"). */
 function formatBytes(bytes: number): string {

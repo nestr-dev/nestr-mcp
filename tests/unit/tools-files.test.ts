@@ -108,6 +108,24 @@ describe("file attachment tools", () => {
     expect((textBlocks[0] as { type: "text"; text: string }).text).toContain("diagram.png");
   });
 
+  it("nestr_read_file returns metadata (no image block) for an oversized image", async () => {
+    // A 6MB image is over MAX_IMAGE_INLINE_BYTES (5MB): forwarding the base64
+    // would exceed the model API's per-image limit, so degrade to a note.
+    mockFetch.mockResolvedValue(
+      mockResponse(200, {
+        status: "success",
+        data: { id: "f1b", name: "huge.png", contentType: "image/png", size: 6 * 1024 * 1024, dataBase64: "iVBORw0=" },
+      })
+    );
+
+    const result = await handleToolCall(client, "nestr_read_file", { nestId: "nest-1", fileId: "f1b" });
+    expect(result.isError).toBeFalsy();
+    expect(result.content.filter((c) => c.type === "image")).toHaveLength(0);
+    const text = (result.content[0] as { type: "text"; text: string }).text;
+    expect(text).toContain("huge.png");
+    expect(text).toMatch(/too large to inline/i);
+  });
+
   it("nestr_read_file decodes text/* files to UTF-8 text", async () => {
     const body = "hello,\nworld ✓";
     const dataBase64 = Buffer.from(body, "utf-8").toString("base64");
@@ -141,6 +159,25 @@ describe("file attachment tools", () => {
     const text = (result.content[0] as { type: "text"; text: string }).text;
     expect(text).toContain("data.json");
     expect(text).toContain('"a":1');
+  });
+
+  it("nestr_read_file decodes application/json with a charset parameter as text", async () => {
+    // Regression: `application/json; charset=utf-8` must not fall through to the
+    // metadata-only branch — a strict === check would miss the parameter variant.
+    const body = JSON.stringify({ ok: true });
+    const dataBase64 = Buffer.from(body, "utf-8").toString("base64");
+    mockFetch.mockResolvedValue(
+      mockResponse(200, {
+        status: "success",
+        data: { id: "f3b", name: "data.json", contentType: "application/json; charset=utf-8", size: body.length, dataBase64 },
+      })
+    );
+
+    const result = await handleToolCall(client, "nestr_read_file", { nestId: "nest-1", fileId: "f3b" });
+    expect(result.content.filter((c) => c.type === "image")).toHaveLength(0);
+    const text = (result.content[0] as { type: "text"; text: string }).text;
+    expect(text).toContain('"ok":true');
+    expect(text).not.toMatch(/can't be inlined|cannot be inlined/i);
   });
 
   it("nestr_read_file truncates very large text files", async () => {
