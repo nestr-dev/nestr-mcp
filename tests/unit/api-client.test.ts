@@ -253,6 +253,89 @@ describe("NestrClient", () => {
     logSpy.mockRestore();
   });
 
+  // ─── Sort / pagination pass-through ─────────────────────────────
+  // All list endpoints backed by the API's getMultiple handler honor a
+  // `sort` query param (field name, '-' prefix for descending).
+
+  it("listWorkspaces passes sort as a query param", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, []));
+    const client = createClient();
+    await client.listWorkspaces({ sort: "-updatedAt" });
+
+    const [url] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/workspaces?sort=-updatedAt");
+  });
+
+  it("searchWorkspace passes sort alongside search", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, []));
+    const client = createClient();
+    await client.searchWorkspace("ws1", "label:project", { sort: "due", limit: 5 });
+
+    const [url] = mockFetch.mock.calls[0];
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe("/api/workspaces/ws1/search");
+    expect(parsed.searchParams.get("search")).toBe("label:project");
+    expect(parsed.searchParams.get("sort")).toBe("due");
+    expect(parsed.searchParams.get("limit")).toBe("5");
+  });
+
+  it("getWorkspaceProjects passes sort, limit and page", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, []));
+    const client = createClient();
+    await client.getWorkspaceProjects("ws1", { sort: "-due", limit: 10, page: 2 });
+
+    const [url] = mockFetch.mock.calls[0];
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe("/api/workspaces/ws1/projects");
+    expect(parsed.searchParams.get("sort")).toBe("-due");
+    expect(parsed.searchParams.get("limit")).toBe("10");
+    expect(parsed.searchParams.get("page")).toBe("2");
+  });
+
+  it("getNestChildren passes sort", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, []));
+    const client = createClient();
+    await client.getNestChildren("nest1", { sort: "title" });
+
+    const [url] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/nest1/children?sort=title");
+  });
+
+  it("listCircles, getCircleRoles and listRoles pass sort", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, []));
+    const client = createClient();
+    await client.listCircles("ws1", { sort: "title" });
+    await client.getCircleRoles("ws1", "circle1", { sort: "title" });
+    await client.listRoles("ws1", { sort: "-createdAt" });
+
+    expect(mockFetch.mock.calls[0][0]).toBe("https://api.test.io/api/workspaces/ws1/circles?sort=title");
+    expect(mockFetch.mock.calls[1][0]).toBe("https://api.test.io/api/workspaces/ws1/circles/circle1/roles?sort=title");
+    expect(mockFetch.mock.calls[2][0]).toBe("https://api.test.io/api/workspaces/ws1/roles?sort=-createdAt");
+  });
+
+  it("listTensions sends sort (not the legacy order param) and page", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, []));
+    const client = createClient();
+    await client.listTensions("circle1", undefined, { sort: "-createdAt", limit: 20, page: 2 });
+
+    const [url] = mockFetch.mock.calls[0];
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe("/api/nests/circle1/tensions");
+    expect(parsed.searchParams.get("sort")).toBe("-createdAt");
+    expect(parsed.searchParams.get("order")).toBeNull();
+    expect(parsed.searchParams.get("limit")).toBe("20");
+    expect(parsed.searchParams.get("page")).toBe("2");
+  });
+
+  it("omits sort from the URL when not provided", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, []));
+    const client = createClient();
+    await client.getWorkspaceProjects("ws1", { cleanText: true });
+
+    const [url] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/workspaces/ws1/projects?cleanText=true");
+  });
+
   // ─── Elections ──────────────────────────────────────────────────
 
   it("createElection POSTs an election part to the tension parts endpoint", async () => {
