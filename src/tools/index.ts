@@ -153,6 +153,40 @@ const HINT_URL_PATTERNS: Array<{
   { pattern: /^\/nests\/([^/]+)$/, tool: "nestr_get_nest", params: (m) => ({ nestId: m[1] }) },
 ];
 
+// Type-based overrides for hints where the URL alone doesn't lead to an
+// actionable follow-up. Consulted BEFORE HINT_URL_PATTERNS in enrichHints —
+// when a type is registered here, this mapping wins.
+//
+// Example: `no_strategy` on a circle has url `/nests/{id}`, which would
+// otherwise resolve to `nestr_get_nest` — a no-op for the caller who already
+// has the nest. The actionable follow-up is setting the strategy field via
+// `nestr_update_nest`, which we surface here with a fields example so admins
+// can act on the hint in one call.
+type HintTypeToolCall = {
+  tool: string;
+  params: Record<string, unknown>;
+};
+const HINT_TYPE_TOOL_CALLS: Record<
+  string,
+  (nest: Record<string, unknown>) => HintTypeToolCall | null
+> = {
+  no_strategy(nest) {
+    const nestId = nest._id as string | undefined;
+    if (!nestId) return null;
+    const labels = (nest.labels as string[] | undefined) || [];
+    const isAnchorCircle = labels.includes("circleplus-anchor-circle")
+      || labels.includes("anchor-circle");
+    const fieldKey = isAnchorCircle ? "anchor-circle.strategy" : "circle.strategy";
+    return {
+      tool: "nestr_update_nest",
+      params: {
+        nestId,
+        fields: { [fieldKey]: "<strategy statement — what this circle prioritises now vs. defers>" },
+      },
+    };
+  },
+};
+
 /**
  * Single endpoint object the API returns inside hint.endpoints.
  * `body_example` is intentionally snake_case — it's a passthrough from the API.
@@ -184,7 +218,7 @@ interface Hint {
   endpoints?: ApiHintEndpoint[];
   lastPost?: string;
   readAt?: string;
-  toolCall?: { tool: string; params: Record<string, string> };
+  toolCall?: { tool: string; params: Record<string, unknown> };
   toolCalls?: EnrichedToolCall[];
 }
 
@@ -351,9 +385,16 @@ export function enrichHints<T>(data: T): T {
     record.hints = (record.hints as Hint[]).map((hint) => {
       const enriched: Hint = { ...hint };
 
-      // Legacy: single URL → toolCall. Kept for backwards compatibility with
-      // hints that pre-date the endpoints[] payload.
-      if (hint.url) {
+      // Type-based overrides win over URL matching for hints whose URL is
+      // just the nest itself (`/nests/{id}` → nestr_get_nest) and doesn't
+      // point at the actionable follow-up. Registered in HINT_TYPE_TOOL_CALLS.
+      const typeOverride = HINT_TYPE_TOOL_CALLS[hint.type];
+      const overrideCall = typeOverride ? typeOverride(record) : null;
+      if (overrideCall) {
+        enriched.toolCall = overrideCall;
+      } else if (hint.url) {
+        // Legacy: single URL → toolCall. Kept for backwards compatibility with
+        // hints that pre-date the endpoints[] payload.
         let rawUrl = hint.url;
         const apiPrefixMatch = rawUrl.match(/^https?:\/\/[^/]+\/api(\/.*)/);
         if (apiPrefixMatch) rawUrl = apiPrefixMatch[1];
