@@ -163,6 +163,51 @@ describe("enrichHints", () => {
     });
   });
 
+  it("maps no_strategy on a sub-circle to nestr_update_nest with circle.strategy example", () => {
+    // The API emits no_strategy with url /nests/{id} (would resolve to
+    // nestr_get_nest), but the actionable follow-up is setting the strategy
+    // field. The type-based override wins over the URL match.
+    const data = {
+      _id: "circle1",
+      labels: ["circleplus-circle"],
+      hints: [{
+        type: "no_strategy",
+        label: "This circle has no strategy defined.",
+        severity: "suggestion",
+        url: "/nests/circle1",
+      }],
+    };
+    const result = enrichHints(data) as any;
+    expect(result.hints[0].toolCall).toEqual({
+      tool: "nestr_update_nest",
+      params: {
+        nestId: "circle1",
+        fields: { "circle.strategy": "<strategy statement — what this circle prioritises now vs. defers>" },
+      },
+    });
+  });
+
+  it("maps no_strategy on an anchor-circle to nestr_update_nest with anchor-circle.strategy example", () => {
+    const data = {
+      _id: "ws1",
+      labels: ["circleplus-anchor-circle"],
+      hints: [{
+        type: "no_strategy",
+        label: "This workspace has no strategy defined.",
+        severity: "suggestion",
+        url: "/nests/ws1",
+      }],
+    };
+    const result = enrichHints(data) as any;
+    expect(result.hints[0].toolCall).toEqual({
+      tool: "nestr_update_nest",
+      params: {
+        nestId: "ws1",
+        fields: { "anchor-circle.strategy": "<strategy statement — what this circle prioritises now vs. defers>" },
+      },
+    });
+  });
+
   it("maps /nests/{id}/children?search=... to nestr_search", () => {
     const data = {
       _id: "nest1",
