@@ -746,6 +746,12 @@ export const schemas = {
     withUser: z.string().optional().describe("Scope DM considerations to the conversation with this user id. Agent internal considerations from direct-message runs are redacted to an anonymous marker unless you name that conversation's counterpart here."),
   }),
 
+  // Another user's cross-workspace activity (requires OAuth token)
+  userActivity: z.object({
+    userId: z.string().describe("The user whose activity to fetch."),
+    limit: z.number().optional().describe("Max activity items to return (default 50, max 200)."),
+  }),
+
   // User tension tools (requires OAuth token)
   listMyTensions: z.object({
     context: z.string().optional().describe("Optional context filter (e.g., workspace ID or circle ID)"),
@@ -1677,6 +1683,21 @@ export const toolDefinitions = [
         withUser: { type: "string", description: "Scope DM considerations to the conversation with this user id. Agent internal considerations from direct-message runs are redacted to an anonymous marker unless you name that conversation's counterpart here." },
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
       },
+    },
+    ...readOnly,
+  },
+  // Another user's cross-workspace activity (requires OAuth token)
+  {
+    name: "nestr_user_activity",
+    description: "Another user's activity across the workspaces you share with them, newest first. Lets an agent see what a colleague or another agent has done: their past considerations (with the tools used and the outcome), comments, governance changes, and other actions. Agent internal considerations from direct-message runs show their substance only when you are a participant of that conversation, otherwise an anonymous marker. Auth: OAuth only (user-scoped — workspace API keys lack user identity). On auth failure call nestr_diagnose.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        userId: { type: "string", description: "The user whose activity to fetch." },
+        limit: { type: "number", description: "Max activity items to return (default 50, max 200)." },
+        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
+      },
+      required: ["userId"],
     },
     ...readOnly,
   },
@@ -2989,6 +3010,14 @@ async function _handleToolCall(
         const activity = await client.getMyActivity({
           limit: parsed.limit,
           withUser: parsed.withUser,
+        });
+        return formatResult({ count: activity.length, activity });
+      }
+
+      case "nestr_user_activity": {
+        const parsed = schemas.userActivity.parse(args);
+        const activity = await client.getUserActivity(parsed.userId, {
+          limit: parsed.limit,
         });
         return formatResult({ count: activity.length, activity });
       }

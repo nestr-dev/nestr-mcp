@@ -1746,6 +1746,27 @@ export class NestrClient {
   }
 
   /**
+   * Get another user's activity, limited to the workspaces the caller shares with
+   * them, newest first. Lets an agent see what a colleague or another agent has
+   * done. Wraps GET /users/:userId/activity, unwrapping to the activity array.
+   *
+   * Considerations are gated to the caller: a direct-message run's substance is
+   * visible only when the caller is a participant of that conversation, otherwise
+   * an anonymous marker. There is no withUser scope here — that DM security warp
+   * applies only to your OWN activity via getMyActivity.
+   */
+  async getUserActivity(userId: string, options?: { limit?: number }): Promise<ActivityItem[]> {
+    const params = new URLSearchParams();
+    if (options?.limit !== undefined) params.set("limit", options.limit.toString());
+
+    const query = params.toString();
+    const response = await this.fetch<{ status: string; data: { activity: ActivityItem[] } }>(
+      `/users/${encodeURIComponent(userId)}/activity${query ? `?${query}` : ""}`
+    );
+    return response.data.activity;
+  }
+
+  /**
    * Get the current authenticated user's info.
    * Requires OAuth token - does not work with workspace API keys.
    * Used for analytics to get user_id for session stitching.
