@@ -740,6 +740,12 @@ export const schemas = {
     fullWorkspaces: z.boolean().optional().describe("Set true to include full workspace details (purpose, labels, governance type, user access roles). Recommended on first call to establish workspace context."),
   }),
 
+  // Current user's cross-workspace activity (requires OAuth token)
+  myActivity: z.object({
+    limit: z.number().optional().describe("Max activity items to return (default 50, max 200)."),
+    withUser: z.string().optional().describe("Scope DM considerations to the conversation with this user id. Agent internal considerations from direct-message runs are redacted to an anonymous marker unless you name that conversation's counterpart here."),
+  }),
+
   // User tension tools (requires OAuth token)
   listMyTensions: z.object({
     context: z.string().optional().describe("Optional context filter (e.g., workspace ID or circle ID)"),
@@ -1658,6 +1664,20 @@ export const toolDefinitions = [
       },
     },
     _meta: completableListUi,
+    ...readOnly,
+  },
+  // Current user's cross-workspace activity (requires OAuth token)
+  {
+    name: "nestr_my_activity",
+    description: "The caller's own activity across ALL their workspaces, newest first (gated by workspace membership and the token's scope). Not scoped to a project or a single nest — it's everything you've done. For an agent, this is how it sees what it has done: past considerations (with the tools used and the outcome), comments, governance changes, and other actions. Agent internal considerations from direct-message runs are redacted to an anonymous marker unless you pass withUser with that conversation's counterpart. Auth: OAuth only (user-scoped — workspace API keys lack user identity). On auth failure call nestr_diagnose.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        limit: { type: "number", description: "Max activity items to return (default 50, max 200)." },
+        withUser: { type: "string", description: "Scope DM considerations to the conversation with this user id. Agent internal considerations from direct-message runs are redacted to an anonymous marker unless you name that conversation's counterpart here." },
+        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
+      },
+    },
     ...readOnly,
   },
   // Label management
@@ -2962,6 +2982,15 @@ async function _handleToolCall(
         schemas.getDailyPlan.parse(args);
         const items = await client.getDailyPlan();
         return formatResult(completableResponse(compactResponse(items), "daily-plan", "Daily Plan"));
+      }
+
+      case "nestr_my_activity": {
+        const parsed = schemas.myActivity.parse(args);
+        const activity = await client.getMyActivity({
+          limit: parsed.limit,
+          withUser: parsed.withUser,
+        });
+        return formatResult({ count: activity.length, activity });
       }
 
       // Current user identity and workspace context

@@ -254,6 +254,39 @@ export interface Connection {
   updatedAt?: string;
 }
 
+/**
+ * One entry in the authenticated user's cross-workspace activity feed
+ * (GET /users/me/activity). Newest first.
+ *
+ * Two shapes share this type, discriminated by `type`:
+ * - Agent internal considerations: `type: "consideration"` with `summary`,
+ *   `tools`, `outcome`, `considerationCount`, `dm`, and `redacted` when the
+ *   substance was withheld (DM privacy — see getMyActivity's withUser option).
+ * - Everything else: `type: <verb>` with a human-readable `description`.
+ */
+export interface ActivityItem {
+  date: string;
+  workspaceId: string;
+  nestId: string;
+  nestTitle: string;
+  type: string;
+  /** Human-readable line for non-consideration activity. */
+  description?: string;
+  /** consideration: short summary of what the agent considered/did. */
+  summary?: string;
+  /** consideration: tool names invoked during the run. */
+  tools?: string[];
+  /** consideration: the run's outcome. */
+  outcome?: string;
+  /** consideration: how many considerations this entry rolls up. */
+  considerationCount?: number;
+  /** consideration: true when the run happened in a direct message. */
+  dm?: boolean;
+  /** consideration: true when the substance was redacted (summary is the marker). */
+  redacted?: boolean;
+  [key: string]: unknown;
+}
+
 export interface Tension extends Nest {
   status?: "draft" | "proposed" | "accepted" | "objected";
 }
@@ -1688,6 +1721,29 @@ export class NestrClient {
   }
 
   // ============ CURRENT USER ============
+
+  /**
+   * Get the authenticated user's own activity across ALL accessible workspaces
+   * (gated by membership + the token's nest-scope ceiling), newest first. Works
+   * for agents too, so a bot can recall what it has done. Wraps
+   * GET /users/me/activity, which returns { status, data: { activity: [...] } };
+   * this unwraps to the activity array.
+   *
+   * `withUser` is a DM privacy scope: agent internal considerations from
+   * direct-message runs are redacted to an anonymous marker unless the query
+   * names that conversation's counterpart via withUser.
+   */
+  async getMyActivity(options?: { limit?: number; withUser?: string }): Promise<ActivityItem[]> {
+    const params = new URLSearchParams();
+    if (options?.limit !== undefined) params.set("limit", options.limit.toString());
+    if (options?.withUser) params.set("withUser", options.withUser);
+
+    const query = params.toString();
+    const response = await this.fetch<{ status: string; data: { activity: ActivityItem[] } }>(
+      `/users/me/activity${query ? `?${query}` : ""}`
+    );
+    return response.data.activity;
+  }
 
   /**
    * Get the current authenticated user's info.
