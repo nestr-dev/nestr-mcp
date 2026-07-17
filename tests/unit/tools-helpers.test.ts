@@ -6,6 +6,9 @@ import {
   completableResponse,
   unescapeRichTextFields,
   addNestUrls,
+  extractSearchDirectives,
+  schemas,
+  toolDefinitions,
 } from "../../src/tools/index.js";
 
 // ─── compactResponse ────────────────────────────────────────────────
@@ -136,6 +139,18 @@ describe("enrichHints", () => {
     });
   });
 
+  it("adds toolCall to /nests/{id}/files URL", () => {
+    const data = {
+      _id: "nest1",
+      hints: [{ type: "files", label: "Files", severity: "info", url: "/nests/abc123/files" }],
+    };
+    const result = enrichHints(data) as any;
+    expect(result.hints[0].toolCall).toEqual({
+      tool: "nestr_get_nest_files",
+      params: { nestId: "abc123" },
+    });
+  });
+
   it("adds toolCall to /nests/{id}/tensions URL", () => {
     const data = {
       _id: "nest1",
@@ -145,6 +160,51 @@ describe("enrichHints", () => {
     expect(result.hints[0].toolCall).toEqual({
       tool: "nestr_list_tensions",
       params: { nestId: "abc123" },
+    });
+  });
+
+  it("maps no_strategy on a sub-circle to nestr_update_nest with circle.strategy example", () => {
+    // The API emits no_strategy with url /nests/{id} (would resolve to
+    // nestr_get_nest), but the actionable follow-up is setting the strategy
+    // field. The type-based override wins over the URL match.
+    const data = {
+      _id: "circle1",
+      labels: ["circleplus-circle"],
+      hints: [{
+        type: "no_strategy",
+        label: "This circle has no strategy defined.",
+        severity: "suggestion",
+        url: "/nests/circle1",
+      }],
+    };
+    const result = enrichHints(data) as any;
+    expect(result.hints[0].toolCall).toEqual({
+      tool: "nestr_update_nest",
+      params: {
+        nestId: "circle1",
+        fields: { "circle.strategy": "<strategy statement — what this circle prioritises now vs. defers>" },
+      },
+    });
+  });
+
+  it("maps no_strategy on an anchor-circle to nestr_update_nest with anchor-circle.strategy example", () => {
+    const data = {
+      _id: "ws1",
+      labels: ["circleplus-anchor-circle"],
+      hints: [{
+        type: "no_strategy",
+        label: "This workspace has no strategy defined.",
+        severity: "suggestion",
+        url: "/nests/ws1",
+      }],
+    };
+    const result = enrichHints(data) as any;
+    expect(result.hints[0].toolCall).toEqual({
+      tool: "nestr_update_nest",
+      params: {
+        nestId: "ws1",
+        fields: { "anchor-circle.strategy": "<strategy statement — what this circle prioritises now vs. defers>" },
+      },
     });
   });
 
@@ -370,5 +430,84 @@ describe("unescapeRichTextFields", () => {
     const args = { description: "col1\\rcol2" };
     const result = unescapeRichTextFields(args);
     expect(result.description).toBe("col1\rcol2");
+  });
+});
+
+// ─── extractSearchDirectives ────────────────────────────────────────
+
+describe("extractSearchDirectives", () => {
+  it("returns no directives for a plain query", () => {
+    expect(extractSearchDirectives("label:project completed:false")).toEqual({
+      sort: undefined,
+      limit: undefined,
+    });
+  });
+
+  it("extracts sort: field", () => {
+    expect(extractSearchDirectives("label:project sort:createdAt").sort).toBe("createdAt");
+  });
+
+  it("combines sort: with sort-order:desc into a '-' prefix", () => {
+    expect(extractSearchDirectives("sort:updatedAt sort-order:desc").sort).toBe("-updatedAt");
+  });
+
+  it("treats sort-order:asc as ascending (no prefix)", () => {
+    expect(extractSearchDirectives("sort:title sort-order:asc").sort).toBe("title");
+  });
+
+  it("handles sort-order: appearing before sort:", () => {
+    expect(extractSearchDirectives("sort-order:desc sort:due").sort).toBe("-due");
+  });
+
+  it("does not double-prefix an already-descending field", () => {
+    expect(extractSearchDirectives("sort:-due sort-order:desc").sort).toBe("-due");
+  });
+
+  it("preserves field-name case and dotted paths", () => {
+    expect(
+      extractSearchDirectives("label:sprint sort:fieldValues.sprint_term.to sort-order:desc").sort
+    ).toBe("-fieldValues.sprint_term.to");
+  });
+
+  it("extracts limit:", () => {
+    expect(extractSearchDirectives("label:todo limit:10").limit).toBe(10);
+  });
+
+  it("ignores invalid or non-positive limit values", () => {
+    expect(extractSearchDirectives("limit:abc").limit).toBeUndefined();
+    expect(extractSearchDirectives("limit:0").limit).toBeUndefined();
+    expect(extractSearchDirectives("limit:-5").limit).toBeUndefined();
+  });
+
+  it("first occurrence wins for repeated directives", () => {
+    const result = extractSearchDirectives("sort:createdAt sort:title limit:5 limit:50");
+    expect(result.sort).toBe("createdAt");
+    expect(result.limit).toBe(5);
+  });
+
+  it("ignores sort-order: without a sort: field", () => {
+    expect(extractSearchDirectives("label:project sort-order:desc").sort).toBeUndefined();
+  });
+
+  it("matches directives case-insensitively", () => {
+    expect(extractSearchDirectives("Sort:due Sort-Order:DESC").sort).toBe("-due");
+  });
+});
+
+// ─── list_tensions legacy `order` alias ─────────────────────────────
+// `order` predates `sort` and was never honored by the API. It stays
+// parseable for existing callers but is no longer advertised to clients.
+
+describe("nestr_list_tensions order alias", () => {
+  it("Zod still accepts the legacy order field", () => {
+    const parsed = schemas.listTensions.parse({ nestId: "n1", order: "-createdAt" });
+    expect(parsed.order).toBe("-createdAt");
+  });
+
+  it("the advertised inputSchema exposes sort but not order", () => {
+    const tool = toolDefinitions.find((t) => t.name === "nestr_list_tensions")!;
+    const properties = (tool.inputSchema as { properties: Record<string, unknown> }).properties;
+    expect(properties.sort).toBeDefined();
+    expect(properties.order).toBeUndefined();
   });
 });

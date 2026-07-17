@@ -280,8 +280,46 @@ describe("file attachment tools", () => {
     expect(url).toBe("https://api.test.io/api/nests/comment-7/files");
   });
 
-  it("nestr_upload_file requires name, contentType and dataBase64", async () => {
+  it("nestr_upload_file requires name and contentType", async () => {
     const result = await handleToolCall(client, "nestr_upload_file", { nestId: "nest-1" });
+    expect(result.isError).toBe(true);
+    const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+    expect(parsed.code).toBe("VALIDATION");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("nestr_upload_file accepts UTF-8 content and base64-encodes it for the API", async () => {
+    const body = "# Notes\nhello, world";
+    const descriptor = { id: "f10", name: "notes.md", contentType: "text/markdown", size: body.length };
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: descriptor }));
+
+    const result = await handleToolCall(client, "nestr_upload_file", {
+      nestId: "nest-1", name: "notes.md", contentType: "text/markdown", content: body,
+    });
+    expect(result.isError).toBeFalsy();
+
+    const [, opts] = mockFetch.mock.calls[0];
+    expect(JSON.parse(opts.body as string)).toEqual({
+      name: "notes.md",
+      contentType: "text/markdown",
+      dataBase64: Buffer.from(body, "utf-8").toString("base64"),
+    });
+  });
+
+  it("nestr_upload_file rejects providing both content and dataBase64", async () => {
+    const result = await handleToolCall(client, "nestr_upload_file", {
+      nestId: "nest-1", name: "x.txt", contentType: "text/plain", content: "hi", dataBase64: "aGk=",
+    });
+    expect(result.isError).toBe(true);
+    const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+    expect(parsed.code).toBe("VALIDATION");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("nestr_upload_file rejects providing neither content nor dataBase64", async () => {
+    const result = await handleToolCall(client, "nestr_upload_file", {
+      nestId: "nest-1", name: "x.txt", contentType: "text/plain",
+    });
     expect(result.isError).toBe(true);
     const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
     expect(parsed.code).toBe("VALIDATION");

@@ -271,17 +271,33 @@ app.post("/oauth/register", registerLimiter, express.json(), async (req: Request
       return;
     }
 
-    // Validate required fields
-    if (!redirect_uris || !Array.isArray(redirect_uris) || redirect_uris.length === 0) {
+    // RFC 7591: redirect_uris is only required for redirect-based grants.
+    // Device-code-only clients (headless agents) never redirect and may omit it.
+    const requestedGrantTypes: string[] =
+      Array.isArray(grant_types) && grant_types.length > 0
+        ? grant_types
+        : ["authorization_code", "refresh_token"];
+    const usesRedirectGrant =
+      requestedGrantTypes.includes("authorization_code") || requestedGrantTypes.includes("implicit");
+
+    if (redirect_uris !== undefined && !Array.isArray(redirect_uris)) {
       res.status(400).json({
         error: "invalid_client_metadata",
-        error_description: "redirect_uris is required and must be a non-empty array",
+        error_description: "redirect_uris must be an array",
+      });
+      return;
+    }
+    const redirectUris: string[] = redirect_uris ?? [];
+    if (usesRedirectGrant && redirectUris.length === 0) {
+      res.status(400).json({
+        error: "invalid_client_metadata",
+        error_description: "redirect_uris is required and must be a non-empty array for redirect-based grant types",
       });
       return;
     }
 
     // Validate redirect URIs (must be localhost or HTTPS)
-    for (const uri of redirect_uris) {
+    for (const uri of redirectUris) {
       try {
         const parsed = new URL(uri);
         const isLocalhost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
@@ -303,19 +319,22 @@ app.post("/oauth/register", registerLimiter, express.json(), async (req: Request
       }
     }
 
-    // Generate client credentials
+    // Generate client credentials. RFC 7591: do not issue credentials the
+    // client cannot use, so public clients (auth method "none") get no secret.
     const clientId = `mcp-${randomUUID()}`;
-    const clientSecret = randomBytes(32).toString("base64url");
+    const tokenEndpointAuthMethod = token_endpoint_auth_method || "client_secret_post";
+    const clientSecret =
+      tokenEndpointAuthMethod === "none" ? undefined : randomBytes(32).toString("base64url");
 
     // Create registered client
     const client: RegisteredClient = {
       client_id: clientId,
-      client_secret: clientSecret,
+      ...(clientSecret ? { client_secret: clientSecret } : {}),
       client_name: client_name || "MCP Client",
-      redirect_uris,
-      grant_types: grant_types || ["authorization_code", "refresh_token"],
+      redirect_uris: redirectUris,
+      grant_types: requestedGrantTypes,
       response_types: response_types || ["code"],
-      token_endpoint_auth_method: token_endpoint_auth_method || "client_secret_post",
+      token_endpoint_auth_method: tokenEndpointAuthMethod,
       scope: scope || "user nest",
       registered_at: Date.now(),
     };
@@ -326,7 +345,7 @@ app.post("/oauth/register", registerLimiter, express.json(), async (req: Request
     // Return registration response (RFC 7591)
     res.status(201).json({
       client_id: clientId,
-      client_secret: clientSecret,
+      ...(clientSecret ? { client_secret: clientSecret } : {}),
       client_name: client.client_name,
       redirect_uris: client.redirect_uris,
       grant_types: client.grant_types,
@@ -1071,19 +1090,12 @@ export const publicSessions: Record<string, SessionData> = {};
 let shuttingDown = false;
 let inFlightRequests = 0;
 
-/**
- * Find a prior session that a re-initializing client is likely trying to replace.
- *
- * Matches on (authToken, mcpClient) within a 10-minute window. The POST /mcp
- * init path closes and drops the match so the client gets a fresh, clean
- * session — this prevents "Server already initialized" 400s when a client
- * reconnects after an SSE drop (the transport can only be initialized once).
- */
-export const SESSION_COALESCE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
-// Bumped from 30 → 60min: AI assistants commonly gap 30+ min between Nestr
-// tool bursts (long codebase work between status updates). Keeping the in-memory
-// session avoids a rehydration round-trip on the next call.
-const SESSION_STALE_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes without activity
+// Idle timeout for sessions WITHOUT a live SSE stream. Eviction is in-memory
+// only (no transport.close(), no Redis delete) so a returning client — e.g.
+// an AI assistant gapping 30+ min between tool bursts — transparently
+// rehydrates from the persisted record (7-day TTL). Sessions holding a live
+// SSE stream are never swept: an open stream means a connected client.
+export const SSE_DEAD_IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 // Debounce for touchMcpSession. We refresh the Redis TTL at most this often
 // so a chatty client doesn't hammer the store.
 const MCP_SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -1092,21 +1104,26 @@ const MCP_SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 // every 25s keeps the connection alive — the SDK doesn't ping on its own.
 const SSE_KEEPALIVE_INTERVAL_MS = 25 * 1000; // 25 seconds
 
-// Periodically clean up dead sessions (closed SSE + stale).
-// We only drop the in-memory entry — the persistent Redis record lives on until
-// its own TTL so a late-returning client can still rehydrate.
-// .unref() so this timer doesn't prevent process exit (tests, graceful shutdown)
-function sweepStaleSessions(map: Record<string, SessionData>, now: number): void {
+// Periodically evict idle sessions that hold no live SSE stream. In-memory
+// eviction only — the persistent Redis record lives on until its own TTL so
+// a late-returning client rehydrates transparently (same mechanism as
+// deploys). This sweep is the ONLY reaper of idle sessions; nothing else may
+// close or delete a session another client might still be using.
+export function sweepStaleSessions(map: Record<string, SessionData>, now: number): void {
+  let evicted = 0;
   for (const [sid, session] of Object.entries(map)) {
     const sseAlive = session.sseResponse && !session.sseResponse.writableEnded;
-    const stale = (now - session.lastActivityAt) > SESSION_STALE_TIMEOUT_MS;
-    if (!sseAlive && stale) {
-      if (session.sseKeepaliveTimer) {
-        clearInterval(session.sseKeepaliveTimer);
-        session.sseKeepaliveTimer = undefined;
-      }
-      delete map[sid];
+    if (sseAlive) continue;
+    if (now - session.lastActivityAt <= SSE_DEAD_IDLE_TIMEOUT_MS) continue;
+    if (session.sseKeepaliveTimer) {
+      clearInterval(session.sseKeepaliveTimer);
+      session.sseKeepaliveTimer = undefined;
     }
+    delete map[sid];
+    evicted++;
+  }
+  if (evicted > 0) {
+    console.log(`[Sweep] Evicted ${evicted} idle session(s) from memory (persisted records preserved for rehydration)`);
   }
 }
 
@@ -1164,32 +1181,6 @@ async function dropSessionOnTokenSwap(
   delete sessions[sessionId];
   await getStore().removeMcpSession(sessionId).catch(() => {});
   return true;
-}
-
-export function findCoalescableSession(authToken: string, mcpClient: string | undefined): { sessionId: string; session: SessionData } | undefined {
-  const now = Date.now();
-  let bestMatch: { sessionId: string; session: SessionData; lastActivity: number; sseAlive: boolean } | undefined;
-
-  for (const [sid, session] of Object.entries(sessions)) {
-    if (
-      session.authToken === authToken &&
-      session.mcpClient === mcpClient &&
-      (now - session.lastActivityAt) < SESSION_COALESCE_WINDOW_MS
-    ) {
-      const sseAlive = !!(session.sseResponse && !session.sseResponse.writableEnded);
-
-      // Pick the best session: prefer live SSE, then most recently active
-      if (
-        !bestMatch ||
-        (sseAlive && !bestMatch.sseAlive) || // prefer live SSE over dead
-        (sseAlive === bestMatch.sseAlive && session.lastActivityAt > bestMatch.lastActivity)
-      ) {
-        bestMatch = { sessionId: sid, session, lastActivity: session.lastActivityAt, sseAlive };
-      }
-    }
-  }
-
-  return bestMatch ? { sessionId: bestMatch.sessionId, session: bestMatch.session } : undefined;
 }
 
 /**
@@ -1872,26 +1863,14 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Drop any lingering session for the same (auth token, client) before creating a
-    // new one. This happens when a client reconnects after an SSE drop: the old
-    // session is still in memory but its transport is already initialized, so we
-    // can't route a fresh `initialize` through it — the SDK would 400 with
-    // "Server already initialized". Creating a second session alongside the stale
-    // one also leaks memory over time. Close-and-replace is the only safe option.
-    const stale = findCoalescableSession(authToken, mcpClientName);
-    if (stale) {
-      const { sessionId: staleSid, session: staleSession } = stale;
-      console.log(`Replacing stale session ${staleSid} for ${mcpClientName || "unknown client"} on re-init`);
-      try {
-        await staleSession.transport.close();
-      } catch (e) {
-        console.error("[Session] Failed to close stale transport:", e instanceof Error ? e.message : e);
-      }
-      delete sessions[staleSid];
-      await getStore().removeMcpSession(staleSid).catch(e =>
-        console.error("[McpSession] Failed to remove persisted stale session:", e instanceof Error ? e.message : e)
-      );
-    }
+    // Concurrent sessions per (auth token, client name) are intentional.
+    // Parallel clients routinely share one identity (agent jobs, Claude Code
+    // subagents, Codex workers), so an initialize must NEVER touch another
+    // connection's session — doing so caused the 2026-07-10 incident where
+    // sessions were killed ~1s after creation. A fresh initialize carries no
+    // Mcp-Session-Id, so it can't collide with an existing transport
+    // ("Server already initialized" is impossible on this path). Stale
+    // sessions are reaped non-destructively by sweepStaleSessions instead.
     if (mcpClientName) {
       console.log(`MCP client: ${mcpClientName}`);
     }
@@ -2305,8 +2284,9 @@ app.get("/mcp", async (req: Request, res: Response) => {
   }
 
   console.log(`SSE stream requested for session: ${sessionId}`);
+  session.lastActivityAt = Date.now();
 
-  // Track the SSE response for liveness detection (used by session coalescing)
+  // Track the SSE response for liveness detection (used by the stale-session sweep)
   session.sseResponse = res;
 
   // Heartbeat: SSE comment lines (`:keepalive`) keep the connection alive

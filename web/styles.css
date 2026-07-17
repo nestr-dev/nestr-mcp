@@ -680,6 +680,68 @@ p code, li code {
 }
 
 /* Tools */
+/* CLI call-to-action — sits inside the Setup section as a bonus step,
+   matching the width and card treatment of the numbered steps. */
+.cli-cta-box {
+  background: linear-gradient(135deg, #f0f0ff 0%, #fff 100%);
+  border: 2px solid var(--primary);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  padding: 32px;
+  text-align: center;
+}
+
+.cli-cta-eyebrow {
+  display: inline-block;
+  margin-bottom: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--primary-dark);
+}
+
+.cli-cta-box h3 {
+  margin-bottom: 12px;
+}
+
+.cli-cta-content > p {
+  color: var(--text-muted);
+  max-width: 720px;
+  margin: 0 auto 16px;
+}
+
+.cli-cta-box pre {
+  max-width: 620px;
+  margin: 16px auto;
+  text-align: left;
+}
+
+.cli-comment {
+  color: #94a3b8;
+}
+
+.cli-cta-note {
+  font-size: 0.95rem;
+}
+
+.cli-cta-box .btn {
+  margin-top: 8px;
+}
+
+/* CLI note inside the Claude Code setup tab */
+.cli-note {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.cli-note pre {
+  margin: 12px 0;
+}
+
 .tools {
   padding: 60px 0;
   background: var(--secondary);
