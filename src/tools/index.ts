@@ -796,6 +796,18 @@ export const schemas = {
     fullWorkspaces: z.boolean().optional().describe("Set true to include full workspace details (purpose, labels, governance type, user access roles). Recommended on first call to establish workspace context."),
   }),
 
+  // Current user's cross-workspace activity (requires OAuth token)
+  myActivity: z.object({
+    limit: z.number().optional().describe("Max activity items to return (default 50, max 200)."),
+    withUser: z.string().optional().describe("Scope DM considerations to the conversation with this user id. Agent internal considerations from direct-message runs are redacted to an anonymous marker unless you name that conversation's counterpart here."),
+  }),
+
+  // Another user's cross-workspace activity (requires OAuth token)
+  userActivity: z.object({
+    userId: z.string().describe("The user whose activity to fetch."),
+    limit: z.number().optional().describe("Max activity items to return (default 50, max 200)."),
+  }),
+
   // User tension tools (requires OAuth token)
   listMyTensions: z.object({
     context: z.string().optional().describe("Optional context filter (e.g., workspace ID or circle ID)"),
@@ -984,6 +996,29 @@ export const schemas = {
   ),
 
   diagnose: z.object({}).describe("No arguments — diagnose reads session state from the server."),
+
+  // Connector tools (registration is workspace-admin only)
+  listConnectors: z.object({
+    workspaceId: z.string().describe("Workspace ID whose connector catalog to list"),
+  }),
+
+  registerConnector: z.object({
+    workspaceId: z.string().describe("Workspace ID to register the connector in"),
+    type: z.enum(["mcp", "cli", "api"]).describe("Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command)"),
+    name: z.string().describe("Unique connector name within the workspace catalog"),
+    config: coerceFromJson(z.record(z.unknown())).optional().describe("Per-type transport config, no secret. mcp/api need a url (e.g., { url: 'https://...' }); cli needs a command (e.g., { command: 'some-cli' }). Optional non-secret headers go under headers."),
+    capabilities: coerceFromJson(z.record(z.unknown())).optional().describe("Capability descriptor: { discover: boolean, tools: [{ name, description, inputSchema }] }. discover:true lets the connector self-describe its tools at runtime."),
+    exposure: coerceFromJson(z.record(z.unknown())).optional().describe("Exposure policy deciding which owners may bind: { userAgent: boolean, domainGated: boolean }. Set domainGated:true to allow binding to a role's domain."),
+    authStrategy: z.enum(["secret", "oauth2"]).optional().describe("How a principal connects: 'secret' (a one-time secret captured via the Connect button) or 'oauth2'. The agent never sees the secret."),
+  }),
+
+  bindConnector: z.object({
+    workspaceId: z.string().describe("Workspace ID the connector and owner belong to"),
+    connectorId: z.string().describe("ID of an enabled connector from nestr_list_connectors"),
+    ownerType: z.enum(["user", "agent", "workspace", "role-domain"]).describe("Owner type. 'role-domain' binds the connector to a role's domain so the role can use it and a credentials field is materialised on the domain."),
+    ownerId: z.string().describe("Owner ID. user/agent: the user ID. workspace: the workspace ID. role-domain: the domain nest ID."),
+  }),
+
   // File attachments (a comment id works as the nestId — files are keyed by nestId)
   getNestFiles: z.object({
     nestId: z.string().describe("Nest or comment ID whose file attachments to list"),
@@ -1705,6 +1740,33 @@ export const toolDefinitions = [
     _meta: completableListUi,
     ...readOnly,
   },
+  // Current user's cross-workspace activity (requires OAuth token)
+  {
+    name: "nestr_my_activity",
+    description: "The caller's own activity across ALL their workspaces, newest first (gated by workspace membership and the token's scope). Not scoped to a project or a single nest — it's everything you've done. For an agent, this is how it sees what it has done: past considerations (with the tools used and the outcome), comments, governance changes, and other actions. Agent internal considerations from direct-message runs are redacted to an anonymous marker unless you pass withUser with that conversation's counterpart. Auth: OAuth only (user-scoped — workspace API keys lack user identity). On auth failure call nestr_diagnose.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        limit: { type: "number", description: "Max activity items to return (default 50, max 200)." },
+        withUser: { type: "string", description: "Scope DM considerations to the conversation with this user id. Agent internal considerations from direct-message runs are redacted to an anonymous marker unless you name that conversation's counterpart here." },
+      },
+    },
+    ...readOnly,
+  },
+  // Another user's cross-workspace activity (requires OAuth token)
+  {
+    name: "nestr_user_activity",
+    description: "Another user's activity across the workspaces you share with them, newest first. Lets an agent see what a colleague or another agent has done: their past considerations (with the tools used and the outcome), comments, governance changes, and other actions. Agent internal considerations from direct-message runs show their substance only when you are a participant of that conversation, otherwise an anonymous marker. Auth: OAuth only (user-scoped — workspace API keys lack user identity). On auth failure call nestr_diagnose.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        userId: { type: "string", description: "The user whose activity to fetch." },
+        limit: { type: "number", description: "Max activity items to return (default 50, max 200)." },
+      },
+      required: ["userId"],
+    },
+    ...readOnly,
+  },
   // Label management
   {
     name: "nestr_add_label",
@@ -2120,6 +2182,75 @@ export const toolDefinitions = [
       required: ["nestId", "relation", "targetId"],
     },
     ...destructive,
+  },
+  {
+    name: "nestr_list_connectors",
+    description: "List the workspace's connector catalog: the mcp / cli / api templates an admin has registered. Each entry holds no secret and shows its type, name, authStrategy, config, capabilities, exposure ({ userAgent, domainGated }) and whether it is enabled. Typical flow: register a connector, then bind it to a role's domain with nestr_bind_connector, then a human or agent connects the account via the credentials field's Connect button (the secret is captured out-of-band, never by the agent). Auth: any valid token can list.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID whose connector catalog to list" },
+      },
+      required: ["workspaceId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_register_connector",
+    description: "Register a connector in the workspace catalog: a reusable mcp / cli / api template that holds no secret. Workspace-admin only. A non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error). Provide type ('mcp' or 'api' need a url in config; 'cli' needs a command) and a unique name; optionally capabilities, exposure ({ userAgent, domainGated }), and authStrategy ('secret' or 'oauth2'). This only creates the template. Typical flow: register here, then bind it to a role's domain with nestr_bind_connector, then a human or agent connects the account via the credentials field's Connect button. The secret is captured out-of-band through that button, never by the agent.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID to register the connector in" },
+        type: {
+          type: "string",
+          enum: ["mcp", "cli", "api"],
+          description: "Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command)",
+        },
+        name: { type: "string", description: "Unique connector name within the workspace catalog" },
+        config: {
+          type: "object",
+          description: "Per-type transport config, no secret. mcp/api need a url (e.g., { url: 'https://...' }); cli needs a command (e.g., { command: 'some-cli' }). Optional non-secret headers go under headers.",
+        },
+        capabilities: {
+          type: "object",
+          description: "Capability descriptor: { discover: boolean, tools: [{ name, description, inputSchema }] }. discover:true lets the connector self-describe its tools at runtime.",
+        },
+        exposure: {
+          type: "object",
+          description: "Exposure policy deciding which owners may bind: { userAgent: boolean, domainGated: boolean }. Set domainGated:true to allow binding to a role's domain.",
+        },
+        authStrategy: {
+          type: "string",
+          enum: ["secret", "oauth2"],
+          description: "How a principal connects: 'secret' (a one-time secret captured via the Connect button) or 'oauth2'. The agent never sees the secret.",
+        },
+      },
+      required: ["workspaceId", "type", "name"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_bind_connector",
+    description: "Bind a registered connector to an owner so that owner can use it. Owner types: 'user' or 'agent' (ownerId is the user ID), 'workspace' (ownerId is the workspace ID), or 'role-domain' (ownerId is the domain nest ID). A 'role-domain' owner also materialises a credentials field on the domain nest, so the role can use the connector and the Connect button renders there; the response then includes credentialsField { domainId, fieldId, fieldCode }. After binding, a human or agent connects the account via that Connect button. The secret is captured out-of-band and is never seen by the agent. Workspace-admin only: a non-admin caller gets AUTH_SCOPE_INSUFFICIENT. The connector must already be registered (nestr_register_connector) and enabled.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the connector and owner belong to" },
+        connectorId: { type: "string", description: "ID of an enabled connector from nestr_list_connectors" },
+        ownerType: {
+          type: "string",
+          enum: ["user", "agent", "workspace", "role-domain"],
+          description: "Owner type. 'role-domain' binds the connector to a role's domain so the role can use it and a credentials field is materialised on the domain.",
+        },
+        ownerId: {
+          type: "string",
+          description: "Owner ID. user/agent: the user ID. workspace: the workspace ID. role-domain: the domain nest ID.",
+        },
+      },
+      required: ["workspaceId", "connectorId", "ownerType", "ownerId"],
+    },
+    ...mutating,
   },
   {
     name: "nestr_get_nest_files",
@@ -2993,6 +3124,23 @@ async function _handleToolCall(
         return formatResult(completableResponse(compactResponse(items), "daily-plan", "Daily Plan"));
       }
 
+      case "nestr_my_activity": {
+        const parsed = schemas.myActivity.parse(args);
+        const activity = await client.getMyActivity({
+          limit: parsed.limit,
+          withUser: parsed.withUser,
+        });
+        return formatResult({ count: activity.length, activity });
+      }
+
+      case "nestr_user_activity": {
+        const parsed = schemas.userActivity.parse(args);
+        const activity = await client.getUserActivity(parsed.userId, {
+          limit: parsed.limit,
+        });
+        return formatResult({ count: activity.length, activity });
+      }
+
       // Current user identity and workspace context
       case "nestr_get_me": {
         const parsed = schemas.getMe.parse(args);
@@ -3301,6 +3449,44 @@ async function _handleToolCall(
         const parsed = schemas.removeGraphLink.parse(args);
         const result = await client.removeGraphLink(parsed.nestId, parsed.relation, parsed.targetId);
         return formatResult({ message: "Graph link removed" });
+      }
+
+      // Connector tools
+      case "nestr_list_connectors": {
+        const parsed = schemas.listConnectors.parse(args);
+        const connectors = await client.listConnectors(parsed.workspaceId);
+        return formatResult(connectors);
+      }
+
+      case "nestr_register_connector": {
+        const parsed = schemas.registerConnector.parse(args);
+        const connector = await client.registerConnector(parsed.workspaceId, {
+          type: parsed.type,
+          name: parsed.name,
+          config: parsed.config,
+          capabilities: parsed.capabilities,
+          exposure: parsed.exposure,
+          authStrategy: parsed.authStrategy,
+        });
+        return formatResult({
+          message: "Connector registered. Next, bind it to an owner with nestr_bind_connector (e.g. a role's domain), then a human or agent connects the account via the credentials field's Connect button.",
+          connector,
+        });
+      }
+
+      case "nestr_bind_connector": {
+        const parsed = schemas.bindConnector.parse(args);
+        const connection = await client.bindConnector(parsed.workspaceId, {
+          connectorId: parsed.connectorId,
+          owner: { type: parsed.ownerType, id: parsed.ownerId },
+        });
+        // For a role-domain binding the API materialises a credentials field on
+        // the domain; surface that explicitly so the caller knows the Connect
+        // button now renders there and the secret is captured out-of-band.
+        const message = parsed.ownerType === "role-domain"
+          ? "Connector bound to the role's domain. A credentials field was materialised on the domain (see credentialsField) so the role can use the connector and the Connect button renders. A human or agent now connects the account via that button; the secret is captured out-of-band and never by the agent."
+          : "Connector bound to the owner. The owner now connects the account out-of-band; the secret is never seen by the agent.";
+        return formatResult({ message, connection });
       }
 
       case "nestr_get_nest_files": {

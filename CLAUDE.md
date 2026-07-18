@@ -326,6 +326,9 @@ The server exposes these tools to AI assistants:
 | `nestr_get_graph_links` | `GET /nests/{id}/graph/{relation}` |
 | `nestr_add_graph_link` | `POST /nests/{id}/graph/{relation}` |
 | `nestr_remove_graph_link` | `DELETE /nests/{id}/graph/{relation}/{targetId}` |
+| `nestr_list_connectors` | `GET /workspaces/{id}/connectors` |
+| `nestr_register_connector` | `POST /workspaces/{id}/connectors` (workspace-admin only) |
+| `nestr_bind_connector` | `POST /workspaces/{id}/connections` (workspace-admin only) |
 
 ## Adding a New Tool
 

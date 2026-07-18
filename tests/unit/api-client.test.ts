@@ -253,6 +253,89 @@ describe("NestrClient", () => {
     logSpy.mockRestore();
   });
 
+  // ─── Connectors ─────────────────────────────────────────────────
+
+  it("listConnectors GETs the catalog and unwraps data", async () => {
+    const entries = [
+      { _id: "c1", workspaceId: "ws1", type: "mcp", name: "Slack", enabled: true },
+      { _id: "c2", workspaceId: "ws1", type: "cli", name: "Deploy", enabled: false },
+    ];
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: entries }));
+    const client = createClient();
+
+    const result = await client.listConnectors("ws1");
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/workspaces/ws1/connectors");
+    expect(opts.method ?? "GET").toBe("GET");
+    // Unwrapped from { status, data }
+    expect(result).toEqual(entries);
+  });
+
+  it("registerConnector POSTs the body and unwraps the created connector", async () => {
+    const created = { _id: "c9", workspaceId: "ws1", type: "mcp", name: "Slack", enabled: true };
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: created }));
+    const client = createClient();
+
+    const result = await client.registerConnector("ws1", {
+      type: "mcp",
+      name: "Slack",
+      config: { url: "https://mcp.example.com" },
+      exposure: { domainGated: true },
+      authStrategy: "secret",
+    });
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/workspaces/ws1/connectors");
+    expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body)).toEqual({
+      type: "mcp",
+      name: "Slack",
+      config: { url: "https://mcp.example.com" },
+      exposure: { domainGated: true },
+      authStrategy: "secret",
+    });
+    expect(result).toEqual(created);
+  });
+
+  it("bindConnector POSTs connectorId + owner and unwraps the connection", async () => {
+    const connection = {
+      _id: "conn1",
+      workspaceId: "ws1",
+      owner: { type: "role-domain", id: "domain-7" },
+      status: "active",
+      credentialsField: { domainId: "domain-7", fieldId: "domain-7-credentials-connector_credentials", fieldCode: "connector_credentials" },
+    };
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: connection }));
+    const client = createClient();
+
+    const result = await client.bindConnector("ws1", {
+      connectorId: "c9",
+      owner: { type: "role-domain", id: "domain-7" },
+    });
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/workspaces/ws1/connections");
+    expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body)).toEqual({
+      connectorId: "c9",
+      owner: { type: "role-domain", id: "domain-7" },
+    });
+    expect(result).toEqual(connection);
+    expect(result.credentialsField?.domainId).toBe("domain-7");
+  });
+
+  it("registerConnector surfaces a 403 as AUTH_SCOPE_INSUFFICIENT (admin-only)", async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(403, { status: "error", message: "Workspace admin access is required to manage connectors" })
+    );
+    const client = createClient();
+
+    await expect(
+      client.registerConnector("ws1", { type: "mcp", name: "Slack" })
+    ).rejects.toMatchObject({ code: "AUTH_SCOPE_INSUFFICIENT", status: 403 });
+  });
+
   // ─── Sort / pagination pass-through ─────────────────────────────
   // All list endpoints backed by the API's getMultiple handler honor a
   // `sort` query param (field name, '-' prefix for descending).
