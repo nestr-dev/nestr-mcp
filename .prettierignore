@@ -1,0 +1,14 @@
+# Build output & deps
+node_modules/
+.meteor/local/
+.meteor/meteor-tool/
+packages/
+public/vendor/
+dist/
+build/
+coverage/
+
+# Generated / non-source
+*.min.js
+*.min.css
+package-lock.json
