@@ -162,8 +162,10 @@ describe("connector tools", () => {
 
     const parsed = parseResult(result.content[0].text);
     expect(parsed.connection).toEqual(connection);
-    // Non role-domain owner gets the generic Connect-button note.
-    expect(parsed.message).toMatch(/connect button/i);
+    // Non role-domain owner: no credentials field exists, so the note points at
+    // an out-of-band connect, not a Connect button.
+    expect(parsed.message).toMatch(/out-of-band/i);
+    expect(parsed.message).not.toMatch(/credentials field/i);
     expect(parsed.message).not.toMatch(/role's domain/i);
   });
 

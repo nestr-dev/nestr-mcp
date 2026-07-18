@@ -3487,7 +3487,7 @@ async function _handleToolCall(
         // button now renders there and the secret is captured out-of-band.
         const message = parsed.ownerType === "role-domain"
           ? "Connector bound to the role's domain. A credentials field was materialised on the domain (see credentialsField) so the role can use the connector and the Connect button renders. A human or agent now connects the account via that button; the secret is captured out-of-band and never by the agent."
-          : "Connector bound to the owner. The account is connected via the credentials field's Connect button; the secret is captured out-of-band and never by the agent.";
+          : "Connector bound to the owner. The owner now connects the account out-of-band; the secret is never seen by the agent.";
         return formatResult({ message, connection });
       }
 
