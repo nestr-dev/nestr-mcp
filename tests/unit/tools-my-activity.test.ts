@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { handleToolCall } from "../../src/tools/index.js";
+import { handleToolCall, toolDefinitions } from "../../src/tools/index.js";
 import { NestrClient } from "../../src/api/client.js";
 
 function mockResponse(status: number, body: unknown) {
@@ -117,6 +117,16 @@ describe("current-user activity", () => {
     expect(result.isError).toBe(true);
     const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
     expect(parsed.code).toBe("AUTH_TOKEN_REJECTED_BY_NESTR");
+  });
+
+  // Activity items carry their substance in `description` and have no `_id`,
+  // so the stripDescription pipeline cannot apply. The tools must not advertise it.
+  it("activity tools do not advertise stripDescription", () => {
+    for (const name of ["nestr_my_activity", "nestr_user_activity"]) {
+      const tool = toolDefinitions.find((t) => t.name === name);
+      expect(tool, name).toBeDefined();
+      expect(Object.keys(tool!.inputSchema.properties ?? {})).not.toContain("stripDescription");
+    }
   });
 
   // ─── client method ──────────────────────────────────────────────

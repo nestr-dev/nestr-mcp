@@ -1749,7 +1749,6 @@ export const toolDefinitions = [
       properties: {
         limit: { type: "number", description: "Max activity items to return (default 50, max 200)." },
         withUser: { type: "string", description: "Scope DM considerations to the conversation with this user id. Agent internal considerations from direct-message runs are redacted to an anonymous marker unless you name that conversation's counterpart here." },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
       },
     },
     ...readOnly,
@@ -1763,7 +1762,6 @@ export const toolDefinitions = [
       properties: {
         userId: { type: "string", description: "The user whose activity to fetch." },
         limit: { type: "number", description: "Max activity items to return (default 50, max 200)." },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
       },
       required: ["userId"],
     },
