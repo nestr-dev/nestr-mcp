@@ -456,6 +456,39 @@ describe("NestrClient", () => {
       users: ["user-1"],
     });
   });
+
+  describe("getNest diagnosis flags", () => {
+    it("adds provenance=true", async () => {
+      mockFetch.mockResolvedValue(mockResponse(200, {}));
+      await createClient().getNest("n1", { provenance: true });
+      const [url] = mockFetch.mock.calls[0];
+      expect(url).toContain("provenance=true");
+    });
+
+    it("adds rights=true and forUser", async () => {
+      mockFetch.mockResolvedValue(mockResponse(200, {}));
+      await createClient().getNest("n1", { rights: true, forUser: "u42" });
+      const [url] = mockFetch.mock.calls[0];
+      expect(url).toContain("rights=true");
+      expect(url).toContain("forUser=u42");
+    });
+
+    it("adds whoCan ops (comma-encoded)", async () => {
+      mockFetch.mockResolvedValue(mockResponse(200, {}));
+      await createClient().getNest("n1", { whoCan: "update,delete" });
+      const [url] = mockFetch.mock.calls[0];
+      expect(url).toContain("whoCan=update%2Cdelete");
+    });
+
+    it("omits the diagnosis params when not requested", async () => {
+      mockFetch.mockResolvedValue(mockResponse(200, {}));
+      await createClient().getNest("n1");
+      const [url] = mockFetch.mock.calls[0];
+      expect(url).not.toContain("provenance");
+      expect(url).not.toContain("rights");
+      expect(url).not.toContain("whoCan");
+    });
+  });
 });
 
 // ─── NestrApiError ────────────────────────────────────────────────
