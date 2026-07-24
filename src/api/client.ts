@@ -703,12 +703,26 @@ export class NestrClient {
 
   async getNest(
     nestId: string,
-    options?: { cleanText?: boolean; fieldsMetaData?: boolean; hints?: boolean }
+    options?: {
+      cleanText?: boolean;
+      fieldsMetaData?: boolean;
+      hints?: boolean;
+      provenance?: boolean;
+      rights?: boolean;
+      forUser?: string;
+      whoCan?: string;
+    }
   ): Promise<(Nest & { fieldsMetaData?: Record<string, unknown> }) | (Nest & { fieldsMetaData?: Record<string, unknown> })[]> {
     const params = new URLSearchParams();
     if (options?.cleanText) params.set("cleanText", "true");
     if (options?.fieldsMetaData) params.set("fieldsMetaData", "true");
     if (options?.hints) params.set("hints", "true");
+    // Nest-diagnosis flags (single-nest reads): field/property provenance, the
+    // composed-rights block (optionally for another user), and the whoCan query.
+    if (options?.provenance) params.set("provenance", "true");
+    if (options?.rights) params.set("rights", "true");
+    if (options?.forUser) params.set("forUser", options.forUser);
+    if (options?.whoCan) params.set("whoCan", options.whoCan);
 
     const query = params.toString();
     // Comma-separated IDs return an array from the API
