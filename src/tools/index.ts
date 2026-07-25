@@ -558,6 +558,15 @@ export const schemas = {
     nestId: z.string().describe("Nest ID. Supports comma-separated IDs to fetch multiple nests in one call (e.g., 'id1,id2,id3') — returns an array instead of a single object. Keep total URL under 2000 chars to avoid HTTP limits."),
     fieldsMetaData: z.boolean().optional().describe("Set to true to include field schema metadata (e.g., available options for project.status)"),
     hints: z.boolean().optional().describe("Include contextual hints on each nest (default: true). Hints surface actionable signals like unassigned roles, stale projects, or unread comments. Set to false for bulk lookups where you only need structural data, not contextual guidance."),
+    provenance: z.boolean().optional().describe("Single-nest only. Include field/property provenance: which label (and circle context) defines each field and property."),
+    rights: z.boolean().optional().describe("Single-nest only. Include the caller's composed rights on the nest plus a deny trace naming the profiles that block each op."),
+    forUser: z.string().optional().describe("Single-nest only, with rights=true. Report rights for this user id instead of the caller. Requires the caller to be an admin of the nest."),
+    whoCan: z.string().optional().describe("Single-nest only. Comma-separated ops (read,update,delete,create) to list who can perform each on this nest."),
+  }),
+  explainNest: z.object({
+    nestId: z.string().describe("The nest to diagnose (a single id)."),
+    forUser: z.string().optional().describe("Diagnose rights for this user id instead of the caller. Requires the caller to be an admin of the nest."),
+    whoCan: z.string().optional().describe("Comma-separated ops (read,update,delete,create) to also list who can perform each on this nest."),
   }),
 
   getNestChildren: z.object({
@@ -1167,7 +1176,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_nest",
-    description: "Get nest details. Supports comma-separated IDs for batch fetch. Add hints=true for contextual signals, fieldsMetaData=true for field schemas.",
+    description: "Get nest details. Supports comma-separated IDs for batch fetch. Add hints=true for contextual signals, fieldsMetaData=true for field schemas. For a single nest you can also diagnose it: provenance, rights, and whoCan (see explain_nest for a one-shot diagnosis).",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1175,6 +1184,24 @@ export const toolDefinitions = [
         fieldsMetaData: { type: "boolean", description: "Set to true to include field schema metadata (available options, field types)" },
         hints: { type: "boolean", description: "Include contextual hints (default: true). Set to false for bulk lookups where you only need structural data." },
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
+        provenance: { type: "boolean", description: "Single-nest only. Include field/property provenance: which label (and circle context) defines each field and property, e.g. why a role has a given icon." },
+        rights: { type: "boolean", description: "Single-nest only. Include the caller's composed rights on the nest (self read/update/delete) plus a deny trace naming the profiles that block each op, and why." },
+        forUser: { type: "string", description: "Single-nest only, with rights=true. Report rights for this user id instead of the caller. Requires the caller to be an admin of the nest." },
+        whoCan: { type: "string", description: "Single-nest only. Comma-separated ops (read,update,delete,create): list the users who can perform each op on this nest (admins + role-holders), with contact for admin callers." },
+      },
+      required: ["nestId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_explain_nest",
+    description: "Diagnose a single nest: WHY it looks and behaves as it does. Returns field/property provenance (which label and circle defines each field, value, and property such as the icon), the caller's composed rights with a deny trace (why a field is read-only, why you cannot edit), and — when whoCan is given — who can perform an op and who to contact. Use this when a user asks 'why can't I ...', 'why is this read-only', 'where does this field come from', 'why does this role have a different icon', or 'who can change this'. For connection/auth errors use nestr_diagnose instead.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The nest to diagnose (a single id)." },
+        forUser: { type: "string", description: "Diagnose rights for this user id instead of the caller. Requires the caller to be an admin of the nest." },
+        whoCan: { type: "string", description: "Comma-separated ops (read,update,delete,create) to also list who can perform each on this nest." },
       },
       required: ["nestId"],
     },
@@ -2705,6 +2732,24 @@ async function _handleToolCall(
           cleanText: true,
           fieldsMetaData: parsed.fieldsMetaData,
           hints: parsed.hints !== false,
+          provenance: parsed.provenance,
+          rights: parsed.rights,
+          forUser: parsed.forUser,
+          whoCan: parsed.whoCan,
+        });
+        return formatResult(enrichHints(nest));
+      }
+
+      case "nestr_explain_nest": {
+        const parsed = schemas.explainNest.parse(args);
+        const nest = await client.getNest(parsed.nestId, {
+          cleanText: true,
+          fieldsMetaData: true,
+          hints: false,
+          provenance: true,
+          rights: true,
+          forUser: parsed.forUser,
+          whoCan: parsed.whoCan,
         });
         return formatResult(enrichHints(nest));
       }

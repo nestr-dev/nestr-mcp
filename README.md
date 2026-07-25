@@ -85,7 +85,8 @@ Ask your AI assistant things like:
 
 | Tool | Description |
 |------|-------------|
-| `nestr_get_nest` | Get details of a specific nest (supports batch fetch with comma-separated IDs) |
+| `nestr_get_nest` | Get details of a specific nest (supports batch fetch with comma-separated IDs; single-nest `provenance`/`rights`/`whoCan` flags available) |
+| `nestr_explain_nest` | Diagnose one nest: field/property provenance (which label/circle defines each), the caller's composed rights with a deny trace, and (with `whoCan`) who can act on it and who to contact |
 | `nestr_get_nest_children` | Get child nests |
 | `nestr_create_nest` | Create a new nest |
 | `nestr_update_nest` | Update nest properties |
