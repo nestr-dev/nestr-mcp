@@ -266,6 +266,7 @@ The server exposes these tools to AI assistants:
 | `nestr_create_workspace` | `POST /workspaces` (OAuth only) |
 | `nestr_search` | `GET /workspaces/{id}/search` |
 | `nestr_get_nest` | `GET /nests/{id}` (supports comma-separated IDs for batch fetch) |
+| `nestr_explain_nest` | `GET /nests/{id}` (single-nest diagnosis: provenance + rights + whoCan) |
 | `nestr_get_nest_children` | `GET /nests/{id}/children` |
 | `nestr_create_nest` | `POST /nests` |
 | `nestr_update_nest` | `PATCH /nests/{id}` |
