@@ -59,8 +59,12 @@ export function completableResponse(
 
 // Fields to keep for compact list responses (reduces token usage)
 const COMPACT_FIELDS = {
-  // Common fields for all nests (includes fields needed by the completable list app)
-  base: ["_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description", "due", "hints"],
+  // Common fields for all nests (includes fields needed by the completable list app).
+  // `users` (the assignees) is not optional trim: without it every list response is
+  // silently anonymous, so "which of these roles are mine?" or "who owns this project?"
+  // has no answer in the data and a model fills the gap by guessing. It costs a short
+  // id array per item and it is the difference between an answer and a fabrication.
+  base: ["_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description", "due", "users", "hints"],
   // Additional fields for roles
   role: ["accountabilities", "domains"],
   // Additional fields for users
@@ -648,6 +652,11 @@ export const schemas = {
     sort: z.string().optional().describe(SORT_DESCRIPTION),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
+  }),
+
+  listUserRoles: z.object({
+    userId: z.string().optional().describe("User ID to look up. Omit for yourself. Requires workspaceId when set."),
+    workspaceId: z.string().optional().describe("Workspace ID. Required when userId is set; omit to answer across every workspace you belong to."),
   }),
 
   getInsights: z.object({
@@ -1420,8 +1429,20 @@ export const toolDefinitions = [
     ...readOnly,
   },
   {
+    name: "nestr_list_user_roles",
+    description: "Which roles does a person actually FILL? Omit userId for yourself. This is the only correct way to answer \"what are my roles?\" — nestr_list_roles returns every role in the workspace, most of which are somebody else's. An empty result means they fill no roles yet, which is normal for a new member: report that plainly and never substitute the workspace's role list.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        userId: { type: "string", description: "User ID to look up. Omit for yourself. Requires workspaceId when set." },
+        workspaceId: { type: "string", description: "Workspace ID. Required when userId is set; omit to answer across every workspace you belong to." },
+      },
+    },
+    ...readOnly,
+  },
+  {
     name: "nestr_list_roles",
-    description: "List all roles in a workspace. Response includes meta.total showing total matching count.",
+    description: "List ALL roles that exist in a workspace, whoever fills them. Not the caller's roles: check each role's `users` array for who fills it, or use nestr_list_user_roles to ask who fills what. Response includes meta.total showing total matching count.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2921,6 +2942,21 @@ async function _handleToolCall(
           sort: parsed.sort,
           limit: parsed.limit,
           page: parsed.page,
+          cleanText: true,
+        });
+        return formatResult(compactResponse(roles, "role"));
+      }
+
+      case "nestr_list_user_roles": {
+        const parsed = schemas.listUserRoles.parse(args);
+        if (parsed.userId && !parsed.workspaceId) {
+          throw new Error(
+            "workspaceId is required when looking up another user's roles. Omit userId to list your own across every workspace."
+          );
+        }
+        const roles = await client.listUserRoles({
+          workspaceId: parsed.workspaceId,
+          userId: parsed.userId,
           cleanText: true,
         });
         return formatResult(compactResponse(roles, "role"));
