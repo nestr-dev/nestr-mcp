@@ -396,6 +396,22 @@ describe("NestrClient", () => {
     expect(mockFetch.mock.calls[2][0]).toBe("https://api.test.io/api/workspaces/ws1/roles?sort=-createdAt");
   });
 
+  it("listUserRoles answers across workspaces for self and scopes to a workspace for another user", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, []));
+    const client = createClient();
+    await client.listUserRoles();
+    await client.listUserRoles({ cleanText: true });
+    await client.listUserRoles({ workspaceId: "ws1", userId: "user_a" });
+    // A workspaceId alone cannot scope the per-workspace route (it needs a user
+    // id), so it must not silently build a broken path.
+    await client.listUserRoles({ workspaceId: "ws1" });
+
+    expect(mockFetch.mock.calls[0][0]).toBe("https://api.test.io/api/users/me/roles");
+    expect(mockFetch.mock.calls[1][0]).toBe("https://api.test.io/api/users/me/roles?cleanText=true");
+    expect(mockFetch.mock.calls[2][0]).toBe("https://api.test.io/api/workspaces/ws1/users/user_a/roles");
+    expect(mockFetch.mock.calls[3][0]).toBe("https://api.test.io/api/users/me/roles");
+  });
+
   it("listTensions sends sort (not the legacy order param) and page", async () => {
     mockFetch.mockResolvedValue(mockResponse(200, []));
     const client = createClient();

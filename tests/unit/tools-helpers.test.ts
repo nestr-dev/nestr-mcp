@@ -64,6 +64,25 @@ describe("compactResponse", () => {
     expect(result[0]).toHaveProperty("profile");
     expect(result[0]).not.toHaveProperty("extraField");
   });
+
+  // Dropping `users` made every list response anonymous, so "which of these roles
+  // are mine?" had no answer in the data and a model answered it by guessing.
+  it("keeps the assignees so a caller can tell whose item it is", () => {
+    const data = [
+      { _id: "1", title: "Facilitator", users: ["user_a"], extraField: "gone" },
+      { _id: "2", title: "Secretary", users: [], extraField: "gone" },
+    ];
+    const result = compactResponse(data, "role") as any[];
+    expect(result[0].users).toEqual(["user_a"]);
+    expect(result[1].users).toEqual([]);
+    expect(result[0]).not.toHaveProperty("extraField");
+  });
+
+  it("keeps the assignees on plain nests too, not just roles", () => {
+    const data = [{ _id: "1", title: "Ship it", users: ["user_b"] }];
+    const result = compactResponse(data) as any[];
+    expect(result[0].users).toEqual(["user_b"]);
+  });
 });
 
 // ─── stripDescriptionFields ─────────────────────────────────────────

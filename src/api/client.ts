@@ -1064,6 +1064,25 @@ export class NestrClient {
     );
   }
 
+  // The roles a person actually fills, as opposed to the roles that exist around
+  // them. Naming another user needs a workspace to scope the lookup; asking about
+  // yourself answers across every workspace you are an active member of. The
+  // cross-workspace route needs a single-user-scoped token, so a workspace API key
+  // must go through the workspaceId + userId form.
+  async listUserRoles(
+    options?: { workspaceId?: string; userId?: string; cleanText?: boolean }
+  ): Promise<Role[]> {
+    const params = new URLSearchParams();
+    if (options?.cleanText) params.set("cleanText", "true");
+    const query = params.toString();
+
+    const path = options?.workspaceId && options?.userId
+      ? `/workspaces/${options.workspaceId}/users/${options.userId}/roles`
+      : "/users/me/roles";
+
+    return this.fetch<Role[]>(`${path}${query ? `?${query}` : ""}`);
+  }
+
   // ============ USERS ============
 
   async listUsers(
