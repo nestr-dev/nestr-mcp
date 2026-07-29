@@ -364,6 +364,22 @@ export function translateEndpoint(endpoint: ApiHintEndpoint): EnrichedToolCall |
   return null;
 }
 
+// Nestr re-points a comment aimed at a message inside a DM onto the conversation, since
+// DM threads are flat. The created post carries the parent it actually landed on, so say
+// so when it differs from the id the caller passed.
+export function commentPlacementNote(
+  requestedNestId: string,
+  post: { parentId?: string } | null | undefined
+): string | null {
+  const landedOn = post?.parentId;
+  if (!landedOn || landedOn === requestedNestId) return null;
+  return (
+    `Placed on ${landedOn}, not the ${requestedNestId} you passed. ` +
+    `Nestr moves a comment aimed at a message inside a direct message onto the ` +
+    `conversation, because DM threads are flat. Use ${landedOn} for further replies here.`
+  );
+}
+
 // Enrich hints with tool call parameters so models can act on hints directly.
 // Extracts workspaceId from nest ancestors (last element) for search-based hints.
 export function enrichHints<T>(data: T): T {
@@ -1353,7 +1369,7 @@ export const toolDefinitions = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        nestId: { type: "string", description: "Nest ID to comment on" },
+        nestId: { type: "string", description: "ID of the nest or conversation the comment belongs to. Passing a comment ID instead replies to that comment, inside its thread. A direct-message conversation is flat and holds no threads, so a message ID there is moved onto the conversation and the response says where the comment landed." },
         body: { type: "string", description: "Comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)." },
         labels: {
           type: "array",
@@ -2897,7 +2913,12 @@ async function _handleToolCall(
         const post = await client.createPost(parsed.nestId, parsed.body, {
           labels: parsed.labels,
         });
-        return formatResult({ message: "Comment added successfully", post });
+        const placement = commentPlacementNote(parsed.nestId, post);
+        return formatResult({
+          message: "Comment added successfully",
+          ...(placement ? { placement } : {}),
+          post,
+        });
       }
 
       case "nestr_update_comment": {
