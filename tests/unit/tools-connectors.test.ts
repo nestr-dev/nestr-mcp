@@ -162,40 +162,39 @@ describe("connector tools", () => {
 
     const parsed = parseResult(result.content[0].text);
     expect(parsed.connection).toEqual(connection);
-    // Non role-domain owner: no credentials field exists, so the note points at
-    // an out-of-band connect, not a Connect button.
-    expect(parsed.message).toMatch(/out-of-band/i);
-    expect(parsed.message).not.toMatch(/credentials field/i);
+    // Giving access is not the same as connecting an account, and the agent must
+    // never handle the token, so the note sends it to the link tool.
+    expect(parsed.message).toMatch(/nestr_get_connect_link/i);
+    expect(parsed.message).toMatch(/never seen by the agent/i);
     expect(parsed.message).not.toMatch(/role's domain/i);
   });
 
-  it("nestr_bind_connector surfaces credentialsField + role-domain note for a role-domain owner", async () => {
+  it("nestr_bind_connector reports the domain a role binding landed on", async () => {
     const connection = {
       _id: "conn2",
       workspaceId: "ws1",
       owner: { type: "role-domain", id: "domain-7" },
       status: "active",
-      credentialsField: {
-        domainId: "domain-7",
-        fieldId: "domain-7-credentials-connector_credentials",
-        fieldCode: "connector_credentials",
-      },
+      domainId: "domain-7",
+      domainCreated: true,
     };
     mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: connection }));
 
     const result = await handleToolCall(client, "nestr_bind_connector", {
       workspaceId: "ws1",
       connectorId: "c9",
-      ownerType: "role-domain",
-      ownerId: "domain-7",
+      ownerType: "role",
+      ownerId: "role-7",
     });
     expect(result.isError).toBeFalsy();
 
     const parsed = parseResult(result.content[0].text);
-    const conn = parsed.connection as { credentialsField?: { domainId: string } };
-    expect(conn.credentialsField?.domainId).toBe("domain-7");
+    const conn = parsed.connection as { domainId?: string; domainCreated?: boolean };
+    expect(conn.domainId).toBe("domain-7");
+    expect(conn.domainCreated).toBe(true);
     expect(parsed.message).toMatch(/role's domain/i);
-    expect(parsed.message).toMatch(/connect button/i);
+    // Access alone grants nothing until a person connects an account.
+    expect(parsed.message).toMatch(/nestr_get_connect_link/i);
   });
 
   it("nestr_bind_connector requires connectorId, ownerType and ownerId", async () => {
@@ -216,6 +215,109 @@ describe("connector tools", () => {
     expect(result.isError).toBe(true);
     const parsed = parseResult(result.content[0].text);
     expect(parsed.code).toBe("VALIDATION");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("nestr_list_connections reads the bindings without asking for a secret", async () => {
+    const rows = [
+      {
+        connectionId: "conn1",
+        connectorId: "c9",
+        connectorName: "Ledger API",
+        owner: { type: "role-domain", id: "domain-7" },
+        ownerLabel: "Finance Lead (Ops) / Ledger API",
+        connectedCount: 1,
+        authorizations: [],
+      },
+    ];
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: rows }));
+
+    const result = await handleToolCall(client, "nestr_list_connections", { workspaceId: "ws1" });
+    expect(result.isError).toBeFalsy();
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/workspaces/ws1/connections/list");
+    expect(opts.method ?? "GET").toBe("GET");
+    expect(parseResult(result.content[0].text)).toEqual(rows);
+  });
+
+  it("nestr_get_connect_link hands the credential step to a person", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, {
+      status: "success",
+      data: { connectionId: "conn1", url: "https://app.test/n/ws1?connect=conn1" },
+    }));
+
+    const result = await handleToolCall(client, "nestr_get_connect_link", {
+      workspaceId: "ws1",
+      connectionId: "conn1",
+    });
+    expect(result.isError).toBeFalsy();
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/workspaces/ws1/connections/conn1/connect-link");
+    expect(opts.method).toBe("POST");
+
+    const parsed = parseResult(result.content[0].text);
+    expect(parsed.url).toBe("https://app.test/n/ws1?connect=conn1");
+    // The whole point of the link: the secret never passes through the agent.
+    expect(parsed.message).toMatch(/never passes through you/i);
+  });
+
+  it("nestr_get_agent_connectors reports why a connector is unavailable", async () => {
+    const reach = [
+      {
+        connectionId: "conn1",
+        connectorName: "Ledger API",
+        source: "role-domain",
+        available: false,
+        reason: "no-credential",
+        canConnect: true,
+      },
+    ];
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: reach }));
+
+    const result = await handleToolCall(client, "nestr_get_agent_connectors", {
+      workspaceId: "ws1",
+      agentUserId: "bot-1",
+    });
+    expect(result.isError).toBeFalsy();
+
+    const [url] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/workspaces/ws1/agents/bot-1/connectors");
+    expect(parseResult(result.content[0].text)).toEqual(reach);
+  });
+
+  it("nestr_run_agent pins the run to a nest and passes what was asked", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, {
+      status: "success",
+      data: { agentUserId: "bot-1", nestId: "role-7", dispatched: true },
+    }));
+
+    const result = await handleToolCall(client, "nestr_run_agent", {
+      workspaceId: "ws1",
+      agentUserId: "bot-1",
+      nestId: "role-7",
+      message: "Reconcile the July invoices.",
+    });
+    expect(result.isError).toBeFalsy();
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/workspaces/ws1/agents/bot-1/run");
+    expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body)).toEqual({
+      nestId: "role-7",
+      message: "Reconcile the July invoices.",
+    });
+    expect(parseResult(result.content[0].text).dispatched).toBe(true);
+  });
+
+  it("nestr_run_agent requires the nest the run is pinned to", async () => {
+    const result = await handleToolCall(client, "nestr_run_agent", {
+      workspaceId: "ws1",
+      agentUserId: "bot-1",
+    });
+    expect(result.isError).toBe(true);
+    expect(parseResult(result.content[0].text).code).toBe("VALIDATION");
     expect(mockFetch).not.toHaveBeenCalled();
   });
 });

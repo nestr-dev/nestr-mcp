@@ -224,16 +224,19 @@ export interface Connector {
 
 /** The owner a connector binds to. */
 export interface ConnectionOwner {
-  type: "user" | "agent" | "workspace" | "role-domain";
-  /** user/agent: user id. workspace: workspace id. role-domain: domain nest id. */
+  type: "user" | "agent" | "workspace" | "role-domain" | "role";
+  /**
+   * user/agent: user id. workspace: workspace id. role-domain: domain nest id.
+   * role: role nest id — the connector's domain is found or created under it.
+   */
   id: string;
 }
 
 /**
  * A connection: a connector bound to an owner. Holds no secret; the secret
  * lives on an authorization captured out-of-band via the Connect button.
- * For a role-domain owner, `credentialsField` describes the credentials field
- * materialised on the domain nest so the role can use the connector.
+ * Binding with owner type 'role' returns the domain that now holds the access,
+ * and whether it had to be created.
  */
 export interface Connection {
   _id: string;
@@ -242,16 +245,62 @@ export interface Connection {
   owner: ConnectionOwner;
   metadata?: Record<string, unknown>;
   status?: "active" | "disabled";
-  /** Present only for a role-domain binding. */
-  credentialsField?: {
-    domainId: string;
-    fieldId?: string;
-    fieldCode?: string;
-    /** Set when the connection bound but the field could not be materialised. */
-    error?: string;
-  };
+  /** Present when binding with owner type 'role'. */
+  domainId?: string;
+  /** Whether that domain had to be created for this connector. */
+  domainCreated?: boolean;
   createdAt?: string;
   updatedAt?: string;
+}
+
+/** A binding as the workspace listing reports it, with who holds a credential. */
+export interface ConnectionListing {
+  connectionId: string;
+  connectorId: string | null;
+  connectorName: string;
+  owner: ConnectionOwner;
+  /** "Role (Circle) / Domain" for a role binding, the person or agent otherwise. */
+  ownerLabel: string | null;
+  ownerRoleId?: string | null;
+  ownerRoleTitle?: string | null;
+  ownerCircleTitle?: string | null;
+  ownerDomainTitle?: string | null;
+  status?: "active" | "disabled";
+  connectedCount: number;
+  authorizations: Array<{
+    _id: string;
+    principal: { type: "user" | "agent"; id: string };
+    principalName: string | null;
+    scope: "personal" | "shared";
+    status: string;
+    connected: boolean;
+    /** Set when an agent holds a credential a person consented to. */
+    delegated: boolean;
+    authorizedBy: string | null;
+    authorizedByName: string | null;
+  }>;
+}
+
+/** What an agent can and cannot use, and why. */
+export interface AgentConnectorReach {
+  connectionId: string;
+  connectorId: string | null;
+  connectorName: string;
+  /** Where the grant comes from: its own binding, the workspace, or a role. */
+  source: "own" | "workspace" | "role-domain" | null;
+  available: boolean;
+  /** Why it is unavailable: no-credential, catalog-disabled, no-capabilities, ... */
+  reason: string | null;
+  roleNestId: string | null;
+  roleTitle: string | null;
+  domainId: string | null;
+  domainTitle: string | null;
+  scope: "personal" | "shared" | null;
+  delegatedBy: string | null;
+  delegatedByName: string | null;
+  /** The person who consented can no longer authorise it here. */
+  delegatorLapsed: boolean;
+  canConnect: boolean;
 }
 
 /**
@@ -1887,6 +1936,154 @@ export class NestrClient {
         body: JSON.stringify(body),
       }
     );
+    return response.data;
+  }
+
+  /**
+   * Update a connector in the workspace catalog. Workspace-admin only. Send
+   * `enabled` to switch it on or off.
+   *
+   * Wraps PATCH /workspaces/:workspaceId/connectors/:connectorId.
+   */
+  async updateConnector(
+    workspaceId: string,
+    connectorId: string,
+    updates: {
+      type?: string;
+      name?: string;
+      authStrategy?: string;
+      config?: Record<string, unknown>;
+      capabilities?: Record<string, unknown>;
+      exposure?: Record<string, unknown>;
+      enabled?: boolean;
+    }
+  ): Promise<Connector> {
+    const response = await this.fetch<{ status: string; data: Connector }>(
+      `/workspaces/${workspaceId}/connectors/${connectorId}`,
+      { method: "PATCH", body: JSON.stringify(updates) }
+    );
+    return response.data;
+  }
+
+  /**
+   * Remove a connector from the workspace catalog. Workspace-admin only.
+   *
+   * Wraps DELETE /workspaces/:workspaceId/connectors/:connectorId.
+   */
+  async removeConnector(workspaceId: string, connectorId: string): Promise<{ _id: string }> {
+    const response = await this.fetch<{ status: string; data: { _id: string } }>(
+      `/workspaces/${workspaceId}/connectors/${connectorId}`,
+      { method: "DELETE" }
+    );
+    return response.data;
+  }
+
+  /**
+   * List the workspace's bindings: which connector is bound to which owner, who
+   * holds a credential, and who consented. Never returns a secret.
+   *
+   * Wraps GET /workspaces/:workspaceId/connections/list.
+   */
+  async listConnections(
+    workspaceId: string,
+    options: { includeDisabled?: boolean } = {}
+  ): Promise<ConnectionListing[]> {
+    const query = options.includeDisabled ? "?includeDisabled=true" : "";
+    const response = await this.fetch<{ status: string; data: ConnectionListing[] }>(
+      `/workspaces/${workspaceId}/connections/list${query}`
+    );
+    return response.data;
+  }
+
+  /**
+   * Remove a binding: the connection is disabled and every credential on it is
+   * revoked. Workspace-admin only.
+   *
+   * Wraps DELETE /workspaces/:workspaceId/connections/:connectionId.
+   */
+  async removeConnection(
+    workspaceId: string,
+    connectionId: string
+  ): Promise<{ _id: string; revokedCount: number }> {
+    const response = await this.fetch<{
+      status: string;
+      data: { _id: string; revokedCount: number };
+    }>(`/workspaces/${workspaceId}/connections/${connectionId}`, { method: "DELETE" });
+    return response.data;
+  }
+
+  /**
+   * Get a link a human opens to complete the connect (an OAuth popup or a secure
+   * secret modal). The link carries no authority: whoever opens it is re-checked.
+   * This is how an agent hands the credential step to a person, since an agent
+   * must never handle a raw token.
+   *
+   * Wraps POST /workspaces/:workspaceId/connections/:connectionId/connect-link.
+   */
+  async getConnectLink(
+    workspaceId: string,
+    connectionId: string
+  ): Promise<{ connectionId: string; url: string }> {
+    const response = await this.fetch<{
+      status: string;
+      data: { connectionId: string; url: string };
+    }>(`/workspaces/${workspaceId}/connections/${connectionId}/connect-link`, {
+      method: "POST",
+    });
+    return response.data;
+  }
+
+  /**
+   * Revoke the acting user's credential on a connection.
+   *
+   * Wraps DELETE /workspaces/:workspaceId/connections/:connectionId/authorizations.
+   */
+  async revokeConnectionCredential(
+    workspaceId: string,
+    connectionId: string
+  ): Promise<{ _id: string }> {
+    const response = await this.fetch<{ status: string; data: { _id: string } }>(
+      `/workspaces/${workspaceId}/connections/${connectionId}/authorizations`,
+      { method: "DELETE" }
+    );
+    return response.data;
+  }
+
+  /**
+   * What an agent can and cannot use, grouped by where the grant comes from,
+   * with the reason a connector is unavailable.
+   *
+   * Wraps GET /workspaces/:workspaceId/agents/:userId/connectors.
+   */
+  async getAgentConnectorReach(
+    workspaceId: string,
+    agentUserId: string
+  ): Promise<AgentConnectorReach[]> {
+    const response = await this.fetch<{ status: string; data: AgentConnectorReach[] }>(
+      `/workspaces/${workspaceId}/agents/${agentUserId}/connectors`
+    );
+    return response.data;
+  }
+
+  /**
+   * Run an agent now on a nest, optionally saying what the run is for. The
+   * caller needs assign rights on the nest and the agent must fill or be
+   * assigned to it, so this cannot run an agent anywhere in the workspace.
+   *
+   * Wraps POST /workspaces/:workspaceId/agents/:userId/run.
+   */
+  async runAgent(
+    workspaceId: string,
+    agentUserId: string,
+    body: { nestId: string; message?: string }
+  ): Promise<{ agentUserId: string; nestId: string; dispatched: boolean }> {
+    const response = await this.fetch<{
+      status: string;
+      data: { agentUserId: string; nestId: string; dispatched: boolean };
+    }>(`/workspaces/${workspaceId}/agents/${agentUserId}/run`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
     return response.data;
   }
 }
