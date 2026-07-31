@@ -538,7 +538,7 @@ const coerceIntArray = <T extends z.ZodTypeAny>(schema: T) =>
 // endpoints honor a `sort` query param server-side (field name, '-' prefix for
 // descending) — the same fields the search `sort:` operator uses.
 const SORT_DESCRIPTION =
-  "Field to sort by, e.g. 'title', 'createdAt', 'updatedAt', 'due', 'order' (manual order). Prefix with '-' for descending, e.g. '-updatedAt'.";
+  "Field to sort by, e.g. 'title', 'createdAt', 'updatedAt', 'due', 'activityAt', 'order' (manual order). Prefix with '-' for descending. For 'recently active' ordering use '-activityAt' (last activity anywhere in the item, including its children); '-updatedAt' only reflects the item's own edits.";
 
 // Tool input schemas using Zod
 export const schemas = {
