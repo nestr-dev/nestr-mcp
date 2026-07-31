@@ -221,6 +221,70 @@ describe("connector tools", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it("nestr_update_connector PATCHes only what was sent", async () => {
+    const connector = { _id: "c9", workspaceId: "ws1", name: "Ledger renamed", enabled: true };
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: connector }));
+
+    const result = await handleToolCall(client, "nestr_update_connector", {
+      workspaceId: "ws1",
+      connectorId: "c9",
+      name: "Ledger renamed",
+    });
+    expect(result.isError).toBeFalsy();
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/workspaces/ws1/connectors/c9");
+    expect(opts.method).toBe("PATCH");
+    // Only the field asked for: a partial update must not blank the rest.
+    expect(JSON.parse(opts.body)).toEqual({ name: "Ledger renamed" });
+    expect(parseResult(result.content[0].text).connector).toEqual(connector);
+  });
+
+  it("nestr_update_connector can switch a connector off workspace-wide", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, {
+      status: "success",
+      data: { _id: "c9", workspaceId: "ws1", enabled: false },
+    }));
+
+    const result = await handleToolCall(client, "nestr_update_connector", {
+      workspaceId: "ws1",
+      connectorId: "c9",
+      enabled: false,
+    });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ enabled: false });
+  });
+
+  it("nestr_update_connector requires the connector to update", async () => {
+    const result = await handleToolCall(client, "nestr_update_connector", { workspaceId: "ws1" });
+    expect(result.isError).toBe(true);
+    expect(parseResult(result.content[0].text).code).toBe("VALIDATION");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("nestr_remove_connector DELETEs it and says what that costs", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: { _id: "c9" } }));
+
+    const result = await handleToolCall(client, "nestr_remove_connector", {
+      workspaceId: "ws1",
+      connectorId: "c9",
+    });
+    expect(result.isError).toBeFalsy();
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/workspaces/ws1/connectors/c9");
+    expect(opts.method).toBe("DELETE");
+    // Removing a connector is not the same as pausing it, so the reply says so.
+    expect(parseResult(result.content[0].text).message).toMatch(/stop resolving/i);
+  });
+
+  it("nestr_remove_connector requires the connector to remove", async () => {
+    const result = await handleToolCall(client, "nestr_remove_connector", { workspaceId: "ws1" });
+    expect(result.isError).toBe(true);
+    expect(parseResult(result.content[0].text).code).toBe("VALIDATION");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it("nestr_list_connections reads the bindings without asking for a secret", async () => {
     const rows = [
       {
