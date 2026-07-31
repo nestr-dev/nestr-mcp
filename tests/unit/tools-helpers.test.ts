@@ -9,6 +9,7 @@ import {
   extractSearchDirectives,
   schemas,
   toolDefinitions,
+  commentPlacementNote,
 } from "../../src/tools/index.js";
 
 // ─── compactResponse ────────────────────────────────────────────────
@@ -528,5 +529,26 @@ describe("nestr_list_tensions order alias", () => {
     const properties = (tool.inputSchema as { properties: Record<string, unknown> }).properties;
     expect(properties.sort).toBeDefined();
     expect(properties.order).toBeUndefined();
+  });
+});
+
+// ─── comment placement ──────────────────────────────────────────────
+// Nestr re-points a comment aimed at a message inside a DM onto the
+// conversation, because DM threads are flat. The 200 body carries the
+// corrected parentId, so the agent is told where its comment actually landed.
+
+describe("commentPlacementNote", () => {
+  it("reports the move when the server placed the comment elsewhere", () => {
+    const note = commentPlacementNote("msg1", { _id: "c1", body: "hi", parentId: "conv1" });
+    expect(note).toContain("conv1");
+    expect(note).toContain("msg1");
+  });
+
+  it("is silent when the comment landed where it was aimed", () => {
+    expect(commentPlacementNote("nest1", { _id: "c1", body: "hi", parentId: "nest1" })).toBeNull();
+  });
+
+  it("is silent when the response carries no parentId", () => {
+    expect(commentPlacementNote("nest1", { _id: "c1", body: "hi" } as never)).toBeNull();
   });
 });
