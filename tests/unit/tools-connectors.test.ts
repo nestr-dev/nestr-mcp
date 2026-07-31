@@ -85,7 +85,10 @@ describe("connector tools", () => {
 
     const parsed = parseResult(result.content[0].text);
     expect(parsed.connector).toEqual(created);
-    expect(parsed.message).toMatch(/bind it to an owner/i);
+    // A connector nobody has access to does nothing, and the credential is a
+    // separate step that must not pass through the agent.
+    expect(parsed.message).toMatch(/nestr_bind_connector/i);
+    expect(parsed.message).toMatch(/nestr_get_connect_link/i);
   });
 
   it("nestr_register_connector accepts JSON-stringified config/exposure (client coercion)", async () => {

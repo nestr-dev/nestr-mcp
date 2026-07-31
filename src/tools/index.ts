@@ -3731,7 +3731,7 @@ async function _handleToolCall(
           authStrategy: parsed.authStrategy,
         });
         return formatResult({
-          message: "Connector registered. Next, bind it to an owner with nestr_bind_connector (e.g. a role's domain), then a human or agent connects the account via the credentials field's Connect button.",
+          message: "Connector registered. It does nothing yet: nobody has access to it. Give a ROLE access with nestr_bind_connector { ownerType: 'role', ownerId: <role nest id> } and its domain is created under that role, which is the usual onboarding path. Then get a link with nestr_get_connect_link and give it to a person to open, since the credential must never pass through you.",
           connector,
         });
       }
