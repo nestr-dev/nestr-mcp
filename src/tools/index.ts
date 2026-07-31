@@ -1181,7 +1181,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_search",
-    description: "Search nests in a workspace. Supports operators like label:, assignee:, completed:, in:, sort:. Always use completed:false for active work. See nestr_help('search') for full syntax.",
+    description: "Search nests in a workspace. Supports operators like label:, assignee:, createdby:, completed:, in:, sort:. createdby: accepts me, an email address, or a user id. Always use completed:false for active work. See nestr_help('search') for full syntax. Results carry user ids; when presenting to a person, show names and/or emails, resolving ids via nestr_get_user or nestr_list_users.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1201,7 +1201,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_nest",
-    description: "Get nest details. Supports comma-separated IDs for batch fetch. Add hints=true for contextual signals, fieldsMetaData=true for field schemas. For a single nest you can also diagnose it: provenance, rights, and whoCan (see explain_nest for a one-shot diagnosis).",
+    description: "Get nest details. Supports comma-separated IDs for batch fetch. Add hints=true for contextual signals, fieldsMetaData=true for field schemas. For a single nest you can also diagnose it: provenance, rights, and whoCan (see explain_nest for a one-shot diagnosis). The users array holds user ids; when presenting to a person, resolve them to names and/or emails via nestr_get_user or nestr_list_users.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1503,7 +1503,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_users",
-    description: "List members of a workspace. Response includes meta.total showing total matching count.",
+    description: "List members of a workspace. Response includes meta.total showing total matching count. Also the tool to resolve user ids in bulk: when presenting users to a person, show names and/or emails, never bare ids.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1581,7 +1581,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_user",
-    description: "Get details of a specific user including profile, roles, and contact info.",
+    description: "Get details of a specific user including profile, roles, and contact info. Use it to resolve a user id to a name and email; when presenting users to a person, show names and/or emails, never bare ids.",
     inputSchema: {
       type: "object" as const,
       properties: {

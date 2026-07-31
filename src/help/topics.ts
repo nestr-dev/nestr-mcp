@@ -499,7 +499,8 @@ The \`nestr_search\` tool supports powerful query operators. Combine multiple op
 | \`assignee:\` | \`assignee:userId\` | Filter by specific user ID |
 | \`assignee:!\` | \`assignee:!userId\` | Exclude items assigned to specific user |
 | \`admin:\` | \`admin:me\` | Filter by admin user (same syntax as assignee) |
-| \`createdby:\` | \`createdby:me\` | Filter by creator |
+| \`createdby:\` | \`createdby:me\` | Filter by creator (use \`me\` for current user) |
+| \`createdby:\` | \`createdby:jane@acme.com\` | Filter by creator email address (username) or user ID; multiple \`createdby:\` terms combine as OR |
 | \`completed:\` | \`completed:false\` | Filter by completion status |
 | \`type:\` | \`type:comment\` | Filter by nest type (e.g., \`comment\`, \`nest\` for untyped items) |
 | \`has:\` | \`has:due\` | Items with a property (see has: values below) |
