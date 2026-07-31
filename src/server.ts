@@ -85,6 +85,10 @@ Nestr supports any self-organization approach. When the flavour is clear (check 
 
 The \`users\` array on every nest contains the IDs of assigned users. For roles, \`users\` tells you **who fills (energizes) that role**. To find all roles a user fills, search with \`assignee:me label:role\` or \`assignee:{userId} label:role\`. The \`users\` field is always present in API responses, even when using \`stripDescription: true\`.
 
+## Presenting Users
+
+User ids are internal identifiers. Any response you show to a person must present users by name and/or email, never by bare id, unless the caller explicitly asks for ids. When a payload only carries ids (\`users\`, \`createdBy\`, admin lists), resolve them with \`nestr_get_user\` or \`nestr_list_users\` before presenting.
+
 ## Authentication
 
 Tools accept either an OAuth bearer token (user-scoped) or a workspace API key, except where the tool description explicitly says "Auth: OAuth only" — those require user scope and will return \`AUTH_SCOPE_INSUFFICIENT\` under an API key.
