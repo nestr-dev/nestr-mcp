@@ -621,7 +621,8 @@ Use \`sort:\` to specify the sort field and \`sort-order:\` to set direction.
 - \`sort:searchOrder\` - Manual/custom ordering (default for work items like tasks, projects)
 - \`sort:title\` - Alphabetical by title (default for roles, circles)
 - \`sort:createdAt\` - By creation date
-- \`sort:updatedAt\` - By last update date
+- \`sort:updatedAt\` - By the item's own last edit (children do not count)
+- \`sort:activityAt\` - By last activity anywhere in the item, its own edits or its subtree. Use this for "recently active" questions; \`updatedAt\` misses items whose action is in their children
 - \`sort:due\` - By due date
 - \`sort:completedAt\` - By completion date
 
@@ -641,7 +642,7 @@ label:project sort:due sort-order:asc
 label:role sort:title
   -> Roles alphabetically (this is the default)
 
-assignee:me completed:false sort:updatedAt sort-order:desc
+assignee:me completed:false sort:activityAt sort-order:desc
   -> My active work, most recently touched first
 
 label:project completed:this_month sort:completedAt sort-order:desc
