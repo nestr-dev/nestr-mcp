@@ -1384,6 +1384,36 @@ export class NestrClient {
     return response.data;
   }
 
+  // ============ SCHEDULE / RECURRENCE ============
+
+  /**
+   * Set or remove a nest's recurrence rule, wrapping the `scheduleSetRecurrence`
+   * Meteor method. `rrule: null` removes recurrence (stops future generation;
+   * already-materialized instances are kept, just detached from the series).
+   * A set rrule is validated server-side and materializes a bounded horizon of
+   * upcoming instances (currently up to 10 within 90 days).
+   *
+   * NOTE: there is no `PATCH /nests/:id/recurrence` route in slashme-online yet —
+   * `scheduleSetRecurrence` (slashme-online PR #1780) is wired for internal UI use
+   * only (Meteor.call from ScheduleEditor), not the public REST API. This method
+   * is written against the route slashme-online needs to add; until that lands,
+   * this call 404s. See the `nestr_set_recurrence` tool description for the full
+   * cross-repo dependency note.
+   */
+  async setRecurrence(
+    nestId: string,
+    rrule: string | null
+  ): Promise<{ rrule: string; generated: number } | { removed: true }> {
+    const response = await this.fetch<{
+      status: string;
+      data: { rrule: string; generated: number } | { removed: true };
+    }>(`/nests/${nestId}/recurrence`, {
+      method: "PATCH",
+      body: JSON.stringify({ rrule }),
+    });
+    return response.data;
+  }
+
   // ============ TENSIONS ============
 
   async createTension(
