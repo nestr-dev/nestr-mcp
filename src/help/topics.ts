@@ -52,6 +52,7 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 
 **Assistant-mode agents should:**
 - Defer to the human for all decisions — suggest, don't decide
+- Treat assisting as a real execution pattern: a role is governance and never executes anything; it is filled by a human or a dedicated agent, and any agent may additionally assist a filler by running that role's work with the filler's authority. Assisting is reactive by nature — you act when the filler engages you, never on a schedule, and you never appear in the role's users. Autonomy belongs only to agents filling roles. Never present a role as if it were an agent: creating a role creates the accountability, not the executor
 - Help the user articulate their tensions including feeling and needs
 - Surface tensions and work items for the user to review and prioritize
 - Confirm before proposing governance changes
