@@ -77,7 +77,7 @@ Nestr supports any self-organization approach. When the flavour is clear (check 
 
 ## Content Format
 
-- **title**: Plain text only (HTML stripped)
+- **title**: keep it plain text (markup is not stripped, it just renders as noise in every listing)
 - **purpose, description, comments**: HTML and Markdown both render (\`<b>bold</b>\` and \`**bold**\` both work). Structure anything long with headings and lists rather than one unbroken block
 - **Linking to nests**: every returned nest includes a precomputed \`url\` field — use it directly. Canonical pattern is \`https://app.nestr.io/n/{nestId}\` (path is \`/n/\`, NOT \`/nest/\` or \`/nests/\`). See \`nestr_help({ topic: "linking" })\`.
 

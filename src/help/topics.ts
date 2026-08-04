@@ -200,7 +200,7 @@ Nestr uses different formats for different fields:
 | Progress updates, status changes, discussion | Comments |
 | Integration metadata, custom tracking | \`data\` (namespace under \`mcp.\`) |
 
-**Formatting — HTML and Markdown both render:** purpose, description and comment content passes through a Markdown renderer with HTML enabled, so \`<b>bold</b>\` and \`**bold**\` both come out bold. Write whichever reads better and stay consistent within one piece of content. Titles are the exception: plain text only, tags are stripped.
+**Formatting — HTML and Markdown both render:** purpose, description and comment content passes through a Markdown renderer with HTML enabled, so \`<b>bold</b>\` and \`**bold**\` both come out bold. Write whichever reads better and stay consistent within one piece of content. Keep titles plain text: markup there is not stripped, it just renders as noise everywhere the title is listed.
 
 | Markdown | HTML |
 |----------|------|
