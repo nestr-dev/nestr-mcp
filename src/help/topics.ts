@@ -200,16 +200,17 @@ Nestr uses different formats for different fields:
 | Progress updates, status changes, discussion | Comments |
 | Integration metadata, custom tracking | \`data\` (namespace under \`mcp.\`) |
 
-**Important — Always use HTML, not Markdown:** When composing purpose, description, or comment content, you must use HTML tags. This is a common mistake for AI agents that default to Markdown syntax.
+**Formatting — HTML and Markdown both render:** purpose, description and comment content passes through a Markdown renderer with HTML enabled, so \`<b>bold</b>\` and \`**bold**\` both come out bold. Write whichever reads better and stay consistent within one piece of content. Titles are the exception: plain text only, tags are stripped.
 
-| Instead of (Markdown) | Use (HTML) |
-|----------------------|------------|
+| Markdown | HTML |
+|----------|------|
 | \`**bold text**\` | \`<b>bold text</b>\` |
 | \`*italic text*\` | \`<i>italic text</i>\` |
 | \`- list item\` | \`<ul><li>list item</li></ul>\` |
 | \`1. numbered item\` | \`<ol><li>numbered item</li></ol>\` |
 | \`[link text](url)\` | \`<a href="url">link text</a>\` |
-| \`\\n\\n\` (double newline) | \`<br>\` |
+
+What does not render either way is a wall of unbroken prose. Give anything longer than a few sentences headings and lists, so the humans who own the nest can read it.
 
 **Example HTML in purpose:**
 \`\`\`html
