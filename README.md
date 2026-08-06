@@ -300,7 +300,7 @@ npm run inspect
 ## Resources
 
 - [Setup Guide](https://mcp.nestr.io) - Step-by-step setup instructions
-- [Nestr Help Center](https://help.nestr.io)
+- [Nestr Help Center](https://nestr.io/nestr-help)
 - [Nestr API Documentation](https://app.nestr.io/api/docs)
 - [Model Context Protocol](https://modelcontextprotocol.io)
 
@@ -311,4 +311,4 @@ MIT - see [LICENSE](LICENSE)
 ## Support
 
 - [GitHub Issues](https://github.com/nestr-dev/nestr-mcp/issues)
-- [Nestr Support](https://help.nestr.io)
+- [Nestr Support](https://nestr.io/nestr-help)

@@ -81,9 +81,9 @@ If one workspace exists, check if setup mode applies. If multiple, ask which to 
 1. **New or existing?** Setting up from scratch, capturing existing structure, or migrating from another tool.
 
 2. **If migrating:** Direct to help docs:
-   - Holaspirit: \`https://help.nestr.io/en/integrations/importing-data-from-holaspirit\`
-   - Glassfrog: \`https://help.nestr.io/en/integrations/importing-data-from-glassfrog\`
-   - General: \`https://help.nestr.io/en/integrations/importing-and-exporting-your-data-with-nestr\`
+   - Holaspirit: \`https://nestr.io/help/articles/importing-data-from-holaspirit\`
+   - Glassfrog: \`https://nestr.io/help/articles/importing-data-from-glassfrog\`
+   - General: \`https://nestr.io/help/articles/importing-and-exporting-your-data-with-nestr\`
    - CSV: Ask for file content. Expected columns: circle, role, purpose, accountabilities. Parse and create programmatically. After import, skip to Step 5.
 
 3. **Research:** Ask about website, what the org does, who it serves. Present understanding back and refine.
