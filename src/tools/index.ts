@@ -822,6 +822,12 @@ export const schemas = {
     nestIds: coerceFromJson(z.array(z.string())).describe("Array of nest IDs in the desired order"),
   }),
 
+  // Schedule / recurrence
+  setRecurrence: z.object({
+    nestId: z.string().describe("Nest ID to set or remove recurrence on"),
+    rrule: z.string().nullable().describe("RFC-5545 RRULE string (e.g. 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=10') to set recurrence, or null to remove it. Required — pass null explicitly to remove rather than omitting the field."),
+  }),
+
   // Daily plan (requires OAuth token)
   getDailyPlan: z.object({}),
 
@@ -1788,6 +1794,22 @@ export const toolDefinitions = [
         },
       },
       required: ["workspaceId", "nestIds"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_set_recurrence",
+    description: "Set or remove a task/project/meeting's recurrence rule. Pass an RFC-5545 RRULE string (e.g. 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=10') to set it, or rrule: null to remove it — removing stops future instances from generating but keeps already-materialized ones. Setting a valid rrule immediately materializes a bounded horizon of upcoming instances (currently up to 10 within 90 days) as sibling nests carrying the series id; an invalid RRULE is rejected before anything is written. Anchors to the nest's own start date/time when set.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest ID to set or remove recurrence on" },
+        rrule: {
+          type: ["string", "null"],
+          description: "RFC-5545 RRULE string to set recurrence, or null to remove it. Required — pass null explicitly rather than omitting the field.",
+        },
+      },
+      required: ["nestId", "rrule"],
     },
     ...mutating,
   },
@@ -3175,6 +3197,15 @@ async function _handleToolCall(
         const parsed = schemas.bulkReorder.parse(args);
         const result = await client.bulkReorder(parsed.workspaceId, parsed.nestIds);
         return formatResult({ message: "Nests reordered successfully", nests: result });
+      }
+
+      case "nestr_set_recurrence": {
+        const parsed = schemas.setRecurrence.parse(args);
+        const result = await client.setRecurrence(parsed.nestId, parsed.rrule);
+        const message = "removed" in result
+          ? "Recurrence removed. Future instances stop generating; already-materialized instances are kept."
+          : `Recurrence set. ${result.generated} instance(s) materialized.`;
+        return formatResult({ message, recurrence: result });
       }
 
       // Label management
