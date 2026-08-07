@@ -1049,8 +1049,57 @@ export const schemas = {
   bindConnector: z.object({
     workspaceId: z.string().describe("Workspace ID the connector and owner belong to"),
     connectorId: z.string().describe("ID of an enabled connector from nestr_list_connectors"),
-    ownerType: z.enum(["user", "agent", "workspace", "role-domain"]).describe("Owner type. 'role-domain' binds the connector to a role's domain so the role can use it and a credentials field is materialised on the domain."),
-    ownerId: z.string().describe("Owner ID. user/agent: the user ID. workspace: the workspace ID. role-domain: the domain nest ID."),
+    ownerType: z.enum(["user", "agent", "workspace", "role-domain", "role"]).describe("Who gets access. 'role' is usually what you want: pass a role nest ID and the connector's domain is found or created under it. 'role-domain' targets an existing domain directly. 'user'/'agent' give one actor access; 'workspace' gives everyone."),
+    ownerId: z.string().describe("Owner ID. role: the role nest ID. role-domain: the domain nest ID. user/agent: the user ID. workspace: the workspace ID."),
+  }),
+
+  updateConnector: z.object({
+    workspaceId: z.string().describe("Workspace ID the connector belongs to"),
+    connectorId: z.string().describe("ID of the connector to update"),
+    type: z.enum(["mcp", "cli", "api"]).optional().describe("Transport"),
+    name: z.string().optional().describe("Unique connector name within the workspace catalog"),
+    config: coerceFromJson(z.record(z.unknown())).optional().describe("Per-type transport config, no secret"),
+    capabilities: coerceFromJson(z.record(z.unknown())).optional().describe("Capability descriptor"),
+    exposure: coerceFromJson(z.record(z.unknown())).optional().describe("Exposure policy: { userAgent, domainGated }"),
+    authStrategy: z.enum(["secret", "oauth2"]).optional().describe("How a principal connects"),
+    enabled: z.boolean().optional().describe("Switch the connector on or off in this workspace"),
+  }),
+
+  removeConnector: z.object({
+    workspaceId: z.string().describe("Workspace ID the connector belongs to"),
+    connectorId: z.string().describe("ID of the connector to remove from the catalog"),
+  }),
+
+  listConnections: z.object({
+    workspaceId: z.string().describe("Workspace ID whose bindings to list"),
+    includeDisabled: z.boolean().optional().describe("Include removed (disabled) bindings. Default false."),
+  }),
+
+  removeConnection: z.object({
+    workspaceId: z.string().describe("Workspace ID the binding belongs to"),
+    connectionId: z.string().describe("ID of the binding to remove, from nestr_list_connections"),
+  }),
+
+  getConnectLink: z.object({
+    workspaceId: z.string().describe("Workspace ID the binding belongs to"),
+    connectionId: z.string().describe("ID of the binding to connect, from nestr_list_connections"),
+  }),
+
+  revokeConnectionCredential: z.object({
+    workspaceId: z.string().describe("Workspace ID the binding belongs to"),
+    connectionId: z.string().describe("ID of the binding whose credential to revoke"),
+  }),
+
+  getAgentConnectorReach: z.object({
+    workspaceId: z.string().describe("Workspace ID the agent belongs to"),
+    agentUserId: z.string().describe("The agent's bot user ID"),
+  }),
+
+  runAgent: z.object({
+    workspaceId: z.string().describe("Workspace ID the agent belongs to"),
+    agentUserId: z.string().describe("The agent's bot user ID"),
+    nestId: z.string().describe("The nest the run is pinned to: a role, a project, a task"),
+    message: z.string().optional().describe("What this run is for. Omit for a plain 'advance this item' run."),
   }),
 
   // File attachments (a comment id works as the nestId — files are keyed by nestId)
@@ -2317,6 +2366,117 @@ export const toolDefinitions = [
     ...mutating,
   },
   {
+    name: "nestr_update_connector",
+    description: "Update a connector in the workspace catalog, or switch it on and off with `enabled`. Workspace-admin only. Switching it off, or narrowing its exposure, takes effect immediately everywhere it is used: the policy is re-read every time a credential is handed out, not only when access was given.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the connector belongs to" },
+        connectorId: { type: "string", description: "ID of the connector to update" },
+        type: { type: "string", enum: ["mcp", "cli", "api"], description: "Transport" },
+        name: { type: "string", description: "Unique connector name within the workspace catalog" },
+        config: { type: "object", description: "Per-type transport config, no secret" },
+        capabilities: { type: "object", description: "Capability descriptor" },
+        exposure: { type: "object", description: "Exposure policy: { userAgent, domainGated }" },
+        authStrategy: { type: "string", enum: ["secret", "oauth2"], description: "How a principal connects" },
+        enabled: { type: "boolean", description: "Switch the connector on or off in this workspace" },
+      },
+      required: ["workspaceId", "connectorId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_remove_connector",
+    description: "Remove a connector from the workspace catalog. Workspace-admin only. Bindings that named it stop resolving, so prefer nestr_update_connector with enabled:false when you only want to pause it.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the connector belongs to" },
+        connectorId: { type: "string", description: "ID of the connector to remove" },
+      },
+      required: ["workspaceId", "connectorId"],
+    },
+    ...destructive,
+  },
+  {
+    name: "nestr_list_connections",
+    description: "List who has access to what in this workspace: each binding's connector, its owner (a role's domain, a person, an agent, or the whole workspace), and who holds a credential on it. Shows when an agent is using a person's account, and never returns a secret. Use it to check whether access already exists before giving more, and to find the connectionId for nestr_get_connect_link.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID whose bindings to list" },
+        includeDisabled: { type: "boolean", description: "Include removed bindings. Default false." },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "nestr_remove_connection",
+    description: "Take a connector off an owner: the binding is removed and every credential on it revoked. Workspace-admin only. A domain left holding nothing goes back to being an ordinary descriptive domain.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the binding belongs to" },
+        connectionId: { type: "string", description: "Binding ID from nestr_list_connections" },
+      },
+      required: ["workspaceId", "connectionId"],
+    },
+    ...destructive,
+  },
+  {
+    name: "nestr_get_connect_link",
+    description: "Get a link a PERSON opens to connect an account for a binding. This is how you finish setting up access: you can register a connector and give a role access, but you must never handle a raw token, so the sign-in or key entry happens behind this link. The link carries no authority — whoever opens it is checked then. Give it to the user in your reply.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the binding belongs to" },
+        connectionId: { type: "string", description: "Binding ID from nestr_list_connections" },
+      },
+      required: ["workspaceId", "connectionId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_revoke_connection_credential",
+    description: "Revoke the calling user's credential on a binding. The binding stays, so access can be restored by connecting again. Use nestr_remove_connection to remove the access entirely.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the binding belongs to" },
+        connectionId: { type: "string", description: "Binding ID from nestr_list_connections" },
+      },
+      required: ["workspaceId", "connectionId"],
+    },
+    ...destructive,
+  },
+  {
+    name: "nestr_get_agent_connectors",
+    description: "What an agent can and cannot use, and why. Groups each connector by where the grant comes from (its own binding, the workspace, or a role it fills) and, when unavailable, names the reason: no credential yet, the connector is disabled, it has no usable tools, or it no longer allows this kind of access. Reach for this when an agent seems to be missing something it should have.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the agent belongs to" },
+        agentUserId: { type: "string", description: "The agent's bot user ID" },
+      },
+      required: ["workspaceId", "agentUserId"],
+    },
+  },
+  {
+    name: "nestr_run_agent",
+    description: "Run an agent now on a nest, optionally saying what the run is for. This is how one agent asks another to do something. The run is pinned to the nest you name and reports back there. You need assign rights on that nest and the agent must fill or be assigned to it, so this cannot run an agent anywhere in the workspace.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the agent belongs to" },
+        agentUserId: { type: "string", description: "The agent's bot user ID" },
+        nestId: { type: "string", description: "The nest the run is pinned to: a role, a project, a task" },
+        message: { type: "string", description: "What this run is for. Omit for a plain 'advance this item' run." },
+      },
+      required: ["workspaceId", "agentUserId", "nestId"],
+    },
+    ...mutating,
+  },
+  {
     name: "nestr_get_nest_files",
     description: "List a nest's file attachments. A comment ID works too — files are keyed by nestId, so pass a comment ID to see files attached to that comment. Returns each file's id, name, contentType and size. Use nestr_read_file with a returned id to read one (images come back as viewable image content). Auth: any valid token with access to the nest.",
     inputSchema: {
@@ -3571,7 +3731,7 @@ async function _handleToolCall(
           authStrategy: parsed.authStrategy,
         });
         return formatResult({
-          message: "Connector registered. Next, bind it to an owner with nestr_bind_connector (e.g. a role's domain), then a human or agent connects the account via the credentials field's Connect button.",
+          message: "Connector registered. It does nothing yet: nobody has access to it. Give a ROLE access with nestr_bind_connector { ownerType: 'role', ownerId: <role nest id> } and its domain is created under that role, which is the usual onboarding path. Then get a link with nestr_get_connect_link and give it to a person to open, since the credential must never pass through you.",
           connector,
         });
       }
@@ -3582,13 +3742,82 @@ async function _handleToolCall(
           connectorId: parsed.connectorId,
           owner: { type: parsed.ownerType, id: parsed.ownerId },
         });
-        // For a role-domain binding the API materialises a credentials field on
-        // the domain; surface that explicitly so the caller knows the Connect
-        // button now renders there and the secret is captured out-of-band.
-        const message = parsed.ownerType === "role-domain"
-          ? "Connector bound to the role's domain. A credentials field was materialised on the domain (see credentialsField) so the role can use the connector and the Connect button renders. A human or agent now connects the account via that button; the secret is captured out-of-band and never by the agent."
-          : "Connector bound to the owner. The owner now connects the account out-of-band; the secret is never seen by the agent.";
+        // A role binding creates the connector's domain when there isn't one, so
+        // say where the access landed. The credential is always a separate,
+        // out-of-band step: hand the human a link from nestr_get_connect_link.
+        const message = parsed.ownerType === "role" || parsed.ownerType === "role-domain"
+          ? "Access given to the role's domain. Nobody can use it until an account is connected: get a link with nestr_get_connect_link and give it to a person to open. The secret is captured out-of-band and never by the agent."
+          : "Access given to the owner. Nobody can use it until an account is connected: get a link with nestr_get_connect_link and give it to a person to open. The secret is never seen by the agent.";
         return formatResult({ message, connection });
+      }
+
+      case "nestr_update_connector": {
+        const parsed = schemas.updateConnector.parse(args);
+        const { workspaceId, connectorId, ...updates } = parsed;
+        const connector = await client.updateConnector(workspaceId, connectorId, updates);
+        return formatResult({ message: "Connector updated.", connector });
+      }
+
+      case "nestr_remove_connector": {
+        const parsed = schemas.removeConnector.parse(args);
+        await client.removeConnector(parsed.workspaceId, parsed.connectorId);
+        return formatResult({
+          message: "Connector removed from the catalog. Bindings that named it stop resolving.",
+          connectorId: parsed.connectorId,
+        });
+      }
+
+      case "nestr_list_connections": {
+        const parsed = schemas.listConnections.parse(args);
+        const connections = await client.listConnections(parsed.workspaceId, {
+          includeDisabled: parsed.includeDisabled,
+        });
+        return formatResult(connections);
+      }
+
+      case "nestr_remove_connection": {
+        const parsed = schemas.removeConnection.parse(args);
+        const result = await client.removeConnection(parsed.workspaceId, parsed.connectionId);
+        return formatResult({
+          message: `Access removed. ${result.revokedCount} credential(s) revoked.`,
+          connectionId: parsed.connectionId,
+        });
+      }
+
+      case "nestr_get_connect_link": {
+        const parsed = schemas.getConnectLink.parse(args);
+        const link = await client.getConnectLink(parsed.workspaceId, parsed.connectionId);
+        return formatResult({
+          message: "Give this link to a person to open. They complete the sign-in or paste the key there, so the secret never passes through you.",
+          ...link,
+        });
+      }
+
+      case "nestr_revoke_connection_credential": {
+        const parsed = schemas.revokeConnectionCredential.parse(args);
+        await client.revokeConnectionCredential(parsed.workspaceId, parsed.connectionId);
+        return formatResult({
+          message: "Credential revoked. The binding stays; connect again to restore access.",
+          connectionId: parsed.connectionId,
+        });
+      }
+
+      case "nestr_get_agent_connectors": {
+        const parsed = schemas.getAgentConnectorReach.parse(args);
+        const reach = await client.getAgentConnectorReach(parsed.workspaceId, parsed.agentUserId);
+        return formatResult(reach);
+      }
+
+      case "nestr_run_agent": {
+        const parsed = schemas.runAgent.parse(args);
+        const result = await client.runAgent(parsed.workspaceId, parsed.agentUserId, {
+          nestId: parsed.nestId,
+          message: parsed.message,
+        });
+        return formatResult({
+          message: "The agent was dispatched. It reports back on the item it was run on.",
+          ...result,
+        });
       }
 
       case "nestr_get_nest_files": {
