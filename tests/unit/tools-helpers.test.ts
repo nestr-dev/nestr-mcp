@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   compactResponse,
   enrichHints,
@@ -169,6 +169,28 @@ describe("enrichHints", () => {
       tool: "nestr_get_nest_files",
       params: { nestId: "abc123" },
     });
+  });
+
+  // An inline image is reachable by id, but the id lives in one reference inside
+  // the nest's text, so the hint carries no url to pre-map. It must survive the
+  // pass untouched rather than picking up a call that cannot be made.
+  it("leaves an inline_images hint alone: no url means no toolCall", () => {
+    const data = {
+      _id: "nest1",
+      hints: [{
+        type: "inline_images",
+        label: "2 images pasted into the text of this nest.",
+        severity: "info",
+        count: 2,
+      }],
+    };
+    const errors: unknown[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args) => { errors.push(args); });
+    const result = enrichHints(data) as any;
+    spy.mockRestore();
+    expect(result.hints[0].toolCall).toBeUndefined();
+    expect(result.hints[0].count).toBe(2);
+    expect(errors, "no unrecognized-url warning for a hint that has no url").toHaveLength(0);
   });
 
   it("adds toolCall to /nests/{id}/tensions URL", () => {
