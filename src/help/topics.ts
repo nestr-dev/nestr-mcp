@@ -356,6 +356,7 @@ Each hint object has:
 | \`project_no_acceptance_criteria\` | suggestion | project | Missing description/acceptance criteria |
 | \`project_overdue\` | warning | project | Past due date |
 | \`no_proposed_output\` | suggestion | tension | Tension has no proposed output yet |
+| \`inline_images\` | info | all | Count of images pasted into the text (see below) |
 
 Example response with hints:
 \`\`\`json
@@ -378,6 +379,15 @@ Example response with hints:
   ]
 }
 \`\`\`
+
+**Inline images.** An image pasted into a nest's text is stored as a file and left in the
+content as a markdown reference: \`![name](/file/download?id=FILE_ID&name=NAME)\`. These are
+deliberately absent from \`nestr_get_nest_files\`, because they belong to the text rather than
+to the attachment list, and the \`files\` hint does not count them either. The
+\`inline_images\` hint is how you learn they are there. To look at one, take its FILE_ID from
+the reference in the content and call \`nestr_read_file({ nestId, fileId })\` — that works for
+inline images even though they are not listed. The hint carries no \`toolCall\`: the id belongs
+to a specific reference, so there is no single call to pre-map.
 
 Use hints to proactively surface issues to the user — for example, when reviewing a circle's roles, hints can reveal which roles need attention without separate queries. Use the \`toolCall\` to drill into any hint directly.`,
 
