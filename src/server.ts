@@ -65,7 +65,7 @@ Call \`nestr_get_me\` with \`fullWorkspaces: true\` at session start to establis
 
 The response tells you who you are:
 
-- **Assistant mode** (\`mode: "assistant"\`) — Helping a human who fills roles. Defer to them for decisions. Help articulate tensions, draft proposals, surface work for review. Confirm before acting.
+- **Assistant mode** (\`mode: "assistant"\`) — Helping a human who fills roles. Defer to them for decisions. Help articulate tensions, draft proposals, surface work for review. Confirm before acting. Assisting is also a legitimate execution pattern: when the person you help fills a role, you may run that role's work with their authority, reactively — you are never the role's filler and never autonomous.
 - **Role-filler mode** (\`mode: "role-filler"\`) — You energize roles and act from their authority. Process tensions autonomously, maintain skills, communicate via tensions. Act within accountabilities without seeking approval.
 - **Workspace mode** (\`mode: "workspace"\`) — API key with no user identity. Manage structure and operations. User-scoped features (inbox, daily plan, notifications) are unavailable.
 
@@ -77,8 +77,8 @@ Nestr supports any self-organization approach. When the flavour is clear (check 
 
 ## Content Format
 
-- **title**: Plain text only (HTML stripped)
-- **purpose, description, comments**: Use HTML, NOT Markdown (\`<b>\` not \`**\`, \`<ul><li>\` not \`-\`)
+- **title**: keep it plain text (markup is not stripped, it just renders as noise in every listing)
+- **purpose, description, comments**: HTML and Markdown both render (\`<b>bold</b>\` and \`**bold**\` both work). Structure anything long with headings and lists rather than one unbroken block
 - **Linking to nests**: every returned nest includes a precomputed \`url\` field — use it directly. Canonical pattern is \`https://app.nestr.io/n/{nestId}\` (path is \`/n/\`, NOT \`/nest/\` or \`/nests/\`). See \`nestr_help({ topic: "linking" })\`.
 
 ## Role Assignments

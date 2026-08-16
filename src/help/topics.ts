@@ -52,6 +52,7 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 
 **Assistant-mode agents should:**
 - Defer to the human for all decisions — suggest, don't decide
+- Treat assisting as a real execution pattern: a role is governance and never executes anything; it is filled by a human or a dedicated agent, and any agent may additionally assist a filler by running that role's work with the filler's authority. Assisting is reactive by nature — you act when the filler engages you, never on a schedule, and you never appear in the role's users. Autonomy belongs only to agents filling roles. Never present a role as if it were an agent: creating a role creates the accountability, not the executor
 - Help the user articulate their tensions including feeling and needs
 - Surface tensions and work items for the user to review and prioritize
 - Confirm before proposing governance changes
@@ -199,16 +200,17 @@ Nestr uses different formats for different fields:
 | Progress updates, status changes, discussion | Comments |
 | Integration metadata, custom tracking | \`data\` (namespace under \`mcp.\`) |
 
-**Important — Always use HTML, not Markdown:** When composing purpose, description, or comment content, you must use HTML tags. This is a common mistake for AI agents that default to Markdown syntax.
+**Formatting — HTML and Markdown both render:** purpose, description and comment content passes through a Markdown renderer with HTML enabled, so \`<b>bold</b>\` and \`**bold**\` both come out bold. Write whichever reads better and stay consistent within one piece of content. Keep titles plain text: markup there is not stripped, it just renders as noise everywhere the title is listed.
 
-| Instead of (Markdown) | Use (HTML) |
-|----------------------|------------|
+| Markdown | HTML |
+|----------|------|
 | \`**bold text**\` | \`<b>bold text</b>\` |
 | \`*italic text*\` | \`<i>italic text</i>\` |
 | \`- list item\` | \`<ul><li>list item</li></ul>\` |
 | \`1. numbered item\` | \`<ol><li>numbered item</li></ol>\` |
 | \`[link text](url)\` | \`<a href="url">link text</a>\` |
-| \`\\n\\n\` (double newline) | \`<br>\` |
+
+What does not render either way is a wall of unbroken prose. Give anything longer than a few sentences headings and lists, so the humans who own the nest can read it.
 
 **Example HTML in purpose:**
 \`\`\`html
@@ -354,6 +356,7 @@ Each hint object has:
 | \`project_no_acceptance_criteria\` | suggestion | project | Missing description/acceptance criteria |
 | \`project_overdue\` | warning | project | Past due date |
 | \`no_proposed_output\` | suggestion | tension | Tension has no proposed output yet |
+| \`inline_images\` | info | all | Count of images pasted into the text (see below) |
 
 Example response with hints:
 \`\`\`json
@@ -376,6 +379,15 @@ Example response with hints:
   ]
 }
 \`\`\`
+
+**Inline images.** An image pasted into a nest's text is stored as a file and left in the
+content as a markdown reference: \`![name](/file/download?id=FILE_ID&name=NAME)\`. These are
+deliberately absent from \`nestr_get_nest_files\`, because they belong to the text rather than
+to the attachment list, and the \`files\` hint does not count them either. The
+\`inline_images\` hint is how you learn they are there. To look at one, take its FILE_ID from
+the reference in the content and call \`nestr_read_file({ nestId, fileId })\` — that works for
+inline images even though they are not listed. The hint carries no \`toolCall\`: the id belongs
+to a specific reference, so there is no single call to pre-map.
 
 Use hints to proactively surface issues to the user — for example, when reviewing a circle's roles, hints can reveal which roles need attention without separate queries. Use the \`toolCall\` to drill into any hint directly.`,
 
@@ -621,7 +633,8 @@ Use \`sort:\` to specify the sort field and \`sort-order:\` to set direction.
 - \`sort:searchOrder\` - Manual/custom ordering (default for work items like tasks, projects)
 - \`sort:title\` - Alphabetical by title (default for roles, circles)
 - \`sort:createdAt\` - By creation date
-- \`sort:updatedAt\` - By last update date
+- \`sort:updatedAt\` - By the item's own last edit (children do not count)
+- \`sort:activityAt\` - By last activity anywhere in the item, its own edits or its subtree. Use this for "recently active" questions; \`updatedAt\` misses items whose action is in their children
 - \`sort:due\` - By due date
 - \`sort:completedAt\` - By completion date
 
@@ -641,7 +654,7 @@ label:project sort:due sort-order:asc
 label:role sort:title
   -> Roles alphabetically (this is the default)
 
-assignee:me completed:false sort:updatedAt sort-order:desc
+assignee:me completed:false sort:activityAt sort-order:desc
   -> My active work, most recently touched first
 
 label:project completed:this_month sort:completedAt sort-order:desc

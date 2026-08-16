@@ -538,7 +538,7 @@ const coerceIntArray = <T extends z.ZodTypeAny>(schema: T) =>
 // endpoints honor a `sort` query param server-side (field name, '-' prefix for
 // descending) — the same fields the search `sort:` operator uses.
 const SORT_DESCRIPTION =
-  "Field to sort by, e.g. 'title', 'createdAt', 'updatedAt', 'due', 'order' (manual order). Prefix with '-' for descending, e.g. '-updatedAt'.";
+  "Field to sort by, e.g. 'title', 'createdAt', 'updatedAt', 'due', 'activityAt', 'order' (manual order). Prefix with '-' for descending. For 'recently active' ordering use '-activityAt' (last activity anywhere in the item, including its children); '-updatedAt' only reflects the item's own edits.";
 
 // Tool input schemas using Zod
 export const schemas = {
@@ -2478,7 +2478,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_nest_files",
-    description: "List a nest's file attachments. A comment ID works too — files are keyed by nestId, so pass a comment ID to see files attached to that comment. Returns each file's id, name, contentType and size. Use nestr_read_file with a returned id to read one (images come back as viewable image content). Auth: any valid token with access to the nest.",
+    description: "List a nest's file attachments. Images pasted into the nest's text are deliberately excluded — they belong to the text that references them; the inline_images hint counts those and their ids come from the references in the content. A comment ID works too — files are keyed by nestId, so pass a comment ID to see files attached to that comment. Returns each file's id, name, contentType and size. Use nestr_read_file with a returned id to read one (images come back as viewable image content). Auth: any valid token with access to the nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2490,7 +2490,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_read_file",
-    description: "Read a single file attachment on a nest (or comment). Branches on contentType: images (image/*) return as viewable image content so you can see them (very large images return metadata only); JSON and text (application/json, text/*) return as decoded UTF-8 text (large text is truncated); PDFs and other types return their metadata only (cannot be inlined yet). Get file ids from nestr_get_nest_files. A comment ID works as the nestId. Auth: any valid token with access to the nest.",
+    description: "Read a single file attachment on a nest (or comment). Branches on contentType: images (image/*) return as viewable image content so you can see them (very large images return metadata only); JSON and text (application/json, text/*) return as decoded UTF-8 text (large text is truncated); PDFs and other types return their metadata only (cannot be inlined yet). Get file ids from nestr_get_nest_files, or, for an image pasted into a nest's text, from the ![name](/file/download?id=FILE_ID&name=NAME) reference in its content — those are not listed by nestr_get_nest_files but are readable here. A comment ID works as the nestId. Auth: any valid token with access to the nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
