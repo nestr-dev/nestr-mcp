@@ -1046,6 +1046,12 @@ export const schemas = {
     authStrategy: z.enum(["secret", "oauth2"]).optional().describe("How a principal connects: 'secret' (a one-time secret captured via the Connect button) or 'oauth2'. The agent never sees the secret."),
   }),
 
+  createAgent: z.object({
+    workspaceId: z.string().describe("Workspace ID to create the agent in"),
+    name: z.string().describe("The AGENT's own name, as its identity calls it (e.g. 'Collab'). Not the name of the work: that belongs to the role this agent will fill."),
+    agentConfig: coerceFromJson(z.record(z.unknown())).optional().describe("Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Omit for an agent that runs on Nestr's own runtime."),
+  }),
+
   bindConnector: z.object({
     workspaceId: z.string().describe("Workspace ID the connector and owner belong to"),
     connectorId: z.string().describe("ID of an enabled connector from nestr_list_connectors"),
@@ -2291,6 +2297,26 @@ export const toolDefinitions = [
         },
       },
       required: ["workspaceId", "type", "name"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_create_agent",
+    description: "Create an agent user in the workspace. Workspace-admin only; a non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error). The agent is added to the workspace and can then fill roles like a person does.\n\nAn agent and the role it fills are two different things, named differently: the agent carries its own name (Collab), the role is named for the WORK (Marketing). Do not name the role after the agent. Create the agent here, create or find the role with nestr_create_nest, then assign the agent to the role with nestr_update_nest users. Keeping them apart is what lets the agent be replaced without the role losing its purpose, accountabilities and history, and lets one agent fill several roles.\n\nThe agent's instructions do not go here: they belong in a skill nest under the role, which loads whenever the role acts. agentConfig is runtime wiring only.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID to create the agent in" },
+        name: {
+          type: "string",
+          description: "The AGENT's own name, as its identity calls it (e.g. 'Collab'). Not the name of the work: that belongs to the role this agent will fill.",
+        },
+        agentConfig: {
+          type: "object",
+          description: "Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Omit for an agent that runs on Nestr's own runtime.",
+        },
+      },
+      required: ["workspaceId", "name"],
     },
     ...mutating,
   },
@@ -3573,6 +3599,18 @@ async function _handleToolCall(
         return formatResult({
           message: "Connector registered. Next, bind it to an owner with nestr_bind_connector (e.g. a role's domain), then a human or agent connects the account via the credentials field's Connect button.",
           connector,
+        });
+      }
+
+      case "nestr_create_agent": {
+        const parsed = schemas.createAgent.parse(args);
+        const agent = await client.createAgent(parsed.workspaceId, {
+          name: parsed.name,
+          agentConfig: parsed.agentConfig,
+        });
+        return formatResult({
+          message: "Agent created. Next, give it work to fill: create or find a role named for the WORK (not for the agent) with nestr_create_nest, then assign this agent to it with nestr_update_nest users. Its instructions belong in a skill nest under that role, not on the agent.",
+          agent,
         });
       }
 

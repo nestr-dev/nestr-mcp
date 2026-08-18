@@ -1837,6 +1837,35 @@ export class NestrClient {
   }
 
   /**
+   * Create an agent user in the workspace. Workspace-admin only: the REST route
+   * enforces it and returns 403 (mapped to AUTH_SCOPE_INSUFFICIENT) for a
+   * non-admin caller.
+   *
+   * agentConfig is runtime wiring (runtimeCallbackUrl, tokenTtlSeconds), not
+   * persona: what the agent should DO belongs in a skill nest under the role it
+   * fills, which is a separate nest with a name of its own.
+   *
+   * Wraps POST /workspaces/:workspaceId/agents. The route returns
+   * { status, data }; this unwraps to the created agent user.
+   */
+  async createAgent(
+    workspaceId: string,
+    body: {
+      name: string;
+      agentConfig?: Record<string, unknown>;
+    }
+  ): Promise<User> {
+    const response = await this.fetch<{ status: string; data: User }>(
+      `/workspaces/${workspaceId}/agents`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      }
+    );
+    return response.data;
+  }
+
+  /**
    * Register a connector in the workspace catalog. Workspace-admin only: the
    * REST route enforces it and returns 403 (mapped to AUTH_SCOPE_INSUFFICIENT)
    * for a non-admin caller. Holds no secret.
