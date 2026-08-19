@@ -189,6 +189,28 @@ const HINT_TYPE_TOOL_CALLS: Record<
       params: { workspaceId },
     };
   },
+  // Raised by GET /connector-templates on the response that LISTS them, because
+  // listing turned out not to be enough. A caller that could see the Xero
+  // template still hand-built a connector from what the template told it, and a
+  // hand-built copy carries no settingsKey, no OAuth client and whatever
+  // endpoint the model believed, so it authorises and then fails at first use.
+  // The follow-up here is the register call itself, pre-filled with the template
+  // id, so using the template is one call rather than a thing to remember.
+  connector_template_create(record) {
+    const hints = (record.hints as Array<Record<string, unknown>> | undefined) || [];
+    const hint = hints.find((h) => { return h.type === "connector_template_create"; });
+    if (!hint) return null;
+    const workspaceId = hint.workspaceId || record.workspaceId;
+    if (!workspaceId) return null;
+    const ids = (hint.templateIds as string[] | undefined) || [];
+    return {
+      tool: "nestr_register_connector",
+      params: {
+        workspaceId,
+        templateId: ids.length === 1 ? ids[0] : "<id of the template you want, from this list>",
+      },
+    };
+  },
   no_strategy(nest) {
     const nestId = nest._id as string | undefined;
     if (!nestId) return null;
@@ -3780,13 +3802,21 @@ async function _handleToolCall(
 
       case "nestr_list_connector_templates": {
         const parsed = schemas.listConnectorTemplates.parse(args);
-        const templates = await client.listConnectorTemplates(parsed.workspaceId);
+        const listed = await client.listConnectorTemplates(parsed.workspaceId);
+        const templates = listed.templates;
         if (!Array.isArray(templates) || templates.length === 0) {
           return { content: [{ type: "text", text: "This deployment offers no connector templates." }] };
         }
+        // Enriched so the hint arrives as the register call itself, pre-filled
+        // with the template id, the same treatment every other hint gets.
+        const enrichedTemplates = enrichHints({
+          workspaceId: parsed.workspaceId,
+          ...(listed.hints ? { hints: listed.hints } : {}),
+        });
         return formatResult({
-          message: "Pass the id of the one you want as templateId to nestr_register_connector. It carries the vendor's endpoint, transport and auth strategy, so nothing has to be guessed.",
+          message: "Pass the id of the one you want as templateId to nestr_register_connector. It carries the vendor's endpoint, transport and auth strategy, so nothing has to be guessed. Do not rebuild one of these by hand: a hand-built copy has no OAuth client and fails at first use.",
           templates,
+          ...(enrichedTemplates.hints ? { hints: enrichedTemplates.hints } : {}),
         });
       }
 

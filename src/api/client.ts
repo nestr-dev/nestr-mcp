@@ -1891,11 +1891,19 @@ export class NestrClient {
    * has to guess. Workspace-admin only, as the route enforces.
    * Wraps GET /workspaces/:workspaceId/connector-templates.
    */
-  async listConnectorTemplates(workspaceId: string): Promise<unknown[]> {
-    const response = await this.fetch<{ status: string; data: unknown[] }>(
-      `/workspaces/${workspaceId}/connector-templates`
-    );
-    return response.data;
+  async listConnectorTemplates(
+    workspaceId: string
+  ): Promise<{ templates: unknown[]; hints?: unknown[] }> {
+    // The envelope's hints are kept, not unwrapped away. Listing templates was
+    // not enough on its own: a caller that could see the Xero template still
+    // hand-built a connector from what the template told it. The hint on this
+    // response is what turns "here they are" into "register this one".
+    const response = await this.fetch<{
+      status: string;
+      data: unknown[];
+      hints?: unknown[];
+    }>(`/workspaces/${workspaceId}/connector-templates`);
+    return { templates: response.data, hints: response.hints };
   }
 
   /**

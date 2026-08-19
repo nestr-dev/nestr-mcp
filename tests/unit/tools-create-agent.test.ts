@@ -220,4 +220,56 @@ describe("the template hint becomes a tool call", () => {
     const connector = parseResult(result.content[0].text).connector as Record<string, unknown>;
     expect(connector.hints).toBeUndefined();
   });
+  // Listing templates was not enough on its own: a caller that could SEE the
+  // Xero template still hand-built a connector from what the template told it,
+  // and a hand-built copy carries no OAuth client and fails at first use. The
+  // hint on the listing has to arrive as the register call itself.
+  it("turns the template listing hint into a pre-filled register call", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, {
+      status: "success",
+      data: [{ id: "xero", name: "Xero", available: true }],
+      hints: [{
+        type: "connector_template_create",
+        severity: "info",
+        label: "Register one of these directly with { templateId: <id> }.",
+        templateIds: ["xero"],
+        workspaceId: "ws1",
+      }],
+    }));
+
+    const result = await handleToolCall(client, "nestr_list_connector_templates", {
+      workspaceId: "ws1",
+    });
+    expect(result.isError).toBeFalsy();
+
+    const parsed = parseResult(result.content[0].text);
+    const hints = parsed.hints as Array<Record<string, unknown>>;
+    expect(hints).toHaveLength(1);
+    // One template, so the id is filled in rather than left as a placeholder.
+    expect(hints[0].toolCall).toEqual({
+      tool: "nestr_register_connector",
+      params: { workspaceId: "ws1", templateId: "xero" },
+    });
+  });
+
+  it("leaves the template id to the caller when several are on offer", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, {
+      status: "success",
+      data: [{ id: "xero", name: "Xero" }, { id: "notion", name: "Notion" }],
+      hints: [{
+        type: "connector_template_create",
+        templateIds: ["xero", "notion"],
+        workspaceId: "ws1",
+      }],
+    }));
+
+    const result = await handleToolCall(client, "nestr_list_connector_templates", {
+      workspaceId: "ws1",
+    });
+    const parsed = parseResult(result.content[0].text);
+    const hints = parsed.hints as Array<Record<string, unknown>>;
+    const call = hints[0].toolCall as { params: Record<string, unknown> };
+    expect(call.params.workspaceId).toBe("ws1");
+    expect(String(call.params.templateId)).toContain("template you want");
+  });
 });
