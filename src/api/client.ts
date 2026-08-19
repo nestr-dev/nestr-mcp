@@ -1896,15 +1896,18 @@ export class NestrClient {
       exposure?: ConnectorExposure;
       authStrategy?: "secret" | "oauth2";
     }
-  ): Promise<Connector> {
-    const response = await this.fetch<{ status: string; data: Connector }>(
+  ): Promise<{ connector: Connector; hints?: unknown[] }> {
+    // The envelope's hints are kept, not unwrapped away: POST /connectors raises
+    // one when a hand-written url points at a vendor this deployment ships a
+    // template for, and that is precisely the caller who needs to see it.
+    const response = await this.fetch<{ status: string; data: Connector; hints?: unknown[] }>(
       `/workspaces/${workspaceId}/connectors`,
       {
         method: "POST",
         body: JSON.stringify(body),
       }
     );
-    return response.data;
+    return { connector: response.data, hints: response.hints };
   }
 
   /**

@@ -157,3 +157,67 @@ describe("connector templates", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 });
+
+describe("the template hint becomes a tool call", () => {
+  let mockFetch: ReturnType<typeof vi.fn>;
+  let client: NestrClient;
+
+  beforeEach(() => {
+    mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+    client = new NestrClient({ apiKey: "test-token", baseUrl: "https://api.test.io/api" });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // A hand-written url pointing at a vendor we ship a template for is how the
+  // Xero connector ended up on api.xero.com: it authorised and then failed
+  // every call. The hint has to arrive as something the model can act on.
+  it("enriches the hint so the model can go look at the templates", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, {
+      status: "success",
+      data: { _id: "c9", workspaceId: "ws1", type: "api", name: "Xero" },
+      hints: [{
+        type: "connector_template_available",
+        severity: "warning",
+        label: "This deployment ships a Xero template pointing at https://mcp.xero.com/mcp.",
+        templateId: "xero",
+        workspaceId: "ws1",
+      }],
+    }));
+
+    const result = await handleToolCall(client, "nestr_register_connector", {
+      workspaceId: "ws1",
+      type: "api",
+      name: "Xero",
+      config: { url: "https://api.xero.com/api.xro/2.0" },
+    });
+    expect(result.isError).toBeFalsy();
+
+    const parsed = parseResult(result.content[0].text);
+    const connector = parsed.connector as Record<string, unknown>;
+    const hints = connector.hints as Array<Record<string, unknown>>;
+    expect(hints).toHaveLength(1);
+    expect(hints[0].toolCall).toEqual({
+      tool: "nestr_list_connector_templates",
+      params: { workspaceId: "ws1" },
+    });
+  });
+
+  it("leaves a connector with no hint alone", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, {
+      status: "success",
+      data: { _id: "c9", workspaceId: "ws1", type: "api", name: "Something bespoke" },
+    }));
+
+    const result = await handleToolCall(client, "nestr_register_connector", {
+      workspaceId: "ws1",
+      type: "api",
+      name: "Something bespoke",
+      config: { url: "https://bespoke.example/api" },
+    });
+    const connector = parseResult(result.content[0].text).connector as Record<string, unknown>;
+    expect(connector.hints).toBeUndefined();
+  });
+});

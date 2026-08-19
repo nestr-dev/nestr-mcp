@@ -295,7 +295,27 @@ describe("NestrClient", () => {
       exposure: { domainGated: true },
       authStrategy: "secret",
     });
-    expect(result).toEqual(created);
+    // The envelope's hints ride along: POST /connectors raises one when a
+    // hand-written url points at a vendor with a template, and unwrapping to
+    // data alone threw exactly that away.
+    expect(result.connector).toEqual(created);
+    expect(result.hints).toBeUndefined();
+  });
+
+  it("registerConnector keeps the template hint the API returned", async () => {
+    const created = { _id: "c9", workspaceId: "ws1", type: "api", name: "Xero" };
+    const hints = [{ type: "connector_template_available", templateId: "xero", workspaceId: "ws1" }];
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: created, hints }));
+    const client = createClient();
+
+    const result = await client.registerConnector("ws1", {
+      type: "api",
+      name: "Xero",
+      config: { url: "https://api.xero.com/api.xro/2.0" },
+    });
+
+    expect(result.connector).toEqual(created);
+    expect(result.hints).toEqual(hints);
   });
 
   it("bindConnector POSTs connectorId + owner and unwraps the connection", async () => {

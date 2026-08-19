@@ -174,6 +174,21 @@ const HINT_TYPE_TOOL_CALLS: Record<
   string,
   (nest: Record<string, unknown>) => HintTypeToolCall | null
 > = {
+  // Raised by POST /connectors when a hand-written url points at a vendor the
+  // deployment ships a template for. The follow-up is to look at the template,
+  // not to re-register blindly: the connector just created may be exactly what
+  // the caller wanted, and only they can say. The hint carries its own ids, so
+  // this works on a catalog entry rather than needing nest ancestors.
+  connector_template_available(record) {
+    const hints = (record.hints as Array<Record<string, unknown>> | undefined) || [];
+    const hint = hints.find((h) => { return h.type === "connector_template_available"; });
+    const workspaceId = (hint && hint.workspaceId) || record.workspaceId;
+    if (!workspaceId) return null;
+    return {
+      tool: "nestr_list_connector_templates",
+      params: { workspaceId },
+    };
+  },
   no_strategy(nest) {
     const nestId = nest._id as string | undefined;
     if (!nestId) return null;
@@ -3624,7 +3639,7 @@ async function _handleToolCall(
           });
           return formatResult({
             message: "Connector registered from a template, so its endpoint and auth strategy are the vendor's own. Next, bind it to a role's DOMAIN with nestr_bind_connector, then a human connects the account via the Connect button.",
-            connector: fromTemplate,
+            connector: fromTemplate.connector,
           });
         }
         if (!parsed.type || !parsed.name) {
@@ -3635,7 +3650,7 @@ async function _handleToolCall(
             retryable: false,
           });
         }
-        const connector = await client.registerConnector(parsed.workspaceId, {
+        const registered = await client.registerConnector(parsed.workspaceId, {
           type: parsed.type,
           name: parsed.name,
           config: parsed.config,
@@ -3643,9 +3658,16 @@ async function _handleToolCall(
           exposure: parsed.exposure,
           authStrategy: parsed.authStrategy,
         });
+        // Enriched so a template hint arrives as a tool call the model can make,
+        // the same treatment every other hint gets. workspaceId is on the entry,
+        // which is what lets enrichHints work on something that is not a nest.
+        const enriched = enrichHints({
+          ...(registered.connector as unknown as Record<string, unknown>),
+          ...(registered.hints ? { hints: registered.hints } : {}),
+        });
         return formatResult({
           message: "Connector registered. Next, bind it to an owner with nestr_bind_connector (e.g. a role's domain), then a human or agent connects the account via the credentials field's Connect button.",
-          connector,
+          connector: enriched,
         });
       }
 
