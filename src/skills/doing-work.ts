@@ -32,6 +32,31 @@ Before creating work, verify which role is accountable:
 
 **Domains define exclusive control, not expectations.** A domain means the role controls organizational assets in that area. Others must get permission to impact those assets.
 
+### Does the work fit the role?
+
+Work and governance are different requests, and capturing work is where they get confused. A request to do something is not a request to change the organization. But work that sits outside what a role was given is the signal that the governance is out of date, and nobody else is looking for it. So check on capture, and be sparing about what you raise.
+
+**Read the role before you write under it.** Its purpose and accountabilities say what it was given. Ask two questions:
+
+1. **Does this sit inside the role's purpose and accountabilities?** Interpret WIDELY. An accountability is a sentence, not a spec, and most work belongs to one if you read it generously. "Drafting and editing copy" covers a blog post, a landing page and an email without naming any of them.
+2. **Does it impact assets a domain covers that this role does NOT hold?** A domain is exclusive control, so acting on someone else's is not yours to decide. Publishing to a company website held by a Web domain, changing pricing held by Commercial, touching a customer list held by Sales.
+
+**When it impacts a domain the role does not hold:** do not just proceed. Raise a tension to the role or circle that holds the domain, requesting permission or the outcome, and say plainly in the capture that this part waits on them. Capture the rest of the work normally.
+
+**When it fits the purpose but no accountability names it:** capture the work, then offer, once, to add the accountability. One sentence, alongside what you already did, not a separate interrogation: "Captured it. This is the third publishing task under Marketing and no accountability mentions publishing. Want me to add one?"
+
+**When it fits an accountability read generously:** say nothing. This is most of the time.
+
+#### How hard to push
+
+Governance suggestions cost the user attention, and a workspace that asks for a governance change on every capture teaches people to ignore it. Match the resistance to how settled the governance is.
+
+**Young governance — go with the flow.** During onboarding, or where roles are freshly made and thin (few or no accountabilities, nothing edited since setup), the user is trying to get work running and a governance prompt is an interruption. Either fold the accountability in silently as part of the same act, or let it go and keep moving. Do not stop to ask.
+
+**Settled governance — be more discerning.** Where roles carry real accountabilities and governance has been shaped since setup, the structure is something the circle agreed and a gap in it is worth naming. Raise obvious gaps, still one sentence, still after doing the work.
+
+**Never** block the work on a governance question, ask twice about the same gap, or raise one for work that plausibly fits something already written.
+
 ### Strategy & Prioritization
 
 Strategy is stored in \`fields['circle.strategy']\` for sub-circles, or \`fields['anchor-circle.strategy']\` for the anchor circle. Strategy applies to all roles within the circle.

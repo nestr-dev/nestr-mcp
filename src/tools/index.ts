@@ -174,6 +174,21 @@ const HINT_TYPE_TOOL_CALLS: Record<
   string,
   (nest: Record<string, unknown>) => HintTypeToolCall | null
 > = {
+  // Raised by POST /connectors when a hand-written url points at a vendor the
+  // deployment ships a template for. The follow-up is to look at the template,
+  // not to re-register blindly: the connector just created may be exactly what
+  // the caller wanted, and only they can say. The hint carries its own ids, so
+  // this works on a catalog entry rather than needing nest ancestors.
+  connector_template_available(record) {
+    const hints = (record.hints as Array<Record<string, unknown>> | undefined) || [];
+    const hint = hints.find((h) => { return h.type === "connector_template_available"; });
+    const workspaceId = (hint && hint.workspaceId) || record.workspaceId;
+    if (!workspaceId) return null;
+    return {
+      tool: "nestr_list_connector_templates",
+      params: { workspaceId },
+    };
+  },
   no_strategy(nest) {
     const nestId = nest._id as string | undefined;
     if (!nestId) return null;
@@ -634,13 +649,13 @@ export const schemas = {
 
   addComment: z.object({
     nestId: z.string().describe("Nest ID to comment on"),
-    body: z.string().describe("Comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)."),
+    body: z.string().describe("Comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle). The second id MUST be a ROLE or CIRCLE nest. Never the project, task or tension you are commenting on: the mention renders that nest's title where the role name belongs, so a project id produces 'Henk as Write a weekly blog post', which reads as though the project were his role. If you do not know which role the person is acting in, use `@{userId}` rather than substituting the nest you happen to be working on. Other forms: `@{userId}` (no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)."),
     labels: z.array(z.string()).optional().describe("Optional label IDs to attach to the comment at creation time (e.g., 'decision', 'question', or a custom label ID). Personal labels are auto-scoped to the authenticated user. Use nestr_list_labels / nestr_list_personal_labels to discover IDs."),
   }),
 
   updateComment: z.object({
     commentId: z.string().describe("Comment ID to update"),
-    body: z.string().describe("Updated comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)."),
+    body: z.string().describe("Updated comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle). The second id MUST be a ROLE or CIRCLE nest. Never the project, task or tension you are commenting on: the mention renders that nest's title where the role name belongs, so a project id produces 'Henk as Write a weekly blog post', which reads as though the project were his role. If you do not know which role the person is acting in, use `@{userId}` rather than substituting the nest you happen to be working on. Other forms: `@{userId}` (no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)."),
     labels: z.array(z.string()).optional().describe("Optional full set of label IDs for the comment. When provided, this REPLACES the comment's existing labels. To incrementally add or remove a single label without replacing the rest, use nestr_add_label / nestr_remove_label with the commentId as the nestId."),
   }),
 
@@ -1036,21 +1051,32 @@ export const schemas = {
     workspaceId: z.string().describe("Workspace ID whose connector catalog to list"),
   }),
 
+  listConnectorTemplates: z.object({
+    workspaceId: z.string().describe("Workspace ID whose available connector templates to list"),
+  }),
+
   registerConnector: z.object({
+    templateId: z.string().optional().describe("Id of a template from nestr_list_connector_templates. Given this, everything else is filled in from the template and you should omit type/config/capabilities/exposure/authStrategy. ALWAYS prefer this over hand-registering a vendor the deployment already knows."),
     workspaceId: z.string().describe("Workspace ID to register the connector in"),
-    type: z.enum(["mcp", "cli", "api"]).describe("Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command)"),
-    name: z.string().describe("Unique connector name within the workspace catalog"),
+    type: z.enum(["mcp", "cli", "api"]).optional().describe("Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command). Required unless templateId is given."),
+    name: z.string().optional().describe("Unique connector name within the workspace catalog. Required unless templateId is given, where it defaults to the template's own name."),
     config: coerceFromJson(z.record(z.unknown())).optional().describe("Per-type transport config, no secret. mcp/api need a url (e.g., { url: 'https://...' }); cli needs a command (e.g., { command: 'some-cli' }). Optional non-secret headers go under headers."),
     capabilities: coerceFromJson(z.record(z.unknown())).optional().describe("Capability descriptor: { discover: boolean, tools: [{ name, description, inputSchema }] }. discover:true lets the connector self-describe its tools at runtime."),
     exposure: coerceFromJson(z.record(z.unknown())).optional().describe("Exposure policy deciding which owners may bind: { userAgent: boolean, domainGated: boolean }. Set domainGated:true to allow binding to a role's domain."),
     authStrategy: z.enum(["secret", "oauth2"]).optional().describe("How a principal connects: 'secret' (a one-time secret captured via the Connect button) or 'oauth2'. The agent never sees the secret."),
   }),
 
+  createAgent: z.object({
+    workspaceId: z.string().describe("Workspace ID to create the agent in"),
+    name: z.string().describe("The AGENT's own name, as its identity calls it (e.g. 'Collab'). Not the name of the work: that belongs to the role this agent will fill."),
+    agentConfig: coerceFromJson(z.record(z.unknown())).optional().describe("Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Omit for an agent that runs on Nestr's own runtime."),
+  }),
+
   bindConnector: z.object({
     workspaceId: z.string().describe("Workspace ID the connector and owner belong to"),
     connectorId: z.string().describe("ID of an enabled connector from nestr_list_connectors"),
-    ownerType: z.enum(["user", "agent", "workspace", "role-domain", "role"]).describe("Who gets access. 'role' is usually what you want: pass a role nest ID and the connector's domain is found or created under it. 'role-domain' targets an existing domain directly. 'user'/'agent' give one actor access; 'workspace' gives everyone."),
-    ownerId: z.string().describe("Owner ID. role: the role nest ID. role-domain: the domain nest ID. user/agent: the user ID. workspace: the workspace ID."),
+    ownerType: z.enum(["role", "role-domain", "workspace"]).describe("Who gets access. 'role' is usually what you want: pass a role nest ID and the connector's domain is found or created under it. 'role-domain' targets an existing domain directly. 'workspace' gives everyone. Personal owners ('user', 'agent') are deliberately not available here: see the tool description."),
+    ownerId: z.string().describe("Owner ID. role: the role nest ID. role-domain: the domain nest ID. workspace: the workspace ID."),
   }),
 
   updateConnector: z.object({
@@ -1414,12 +1440,12 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_comment",
-    description: "Add a comment to a nest. Supports HTML and @mentions — **mentions MUST be wrapped in literal curly braces** (e.g. `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`); without the braces the user is not notified. Prefer `@{userId:roleId}` so the recipient knows which role they're being addressed in. Use for progress updates and discussion. Optionally attach labels at creation time via the `labels` parameter.",
+    description: "Add a comment to a nest. Supports HTML and @mentions — **mentions MUST be wrapped in literal curly braces** (e.g. `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`); without the braces the user is not notified. Prefer `@{userId:roleId}` so the recipient knows which role they're being addressed in; the second id must be a role or circle nest, never the project or task being commented on. Use for progress updates and discussion. Optionally attach labels at creation time via the `labels` parameter.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "ID of the nest or conversation the comment belongs to. Passing a comment ID instead replies to that comment, inside its thread. A direct-message conversation is flat and holds no threads, so a message ID there is moved onto the conversation and the response says where the comment landed." },
-        body: { type: "string", description: "Comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)." },
+        body: { type: "string", description: "Comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle). The second id MUST be a ROLE or CIRCLE nest. Never the project, task or tension you are commenting on: the mention renders that nest's title where the role name belongs, so a project id produces 'Henk as Write a weekly blog post', which reads as though the project were his role. If you do not know which role the person is acting in, use `@{userId}` rather than substituting the nest you happen to be working on. Other forms: `@{userId}` (no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)." },
         labels: {
           type: "array",
           items: { type: "string" },
@@ -1437,7 +1463,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         commentId: { type: "string", description: "Comment ID to update" },
-        body: { type: "string", description: "Updated comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)." },
+        body: { type: "string", description: "Updated comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle). The second id MUST be a ROLE or CIRCLE nest. Never the project, task or tension you are commenting on: the mention renders that nest's title where the role name belongs, so a project id produces 'Henk as Write a weekly blog post', which reads as though the project were his role. If you do not know which role the person is acting in, use `@{userId}` rather than substituting the nest you happen to be working on. Other forms: `@{userId}` (no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)." },
         labels: {
           type: "array",
           items: { type: "string" },
@@ -2309,8 +2335,20 @@ export const toolDefinitions = [
     ...readOnly,
   },
   {
+    name: "nestr_list_connector_templates",
+    description: "The connector templates this deployment can add in one click, filtered to the ones it can actually offer. Each carries the vendor's real endpoint, transport, auth strategy and the deployment's OAuth client.\n\nCALL THIS FIRST, before nestr_register_connector, whenever the tool is a known vendor (Xero, HubSpot, Slack, Stripe, GitHub, Notion, Linear and so on). Hand-registering means guessing an endpoint, and a wrong guess authorises cleanly and then fails every call: a Xero connector registered against api.xero.com instead of the template's mcp.xero.com looked healthy in every record and returned 403 forever. Pass the id you find here as templateId to nestr_register_connector. Workspace-admin only.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID whose available connector templates to list" },
+      },
+      required: ["workspaceId"],
+    },
+    ...readOnly,
+  },
+  {
     name: "nestr_register_connector",
-    description: "Register a connector in the workspace catalog: a reusable mcp / cli / api template that holds no secret. Workspace-admin only. A non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error). Provide type ('mcp' or 'api' need a url in config; 'cli' needs a command) and a unique name; optionally capabilities, exposure ({ userAgent, domainGated }), and authStrategy ('secret' or 'oauth2'). This only creates the template. Typical flow: register here, then bind it to a role's domain with nestr_bind_connector, then a human or agent connects the account via the credentials field's Connect button. The secret is captured out-of-band through that button, never by the agent.",
+    description: "Register a connector in the workspace catalog. PREFER A TEMPLATE: call nestr_list_connector_templates first and pass its id as templateId, which fills in the vendor's real endpoint, transport, auth strategy and this deployment's OAuth client. Hand-registering a known vendor means guessing an endpoint, and a wrong guess authorises cleanly and then fails every call. Only describe the transport yourself for something the deployment has no template for. A reusable mcp / cli / api template that holds no secret. Workspace-admin only. A non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error). Provide type ('mcp' or 'api' need a url in config; 'cli' needs a command) and a unique name; optionally capabilities, exposure ({ userAgent, domainGated }), and authStrategy ('secret' or 'oauth2'). This only creates the template. Typical flow: register here, then bind it to a role's DOMAIN with nestr_bind_connector (create one under the role with nestr_create_nest and labels ['circleplus-domain'] if the role has none yet: the bind refuses a role id), then a human or agent connects the account via the credentials field's Connect button. The secret is captured out-of-band through that button, never by the agent.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2344,8 +2382,28 @@ export const toolDefinitions = [
     ...mutating,
   },
   {
+    name: "nestr_create_agent",
+    description: "Create an agent user in the workspace. Workspace-admin only; a non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error). The agent is added to the workspace and can then fill roles like a person does.\n\nAn agent and the role it fills are two different things, named differently: the agent carries its own name (Collab), the role is named for the WORK (Marketing). Do not name the role after the agent. Create the agent here, create or find the role with nestr_create_nest, then assign the agent to the role with nestr_update_nest users. Keeping them apart is what lets the agent be replaced without the role losing its purpose, accountabilities and history, and lets one agent fill several roles.\n\nThe agent's instructions do not go here: they belong in a skill nest under the role, which loads whenever the role acts. agentConfig is runtime wiring only.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID to create the agent in" },
+        name: {
+          type: "string",
+          description: "The AGENT's own name, as its identity calls it (e.g. 'Collab'). Not the name of the work: that belongs to the role this agent will fill.",
+        },
+        agentConfig: {
+          type: "object",
+          description: "Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Omit for an agent that runs on Nestr's own runtime.",
+        },
+      },
+      required: ["workspaceId", "name"],
+    },
+    ...mutating,
+  },
+  {
     name: "nestr_bind_connector",
-    description: "Bind a registered connector to an owner so that owner can use it. Owner types: 'user' or 'agent' (ownerId is the user ID), 'workspace' (ownerId is the workspace ID), or 'role-domain' (ownerId is the domain nest ID). A 'role-domain' owner also materialises a credentials field on the domain nest, so the role can use the connector and the Connect button renders there; the response then includes credentialsField { domainId, fieldId, fieldCode }. After binding, a human or agent connects the account via that Connect button. The secret is captured out-of-band and is never seen by the agent. Workspace-admin only: a non-admin caller gets AUTH_SCOPE_INSUFFICIENT. The connector must already be registered (nestr_register_connector) and enabled.",
+    description: "Bind a registered connector to an owner so that owner can use it. Owner types: 'role-domain' (ownerId is the domain nest ID) or 'workspace' (ownerId is the workspace ID). A 'role-domain' owner also materialises a credentials field on the domain nest, so the role can use the connector and the Connect button renders there; the response then includes credentialsField { domainId, fieldId, fieldCode }. After binding, a human or agent connects the account via that Connect button. The secret is captured out-of-band and is never seen by the agent. Workspace-admin only: a non-admin caller gets AUTH_SCOPE_INSUFFICIENT. The connector must already be registered (nestr_register_connector) and enabled.\n\nBIND TO THE ROLE, not to whoever fills it. A role-domain binding is the governance act: the access belongs to the work, survives the filler changing, and is visible to the circle. Reach for it by default, including when an agent is going to do the work, because the agent gets the access by filling the role.\n\nownerId must be an actual DOMAIN nest, not the role. The server refuses anything else with invalid-owner, and a role id is the common mistake: a domain is how governance says who controls the reach, so binding past it leaves nothing holding the access and no domain for the Connect button to render on. Find the role's domains with nestr_get_nest_children on the role and pick the one that covers this area, or create one with nestr_create_nest under the role using labels ['circleplus-domain'], named for what it controls (the accounting system, the CRM) rather than for the connector.\n\nPersonal owners ('user' and 'agent') are deliberately unavailable through this tool. They are for things that are genuinely one person's or one bot's, an individual mailbox being the usual case, and handing one agent the power to attach a credential to ANOTHER agent is not a decision to make from a tool call. When a personal binding is really what is wanted, say so and let a workspace admin set it up in the agent's own panel in the UI.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2353,12 +2411,12 @@ export const toolDefinitions = [
         connectorId: { type: "string", description: "ID of an enabled connector from nestr_list_connectors" },
         ownerType: {
           type: "string",
-          enum: ["user", "agent", "workspace", "role-domain"],
-          description: "Owner type. 'role-domain' binds the connector to a role's domain so the role can use it and a credentials field is materialised on the domain.",
+          enum: ["workspace", "role-domain"],
+          description: "Owner type. 'role-domain' binds the connector to a role's domain so the role can use it and a credentials field is materialised on the domain. Personal owners ('user', 'agent') are deliberately not available here.",
         },
         ownerId: {
           type: "string",
-          description: "Owner ID. user/agent: the user ID. workspace: the workspace ID. role-domain: the domain nest ID.",
+          description: "Owner ID. workspace: the workspace ID. role-domain: the domain nest ID.",
         },
       },
       required: ["workspaceId", "connectorId", "ownerType", "ownerId"],
@@ -3720,9 +3778,39 @@ async function _handleToolCall(
         return formatResult(connectors);
       }
 
+      case "nestr_list_connector_templates": {
+        const parsed = schemas.listConnectorTemplates.parse(args);
+        const templates = await client.listConnectorTemplates(parsed.workspaceId);
+        if (!Array.isArray(templates) || templates.length === 0) {
+          return { content: [{ type: "text", text: "This deployment offers no connector templates." }] };
+        }
+        return formatResult({
+          message: "Pass the id of the one you want as templateId to nestr_register_connector. It carries the vendor's endpoint, transport and auth strategy, so nothing has to be guessed.",
+          templates,
+        });
+      }
+
       case "nestr_register_connector": {
         const parsed = schemas.registerConnector.parse(args);
-        const connector = await client.registerConnector(parsed.workspaceId, {
+        if (parsed.templateId) {
+          const fromTemplate = await client.registerConnector(parsed.workspaceId, {
+            templateId: parsed.templateId,
+            ...(parsed.name ? { name: parsed.name } : {}),
+          });
+          return formatResult({
+            message: "Connector registered from a template, so its endpoint and auth strategy are the vendor's own. Next, bind it to a role's DOMAIN with nestr_bind_connector, then a human connects the account via the Connect button.",
+            connector: fromTemplate.connector,
+          });
+        }
+        if (!parsed.type || !parsed.name) {
+          return formatError({
+            error: true,
+            code: "VALIDATION",
+            message: "Without templateId, both type and name are required. Call nestr_list_connector_templates first: a known vendor almost always has one.",
+            retryable: false,
+          });
+        }
+        const registered = await client.registerConnector(parsed.workspaceId, {
           type: parsed.type,
           name: parsed.name,
           config: parsed.config,
@@ -3730,9 +3818,28 @@ async function _handleToolCall(
           exposure: parsed.exposure,
           authStrategy: parsed.authStrategy,
         });
+        // Enriched so a template hint arrives as a tool call the model can make,
+        // the same treatment every other hint gets. workspaceId is on the entry,
+        // which is what lets enrichHints work on something that is not a nest.
+        const enriched = enrichHints({
+          ...(registered.connector as unknown as Record<string, unknown>),
+          ...(registered.hints ? { hints: registered.hints } : {}),
+        });
         return formatResult({
           message: "Connector registered. It does nothing yet: nobody has access to it. Give a ROLE access with nestr_bind_connector { ownerType: 'role', ownerId: <role nest id> } and its domain is created under that role, which is the usual onboarding path. Then get a link with nestr_get_connect_link and give it to a person to open, since the credential must never pass through you.",
-          connector,
+          connector: enriched,
+        });
+      }
+
+      case "nestr_create_agent": {
+        const parsed = schemas.createAgent.parse(args);
+        const agent = await client.createAgent(parsed.workspaceId, {
+          name: parsed.name,
+          agentConfig: parsed.agentConfig,
+        });
+        return formatResult({
+          message: "Agent created. Next, give it work to fill: create or find a role named for the WORK (not for the agent) with nestr_create_nest, then assign this agent to it with nestr_update_nest users. Its instructions belong in a skill nest under that role, not on the agent.",
+          agent,
         });
       }
 
