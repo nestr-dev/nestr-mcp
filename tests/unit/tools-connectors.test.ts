@@ -139,7 +139,7 @@ describe("connector tools", () => {
     const connection = {
       _id: "conn1",
       workspaceId: "ws1",
-      owner: { type: "agent", id: "user-2" },
+      owner: { type: "workspace", id: "ws1" },
       status: "active",
     };
     mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: connection }));
@@ -147,8 +147,8 @@ describe("connector tools", () => {
     const result = await handleToolCall(client, "nestr_bind_connector", {
       workspaceId: "ws1",
       connectorId: "c9",
-      ownerType: "agent",
-      ownerId: "user-2",
+      ownerType: "workspace",
+      ownerId: "ws1",
     });
     expect(result.isError).toBeFalsy();
 
@@ -157,7 +157,7 @@ describe("connector tools", () => {
     expect(opts.method).toBe("POST");
     expect(JSON.parse(opts.body)).toEqual({
       connectorId: "c9",
-      owner: { type: "agent", id: "user-2" },
+      owner: { type: "workspace", id: "ws1" },
     });
 
     const parsed = parseResult(result.content[0].text);
@@ -167,6 +167,24 @@ describe("connector tools", () => {
     expect(parsed.message).toMatch(/out-of-band/i);
     expect(parsed.message).not.toMatch(/credentials field/i);
     expect(parsed.message).not.toMatch(/role's domain/i);
+  });
+
+  // Attaching a credential to a person or a bot is not a decision to make from a
+  // tool call, and one agent handing another agent access is the case that makes
+  // it dangerous. Personal bindings go through an admin in the UI.
+  it("nestr_bind_connector refuses a personal owner", async () => {
+    for (const ownerType of ["user", "agent"]) {
+      // eslint-disable-next-line no-await-in-loop
+      const result = await handleToolCall(client, "nestr_bind_connector", {
+        workspaceId: "ws1",
+        connectorId: "c9",
+        ownerType,
+        ownerId: "user-2",
+      });
+      expect(result.isError, `${ownerType} must be refused`).toBe(true);
+      expect(parseResult(result.content[0].text).code).toBe("VALIDATION");
+    }
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it("nestr_bind_connector surfaces credentialsField + role-domain note for a role-domain owner", async () => {

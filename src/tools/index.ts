@@ -1055,8 +1055,8 @@ export const schemas = {
   bindConnector: z.object({
     workspaceId: z.string().describe("Workspace ID the connector and owner belong to"),
     connectorId: z.string().describe("ID of an enabled connector from nestr_list_connectors"),
-    ownerType: z.enum(["user", "agent", "workspace", "role-domain"]).describe("Owner type. 'role-domain' binds the connector to a role's domain so the role can use it and a credentials field is materialised on the domain."),
-    ownerId: z.string().describe("Owner ID. user/agent: the user ID. workspace: the workspace ID. role-domain: the domain nest ID."),
+    ownerType: z.enum(["workspace", "role-domain"]).describe("Owner type. 'role-domain' binds the connector to a role's domain so the role can use it and a credentials field is materialised on the domain. Personal owners ('user', 'agent') are deliberately not available here: see the tool description."),
+    ownerId: z.string().describe("Owner ID. workspace: the workspace ID. role-domain: the domain nest ID."),
   }),
 
   // File attachments (a comment id works as the nestId — files are keyed by nestId)
@@ -2322,7 +2322,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_bind_connector",
-    description: "Bind a registered connector to an owner so that owner can use it. Owner types: 'user' or 'agent' (ownerId is the user ID), 'workspace' (ownerId is the workspace ID), or 'role-domain' (ownerId is the domain nest ID). A 'role-domain' owner also materialises a credentials field on the domain nest, so the role can use the connector and the Connect button renders there; the response then includes credentialsField { domainId, fieldId, fieldCode }. After binding, a human or agent connects the account via that Connect button. The secret is captured out-of-band and is never seen by the agent. Workspace-admin only: a non-admin caller gets AUTH_SCOPE_INSUFFICIENT. The connector must already be registered (nestr_register_connector) and enabled.",
+    description: "Bind a registered connector to an owner so that owner can use it. Owner types: 'role-domain' (ownerId is the domain nest ID) or 'workspace' (ownerId is the workspace ID). A 'role-domain' owner also materialises a credentials field on the domain nest, so the role can use the connector and the Connect button renders there; the response then includes credentialsField { domainId, fieldId, fieldCode }. After binding, a human or agent connects the account via that Connect button. The secret is captured out-of-band and is never seen by the agent. Workspace-admin only: a non-admin caller gets AUTH_SCOPE_INSUFFICIENT. The connector must already be registered (nestr_register_connector) and enabled.\n\nBIND TO THE ROLE, not to whoever fills it. A role-domain binding is the governance act: the access belongs to the work, survives the filler changing, and is visible to the circle. Reach for it by default, including when an agent is going to do the work, because the agent gets the access by filling the role.\n\nPersonal owners ('user' and 'agent') are deliberately unavailable through this tool. They are for things that are genuinely one person's or one bot's, an individual mailbox being the usual case, and handing one agent the power to attach a credential to ANOTHER agent is not a decision to make from a tool call. When a personal binding is really what is wanted, say so and let a workspace admin set it up in the agent's own panel in the UI.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2330,12 +2330,12 @@ export const toolDefinitions = [
         connectorId: { type: "string", description: "ID of an enabled connector from nestr_list_connectors" },
         ownerType: {
           type: "string",
-          enum: ["user", "agent", "workspace", "role-domain"],
-          description: "Owner type. 'role-domain' binds the connector to a role's domain so the role can use it and a credentials field is materialised on the domain.",
+          enum: ["workspace", "role-domain"],
+          description: "Owner type. 'role-domain' binds the connector to a role's domain so the role can use it and a credentials field is materialised on the domain. Personal owners ('user', 'agent') are deliberately not available here.",
         },
         ownerId: {
           type: "string",
-          description: "Owner ID. user/agent: the user ID. workspace: the workspace ID. role-domain: the domain nest ID.",
+          description: "Owner ID. workspace: the workspace ID. role-domain: the domain nest ID.",
         },
       },
       required: ["workspaceId", "connectorId", "ownerType", "ownerId"],
