@@ -1036,10 +1036,15 @@ export const schemas = {
     workspaceId: z.string().describe("Workspace ID whose connector catalog to list"),
   }),
 
+  listConnectorTemplates: z.object({
+    workspaceId: z.string().describe("Workspace ID whose available connector templates to list"),
+  }),
+
   registerConnector: z.object({
+    templateId: z.string().optional().describe("Id of a template from nestr_list_connector_templates. Given this, everything else is filled in from the template and you should omit type/config/capabilities/exposure/authStrategy. ALWAYS prefer this over hand-registering a vendor the deployment already knows."),
     workspaceId: z.string().describe("Workspace ID to register the connector in"),
-    type: z.enum(["mcp", "cli", "api"]).describe("Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command)"),
-    name: z.string().describe("Unique connector name within the workspace catalog"),
+    type: z.enum(["mcp", "cli", "api"]).optional().describe("Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command). Required unless templateId is given."),
+    name: z.string().optional().describe("Unique connector name within the workspace catalog. Required unless templateId is given, where it defaults to the template's own name."),
     config: coerceFromJson(z.record(z.unknown())).optional().describe("Per-type transport config, no secret. mcp/api need a url (e.g., { url: 'https://...' }); cli needs a command (e.g., { command: 'some-cli' }). Optional non-secret headers go under headers."),
     capabilities: coerceFromJson(z.record(z.unknown())).optional().describe("Capability descriptor: { discover: boolean, tools: [{ name, description, inputSchema }] }. discover:true lets the connector self-describe its tools at runtime."),
     exposure: coerceFromJson(z.record(z.unknown())).optional().describe("Exposure policy deciding which owners may bind: { userAgent: boolean, domainGated: boolean }. Set domainGated:true to allow binding to a role's domain."),
@@ -2266,8 +2271,20 @@ export const toolDefinitions = [
     ...readOnly,
   },
   {
+    name: "nestr_list_connector_templates",
+    description: "The connector templates this deployment can add in one click, filtered to the ones it can actually offer. Each carries the vendor's real endpoint, transport, auth strategy and the deployment's OAuth client.\n\nCALL THIS FIRST, before nestr_register_connector, whenever the tool is a known vendor (Xero, HubSpot, Slack, Stripe, GitHub, Notion, Linear and so on). Hand-registering means guessing an endpoint, and a wrong guess authorises cleanly and then fails every call: a Xero connector registered against api.xero.com instead of the template's mcp.xero.com looked healthy in every record and returned 403 forever. Pass the id you find here as templateId to nestr_register_connector. Workspace-admin only.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID whose available connector templates to list" },
+      },
+      required: ["workspaceId"],
+    },
+    ...readOnly,
+  },
+  {
     name: "nestr_register_connector",
-    description: "Register a connector in the workspace catalog: a reusable mcp / cli / api template that holds no secret. Workspace-admin only. A non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error). Provide type ('mcp' or 'api' need a url in config; 'cli' needs a command) and a unique name; optionally capabilities, exposure ({ userAgent, domainGated }), and authStrategy ('secret' or 'oauth2'). This only creates the template. Typical flow: register here, then bind it to a role's DOMAIN with nestr_bind_connector (create one under the role with nestr_create_nest and labels ['circleplus-domain'] if the role has none yet: the bind refuses a role id), then a human or agent connects the account via the credentials field's Connect button. The secret is captured out-of-band through that button, never by the agent.",
+    description: "Register a connector in the workspace catalog. PREFER A TEMPLATE: call nestr_list_connector_templates first and pass its id as templateId, which fills in the vendor's real endpoint, transport, auth strategy and this deployment's OAuth client. Hand-registering a known vendor means guessing an endpoint, and a wrong guess authorises cleanly and then fails every call. Only describe the transport yourself for something the deployment has no template for. A reusable mcp / cli / api template that holds no secret. Workspace-admin only. A non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error). Provide type ('mcp' or 'api' need a url in config; 'cli' needs a command) and a unique name; optionally capabilities, exposure ({ userAgent, domainGated }), and authStrategy ('secret' or 'oauth2'). This only creates the template. Typical flow: register here, then bind it to a role's DOMAIN with nestr_bind_connector (create one under the role with nestr_create_nest and labels ['circleplus-domain'] if the role has none yet: the bind refuses a role id), then a human or agent connects the account via the credentials field's Connect button. The secret is captured out-of-band through that button, never by the agent.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3586,8 +3603,38 @@ async function _handleToolCall(
         return formatResult(connectors);
       }
 
+      case "nestr_list_connector_templates": {
+        const parsed = schemas.listConnectorTemplates.parse(args);
+        const templates = await client.listConnectorTemplates(parsed.workspaceId);
+        if (!Array.isArray(templates) || templates.length === 0) {
+          return { content: [{ type: "text", text: "This deployment offers no connector templates." }] };
+        }
+        return formatResult({
+          message: "Pass the id of the one you want as templateId to nestr_register_connector. It carries the vendor's endpoint, transport and auth strategy, so nothing has to be guessed.",
+          templates,
+        });
+      }
+
       case "nestr_register_connector": {
         const parsed = schemas.registerConnector.parse(args);
+        if (parsed.templateId) {
+          const fromTemplate = await client.registerConnector(parsed.workspaceId, {
+            templateId: parsed.templateId,
+            ...(parsed.name ? { name: parsed.name } : {}),
+          });
+          return formatResult({
+            message: "Connector registered from a template, so its endpoint and auth strategy are the vendor's own. Next, bind it to a role's DOMAIN with nestr_bind_connector, then a human connects the account via the Connect button.",
+            connector: fromTemplate,
+          });
+        }
+        if (!parsed.type || !parsed.name) {
+          return formatError({
+            error: true,
+            code: "VALIDATION",
+            message: "Without templateId, both type and name are required. Call nestr_list_connector_templates first: a known vendor almost always has one.",
+            retryable: false,
+          });
+        }
         const connector = await client.registerConnector(parsed.workspaceId, {
           type: parsed.type,
           name: parsed.name,

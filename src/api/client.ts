@@ -1837,6 +1837,19 @@ export class NestrClient {
   }
 
   /**
+   * The connector templates this deployment can offer: the one-click set, each
+   * carrying an endpoint, transport, auth strategy and OAuth client that nobody
+   * has to guess. Workspace-admin only, as the route enforces.
+   * Wraps GET /workspaces/:workspaceId/connector-templates.
+   */
+  async listConnectorTemplates(workspaceId: string): Promise<unknown[]> {
+    const response = await this.fetch<{ status: string; data: unknown[] }>(
+      `/workspaces/${workspaceId}/connector-templates`
+    );
+    return response.data;
+  }
+
+  /**
    * Create an agent user in the workspace. Workspace-admin only: the REST route
    * enforces it and returns 403 (mapped to AUTH_SCOPE_INSUFFICIENT) for a
    * non-admin caller.
@@ -1875,8 +1888,9 @@ export class NestrClient {
   async registerConnector(
     workspaceId: string,
     body: {
-      type: "mcp" | "cli" | "api";
-      name: string;
+      templateId?: string;
+      type?: "mcp" | "cli" | "api";
+      name?: string;
       config?: ConnectorConfig;
       capabilities?: ConnectorCapabilities;
       exposure?: ConnectorExposure;

@@ -104,3 +104,56 @@ describe("nestr_create_agent", () => {
     expect(result.isError).toBe(true);
   });
 });
+
+describe("connector templates", () => {
+  let mockFetch: ReturnType<typeof vi.fn>;
+  let client: NestrClient;
+
+  beforeEach(() => {
+    mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+    client = new NestrClient({ apiKey: "test-token", baseUrl: "https://api.test.io/api" });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("lists the templates and points at registering from one", async () => {
+    const templates = [{ id: "xero", name: "Xero", type: "mcp" }];
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: templates }));
+
+    const result = await handleToolCall(client, "nestr_list_connector_templates", { workspaceId: "ws1" });
+    expect(result.isError).toBeFalsy();
+    expect(mockFetch.mock.calls[0][0]).toBe("https://api.test.io/api/workspaces/ws1/connector-templates");
+
+    const parsed = parseResult(result.content[0].text);
+    expect(parsed.templates).toEqual(templates);
+    expect(String(parsed.message)).toContain("templateId");
+  });
+
+  // The whole point: the endpoint comes from the template, not from the model.
+  it("registers from a template without needing type or config", async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(200, { status: "success", data: { _id: "c1", name: "Xero", type: "mcp" } })
+    );
+
+    const result = await handleToolCall(client, "nestr_register_connector", {
+      workspaceId: "ws1",
+      templateId: "xero",
+    });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ templateId: "xero" });
+  });
+
+  it("still refuses a hand-registration missing type or name, and says to look for a template", async () => {
+    const result = await handleToolCall(client, "nestr_register_connector", {
+      workspaceId: "ws1",
+      name: "Xero",
+    });
+    expect(result.isError).toBe(true);
+    const parsed = parseResult(result.content[0].text);
+    expect(parsed.code).toBe("VALIDATION");
+    expect(String(parsed.message)).toContain("nestr_list_connector_templates");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
