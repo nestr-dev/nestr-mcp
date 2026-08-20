@@ -100,6 +100,10 @@ const ARTICLE_KEYWORDS: Record<string, string[]> = {
   "chat-channels-and-communication-in-nestr": ["chat", "message", "messaging", "channel", "channels", "notification", "notifications", "mention", "comment"],
   "managing-users-invitations-permissions": ["invite", "invitation", "permission", "permissions", "member", "members", "user", "users", "access"],
   "pricing-plans-what-you-pay-for": ["pricing", "price", "plan", "plans", "billing", "subscription", "cost", "payment"],
+  "nestr-search": ["operator", "operators", "syntax", "query", "queries", "filter", "filters", "groupby", "groupbycol", "grouping", "group", "column", "columns", "board", "kanban", "sort", "sorting", "saved", "assignee", "label", "labels", "has", "depth", "limit"],
+  "customising-views": ["view", "views", "layout", "list", "lists", "column", "columns", "board", "kanban", "group", "groupby", "groupbycol", "grouping", "filter", "filters", "sort", "display"],
+  "customising-tabs": ["tab", "tabs", "saved", "search", "board", "kanban", "column", "columns", "groupbycol", "label", "labels", "field", "fields", "customise", "customize"],
+  "custom-fields": ["field", "fields", "dropdown", "status", "select", "options", "property", "properties"],
 };
 
 /**

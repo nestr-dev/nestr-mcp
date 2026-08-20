@@ -519,6 +519,8 @@ The \`nestr_search\` tool supports powerful query operators. Combine multiple op
 | \`depth:\` | \`depth:1\` | Limit search depth (1 = direct children only) |
 | \`mindepth:\` | \`mindepth:2\` | Minimum depth from search context |
 | \`limit:\` | \`limit:10\` | Limit number of results |
+| \`groupby:\` | \`groupby:parent\` | Group results into sections (app + tabs; inert here) |
+| \`groupbycol:\` | \`groupbycol:project->status\` | Same grouping as board columns — see "Grouping and Layout" below |
 
 ### The \`has:\` Operator
 
@@ -660,6 +662,41 @@ assignee:me completed:false sort:activityAt sort-order:desc
 label:project completed:this_month sort:completedAt sort-order:desc
   -> Recently completed projects
 \`\`\`
+
+### Grouping and Layout (\`groupby:\` / \`groupbycol:\`)
+
+\`groupby:\` and \`groupbycol:\` are supported operators that organise results rather than filter them. \`groupby:\` splits the list into sections; \`groupbycol:\` lays the same grouping out as columns, i.e. a kanban board. Both can appear in one query, giving sections inside each column.
+
+**Where they take effect:** the search bar in the Nestr app, and the search term saved on a tab (Workspace settings -> Labels, Fields & Tabs -> pick the label -> its tabs). They are accepted but inert for the \`nestr_search\` API tool, which always returns a flat list — so group the results yourself when answering. Do not tell a user these operators do not exist, and do not send them hunting for a menu instead: in the app and on tabs they work.
+
+**Values (the same set for both):**
+- \`label\` — the first groupable label on each result
+- \`parent\` — the item's parent nest
+- \`workspace\`
+- \`assignee\` — first assigned user, \`none\` when unassigned
+- \`completed\` — completed vs not (needs 'hide completed' turned off to show both)
+- \`due\` — Overdue / Today / This week / Next week / Later / Without due date
+- \`{labelId}->{fieldCode}\` — any dropdown field on a label, e.g. \`project->status\` or \`task->status\`. This general form is not in the app's autosuggest but is fully supported, for custom fields too.
+- \`ancestorlabel->{labelId,...}\` — the nearest ancestor carrying one of the listed labels, e.g. \`groupby:ancestorlabel->circleplus-role,circleplus-circle\` for a lane per role or circle. Built-in views such as My projects use exactly this.
+
+**Worked example — a board of tasks by status inside a project.** Tasks have no native status field (projects do: Future / Current / Waiting / Done), so add a dropdown field, e.g. \`status\`, to the task label first, then give the project label a search tab whose term includes \`groupbycol:task->status\`. Every project then shows its tasks as a board with one column per status value.
+
+**Examples:**
+\`\`\`
+label:project groupbycol:project->status
+  -> Projects as a board, one column per project status
+
+completed:false groupbycol:assignee
+  -> Open work as a board, one column per person
+
+label:project groupby:ancestorlabel->circleplus-role,circleplus-circle
+  -> Projects in sections, one per owning role or circle
+
+groupbycol:task->status groupby:parent
+  -> Tasks as status columns, sectioned by their parent inside each column
+\`\`\`
+
+Related articles: \`nestr_help({ topic: "nestr-search" })\` for the full in-app search syntax, \`customising-tabs\` for putting a search on a tab, and \`customising-views\` for the per-person list/columns switch.
 
 ### Scoping Search to a Specific Nest
 
