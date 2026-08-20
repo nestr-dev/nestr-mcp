@@ -189,6 +189,23 @@ const HINT_TYPE_TOOL_CALLS: Record<
       },
     };
   },
+  // `purpose` is a first-class nest field, so there is no per-label field key to pick;
+  // only the example text differs between a role and a circle.
+  no_purpose(nest) {
+    const nestId = nest._id as string | undefined;
+    if (!nestId) return null;
+    const labels = (nest.labels as string[] | undefined) || [];
+    const isRole = labels.includes("circleplus-role") || labels.includes("role");
+    return {
+      tool: "nestr_update_nest",
+      params: {
+        nestId,
+        purpose: isRole
+          ? "<purpose statement: why this role exists and the future state it works towards>"
+          : "<purpose statement: the north star every role and project here traces back to>",
+      },
+    };
+  },
 };
 
 /**

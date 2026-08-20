@@ -250,6 +250,84 @@ describe("enrichHints", () => {
     });
   });
 
+  it("maps no_purpose on a role to nestr_update_nest with a role purpose example", () => {
+    // Same shape as no_strategy: the API emits no_purpose with url /nests/{id},
+    // which would resolve to nestr_get_nest, a no-op for a caller holding the nest.
+    const data = {
+      _id: "role1",
+      labels: ["circleplus-role"],
+      hints: [{
+        type: "no_purpose",
+        label: "This role has no purpose statement.",
+        severity: "warning",
+        url: "/nests/role1",
+      }],
+    };
+    const result = enrichHints(data) as any;
+    expect(result.hints[0].toolCall).toEqual({
+      tool: "nestr_update_nest",
+      params: {
+        nestId: "role1",
+        purpose: "<purpose statement: why this role exists and the future state it works towards>",
+      },
+    });
+  });
+
+  it("maps no_purpose on a circle to nestr_update_nest with a circle purpose example", () => {
+    const data = {
+      _id: "circle1",
+      labels: ["circleplus-circle"],
+      hints: [{
+        type: "no_purpose",
+        label: "This circle has no purpose statement.",
+        severity: "warning",
+        url: "/nests/circle1",
+      }],
+    };
+    const result = enrichHints(data) as any;
+    expect(result.hints[0].toolCall).toEqual({
+      tool: "nestr_update_nest",
+      params: {
+        nestId: "circle1",
+        purpose: "<purpose statement: the north star every role and project here traces back to>",
+      },
+    });
+  });
+
+  it("maps no_purpose on an anchor-circle the same way as a circle", () => {
+    const data = {
+      _id: "ws1",
+      labels: ["circleplus-anchor-circle"],
+      hints: [{
+        type: "no_purpose",
+        label: "This workspace has no purpose statement.",
+        severity: "warning",
+        url: "/nests/ws1",
+      }],
+    };
+    const result = enrichHints(data) as any;
+    expect(result.hints[0].toolCall.params.purpose)
+      .toBe("<purpose statement: the north star every role and project here traces back to>");
+  });
+
+  it("falls back to the URL match when a no_purpose hint carries no nest id", () => {
+    // The override returns null without an _id, so enrichHints must not swallow
+    // the hint: it drops through to HINT_URL_PATTERNS.
+    const data = {
+      hints: [{
+        type: "no_purpose",
+        label: "This role has no purpose statement.",
+        severity: "warning",
+        url: "/nests/role9",
+      }],
+    };
+    const result = enrichHints(data) as any;
+    expect(result.hints[0].toolCall).toEqual({
+      tool: "nestr_get_nest",
+      params: { nestId: "role9" },
+    });
+  });
+
   it("maps /nests/{id}/children?search=... to nestr_search", () => {
     const data = {
       _id: "nest1",
