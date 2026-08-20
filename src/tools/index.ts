@@ -2569,7 +2569,7 @@ async function _handleToolCall(
             const entries = await loadArticleIndex();
             const hits = searchArticleIndex(entries, parsed.search, 8);
             if (hits.length === 0) {
-              return { content: [{ type: "text", text: `_Resolved as: help-article search._\n\nNo help articles matched "${parsed.search}". Try broader terms or a synonym, or call nestr_help({ topic: "topics" }) for internal MCP topics.` }] };
+              return { content: [{ type: "text", text: `_Resolved as: help-article search._\n\nNo help articles matched "${parsed.search}". The index scores article slugs and curated keywords, not article bodies, so an exact feature, operator or field name often misses even when the docs cover it. Try broader terms or a synonym, or call nestr_help({ topic: "topics" }) for internal MCP topics. An empty result is not evidence the thing does not exist: say you could not find it documented, never that it is unsupported.` }] };
             }
             // Enrich the top hits with a title + one-line summary so the caller
             // can pick the right article without a blind fetch. Best-effort:
