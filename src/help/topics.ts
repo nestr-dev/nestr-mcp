@@ -696,7 +696,7 @@ groupbycol:task->status groupby:parent
   -> Tasks as status columns, sectioned by their parent inside each column
 \`\`\`
 
-Related articles: \`nestr_help({ topic: "nestr-search" })\` for the full in-app search syntax, \`customising-tabs\` for putting a search on a tab, and \`customising-views\` for the per-person list/columns switch.
+Public help articles covering the same ground, each fetched by passing its slug as \`topic\`: \`nestr-search\` for the in-app search UI, \`customising-tabs\` for putting a search on a tab, and \`customising-views\` for the per-person list/columns switch.
 
 ### Scoping Search to a Specific Nest
 
