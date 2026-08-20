@@ -2374,13 +2374,20 @@ export const toolDefinitions = [
     inputSchema: {
       type: "object" as const,
       properties: {
+        templateId: {
+          type: "string",
+          description: "Id of a template from nestr_list_connector_templates. Given this, everything else is filled in from the template and you should omit type/config/capabilities/exposure/authStrategy. ALWAYS prefer this over hand-registering a vendor the deployment already knows.",
+        },
         workspaceId: { type: "string", description: "Workspace ID to register the connector in" },
         type: {
           type: "string",
           enum: ["mcp", "cli", "api"],
-          description: "Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command)",
+          description: "Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command). Required unless templateId is given.",
         },
-        name: { type: "string", description: "Unique connector name within the workspace catalog" },
+        name: {
+          type: "string",
+          description: "Unique connector name within the workspace catalog. Required unless templateId is given, where it defaults to the template's own name.",
+        },
         config: {
           type: "object",
           description: "Per-type transport config, no secret. mcp/api need a url (e.g., { url: 'https://...' }); cli needs a command (e.g., { command: 'some-cli' }). Optional non-secret headers go under headers.",
@@ -2399,7 +2406,10 @@ export const toolDefinitions = [
           description: "How a principal connects: 'secret' (a one-time secret captured via the Connect button) or 'oauth2'. The agent never sees the secret.",
         },
       },
-      required: ["workspaceId", "type", "name"],
+      // workspaceId only: with a templateId the transport comes from the template,
+      // and demanding type and name here is what made the whole template path
+      // unreachable from a client that reads the schema.
+      required: ["workspaceId"],
     },
     ...mutating,
   },
