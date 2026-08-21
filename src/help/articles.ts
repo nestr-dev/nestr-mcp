@@ -90,7 +90,7 @@ export async function loadArticleIndex(): Promise<ArticleIndexEntry[]> {
  */
 const ARTICLE_KEYWORDS: Record<string, string[]> = {
   "scrum-agile-app": ["sprint", "sprints", "kanban", "backlog", "burndown", "epic", "epics", "milestone", "milestones", "iteration", "userstory", "story", "stories", "standup", "velocity", "board"],
-  "running-meetings-in-nestr": ["tactical", "governance", "standup", "retro", "retrospective", "facilitation", "facilitator", "agenda"],
+  "running-meetings-in-nestr": ["tactical", "governance", "standup", "retro", "retrospective", "facilitation", "facilitator", "agenda", "minutes", "notes", "pdf", "download", "export", "report", "outcome", "outcomes", "checkin", "check-in", "election", "elections"],
   "tensions-and-governance-proposals": ["proposal", "proposals", "holacracy", "sociocracy", "amend", "amendment", "objection"],
   "nestr-the-power-of-labels": ["tag", "tags", "tagging"],
   "building-your-org-structure-roles-circles": ["hierarchy", "department", "team", "org", "orgchart", "chart", "accountability", "accountabilities"],
@@ -100,10 +100,13 @@ const ARTICLE_KEYWORDS: Record<string, string[]> = {
   "chat-channels-and-communication-in-nestr": ["chat", "message", "messaging", "channel", "channels", "notification", "notifications", "mention", "comment"],
   "managing-users-invitations-permissions": ["invite", "invitation", "permission", "permissions", "member", "members", "user", "users", "access"],
   "pricing-plans-what-you-pay-for": ["pricing", "price", "plan", "plans", "billing", "subscription", "cost", "payment"],
-  "nestr-search": ["operator", "operators", "syntax", "query", "queries", "filter", "filters", "groupby", "groupbycol", "grouping", "column", "columns", "board", "kanban", "sort", "sorting", "saved"],
-  "customising-views": ["view", "views", "layout", "list", "lists", "column", "columns", "board", "kanban", "group", "groupby", "groupbycol", "grouping", "filter", "filters", "sort", "display"],
-  "customising-tabs": ["tab", "tabs", "saved", "search", "board", "kanban", "column", "columns", "groupbycol", "customise", "customize"],
-  "custom-fields": ["field", "fields", "dropdown", "status", "select", "options", "property", "properties"],
+  "nestr-search": ["operator", "operators", "syntax", "query", "queries", "search", "find", "filter", "filters", "groupby", "groupbycol", "grouping", "column", "columns", "board", "kanban", "sort", "sorting", "saved"],
+  "customising-views": ["view", "views", "layout", "list", "lists", "column", "columns", "board", "kanban", "group", "groupby", "groupbycol", "grouping", "filter", "filters", "sort", "sorting", "display"],
+  "customising-tabs": ["tab", "tabs", "saved", "search", "section", "sections", "subtab", "board", "kanban", "column", "columns", "groupbycol", "customise", "customize"],
+  "customising-your-nestr-workspace": ["customise", "customize", "customisation", "customization", "configure", "tailor", "adapt"],
+  "custom-fields": ["field", "fields", "custom field", "notes", "dropdown", "drop down", "status", "select", "options", "checkbox", "currency", "percentage", "formula", "slider", "range", "date field", "text field", "property", "properties", "attribute", "metadata", "schema", "tagalong", "capture", "record"],
+  "okrs-app": ["okr", "okrs", "objective", "objectives", "key result", "keyresult", "goal", "goals", "gauge", "target"],
+  "rights-management": ["rights", "role rights", "restrict", "restriction", "view only", "viewonly", "read only", "edit rights"],
 };
 
 /**
