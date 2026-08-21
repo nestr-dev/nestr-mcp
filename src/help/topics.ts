@@ -23,6 +23,7 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 - nest-model: Nest fields, hierarchy, hints, and fieldsMetaData
 - labels: Important labels, label architecture, and field schema customization
 - search: Full search query syntax with all operators and examples
+- fields: Adding custom fields to labels when Nestr has no field for something yet
 - web-app-links: URL formats for linking to the Nestr web app
 - inbox: Inbox quick capture, processing workflow, and reordering
 - daily-plan: Daily plan usage, scope, and planning workflows
@@ -460,6 +461,8 @@ Labels created by individual users for their own organization:
 
 ### Field Schemas and Customization
 
+**Need a field that does not exist yet?** A workspace admin can add one to the label, and every item of that type picks it up. See \`nestr_help({ topic: "fields" })\` before telling anyone a field is not available.
+
 Labels define field schemas - the custom fields available on nests with that label. Key points:
 
 - **Namespacing**: All fields are namespaced by the label that defines them (e.g., \`project.status\`, \`role.electable-role\`, \`metric.frequency\`)
@@ -493,6 +496,40 @@ This adds a \`fieldsMetaData\` object to the response showing field definitions 
 Use this when you need to know what values are valid for a field, especially before updating.
 
 **Example**: A workspace might customize the global \`project\` label to add a \`project.department\` field, and a sub-circle might further customize it to add \`project.sprint\` - both would appear on projects within that sub-circle.`,
+
+  "fields": `## Custom Fields (recording data Nestr has no field for yet)
+
+**Rule of thumb: when someone asks "can I record X on Y?" and there is no built-in field for it, the answer is almost always yes.** Fields are defined on labels, so a workspace admin adds the field to Y's label and every item of that type gets it. Never tell a user something cannot be recorded just because you could not find a field for it. Check the label's schema first, then point them at this route.
+
+### How fields work
+
+- **Defined per label, not per item.** Adding a field to a label gives it to every item carrying that label, including items that already exist.
+- **Where:** Workspace settings -> Labels, Fields & Tabs -> select the label -> add a field.
+- **Who:** a workspace admin. If the person asking is not an admin, describe the route and suggest they ask an admin, rather than saying it is not possible.
+- **Naming:** the new field is namespaced by its label, e.g. \`tension.notes\`, and is read and written through \`fields\` on the nest tools like any built-in field.
+- **Per-circle overrides:** a circle can add, alter or hide a label's fields for itself, and a circle nested inside it can override again. The same label can carry different fields in different parts of the tree.
+- **Internally** this is stored as a tagAlong label on the label definition. That is implementation detail. Talk to users about "adding a field to the label".
+
+### Check before you answer
+
+Fetch any nest of that type with \`fieldsMetaData=true\` (see topic "labels") to read the live schema, including the options on a dropdown. A field you do not recognise may already exist in that workspace.
+
+### Common requests, and the label to change
+
+| Request | What to do |
+|---|---|
+| Notes on a meeting agenda item | Agenda items are tensions. Add a multiline or HTML text field to the \`tension\` label. |
+| A budget on projects | Currency field on \`project\`. |
+| A start date on roles | Date field on \`role\`. |
+| A renewal date on contracts | Create a workspace label for contracts, add a date field to it. |
+| A priority to group a board by | Drop down list on the label, then group with \`groupbycol:<label>-><field>\` (see topic "search"). |
+| Something Nestr has no concept of at all | Create a workspace label for it and give it fields. |
+
+### Field types available
+
+Text, multiline text, HTML text, number, currency, percentage, slider, range, formula, drop down list, multi-select drop down list, label drop down selector, checkbox, date, term selector, nest link, URL, user.
+
+Fields are first class: once added you can search, filter, sort and group by them.`,
 
   "search": `## Search Query Syntax
 
