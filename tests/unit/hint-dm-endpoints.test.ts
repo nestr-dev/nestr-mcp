@@ -41,6 +41,17 @@ describe("DM hint endpoints translate to tool calls", () => {
     expect(patch?.tool).toBe("nestr_update_dm_thread");
   });
 
+  it("emits the tool's parameter name, not the URL's", () => {
+    // The route spells it ?user=, the tool calls it withUser. Emitting the URL's
+    // spelling would produce a call the tool's own schema rejects.
+    const call = translateEndpoint({
+      method: "GET",
+      path: "/api/users/me/dm?user=nestr_support",
+    } as never);
+    expect(call?.tool).toBe("nestr_list_dms");
+    expect(call?.parametersExample).toEqual({ withUser: "nestr_support" });
+  });
+
   it("does not let a deeper route fall through to a shallower one", () => {
     // /dm/{c}/threads must not be read as /dm/{c} with a stray segment.
     const threads = translateEndpoint({ method: "GET", path: "/api/users/me/dm/c1/threads" } as never);
@@ -70,5 +81,17 @@ describe("posts responses keep their unread hint", () => {
     expect(enriched.hints[0].toolCalls[0].parametersExample).toEqual({ postId: "p9" });
     // The payload must survive the envelope branch.
     expect(enriched.data).toHaveLength(1);
+  });
+});
+
+describe("legacy url hints emit typed values too", () => {
+  it("coerces unread to a boolean, which is what the tools declare", async () => {
+    const { enrichHints } = await import("../../src/tools/index.js");
+    const enriched: any = enrichHints({
+      _id: "c1",
+      hints: [{ type: "unread_threads", url: "/api/users/me/dm/c1/threads?unread=true" }],
+    });
+    expect(enriched.hints[0].toolCall.tool).toBe("nestr_list_dm_threads");
+    expect(enriched.hints[0].toolCall.params).toEqual({ containerId: "c1", unread: true });
   });
 });

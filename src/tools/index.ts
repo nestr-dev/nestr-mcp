@@ -117,7 +117,8 @@ export function compactResponse<T>(
 const HINT_URL_PATTERNS: Array<{
   pattern: RegExp;
   tool: string;
-  params: (match: RegExpMatchArray, searchParams: URLSearchParams, workspaceId?: string) => Record<string, string>;
+  // Values are not all strings: a tool that declares z.boolean() rejects "true".
+  params: (match: RegExpMatchArray, searchParams: URLSearchParams, workspaceId?: string) => Record<string, unknown>;
 }> = [
   // /nests/{id}/children?search=... → nestr_search with in:{id} scoped query
   {
@@ -155,9 +156,9 @@ const HINT_URL_PATTERNS: Array<{
     pattern: /^\/users\/me\/dm\/([^/]+)\/threads\/([^/]+)\/posts$/,
     tool: "nestr_get_dm_posts",
     params: (m, sp) => {
-      const result: Record<string, string> = { containerId: m[1], threadId: m[2] };
+      const result: Record<string, unknown> = { containerId: m[1], threadId: m[2] };
       const unread = sp.get("unread");
-      if (unread) result.unread = unread;
+      if (unread) result.unread = unread === "true";
       return result;
     },
   },
@@ -166,9 +167,9 @@ const HINT_URL_PATTERNS: Array<{
     pattern: /^\/users\/me\/dm\/([^/]+)\/threads\/([^/]+)$/,
     tool: "nestr_get_dm_thread",
     params: (m, sp) => {
-      const result: Record<string, string> = { containerId: m[1], threadId: m[2] };
+      const result: Record<string, unknown> = { containerId: m[1], threadId: m[2] };
       const unread = sp.get("unread");
-      if (unread) result.unread = unread;
+      if (unread) result.unread = unread === "true";
       return result;
     },
   },
@@ -177,9 +178,9 @@ const HINT_URL_PATTERNS: Array<{
     pattern: /^\/users\/me\/dm\/([^/]+)\/threads$/,
     tool: "nestr_list_dm_threads",
     params: (m, sp) => {
-      const result: Record<string, string> = { containerId: m[1] };
+      const result: Record<string, unknown> = { containerId: m[1] };
       const unread = sp.get("unread");
-      if (unread) result.unread = unread;
+      if (unread) result.unread = unread === "true";
       return result;
     },
   },
@@ -314,11 +315,15 @@ interface EndpointToolMapping {
   /** Fixed args added to parametersExample (e.g. { removeNest: true }). */
   extraParams?: Record<string, unknown>;
   /**
-   * Query-string params the tool accepts. A hint endpoint may carry a query (the unread
-   * hints do: `.../threads?unread=true`), and without this the value would be dropped and
-   * the suggested call would fetch everything instead of the thing the hint pointed at.
+   * Query-string params the tool accepts, as `queryKey -> toolParamName`. A hint endpoint
+   * may carry a query (the unread hints do: `.../threads?unread=true`), and without this
+   * the value would be dropped and the suggested call would fetch everything instead of
+   * the thing the hint pointed at.
+   *
+   * The rename matters: the route spells it `?user=`, the tool calls it `withUser`, and
+   * emitting the URL's spelling would produce a call the tool's schema rejects.
    */
-  queryParams?: ReadonlySet<string>;
+  queryParams?: Readonly<Record<string, string>>;
 }
 
 const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
@@ -331,7 +336,7 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     tool: "nestr_get_dm_posts",
     pathParamNames: ["containerId", "threadId"],
     bodyParams: new Set([]),
-    queryParams: new Set(["unread", "depth"]),
+    queryParams: { unread: "unread", depth: "depth" },
   },
   {
     method: "POST",
@@ -353,7 +358,7 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     tool: "nestr_get_dm_thread",
     pathParamNames: ["containerId", "threadId"],
     bodyParams: new Set([]),
-    queryParams: new Set(["unread"]),
+    queryParams: { unread: "unread" },
   },
   {
     method: "PATCH",
@@ -368,7 +373,7 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     tool: "nestr_list_dm_threads",
     pathParamNames: ["containerId"],
     bodyParams: new Set([]),
-    queryParams: new Set(["unread"]),
+    queryParams: { unread: "unread" },
   },
   {
     method: "GET",
@@ -383,7 +388,7 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     tool: "nestr_list_dms",
     pathParamNames: [],
     bodyParams: new Set([]),
-    queryParams: new Set(["user"]),
+    queryParams: { user: "withUser" },
   },
   // Carried by the unread_posts hint on nests/{id}/posts, so acknowledging what you just
   // read is one call. Works for any post, not only a DM.
@@ -490,12 +495,10 @@ export function translateEndpoint(endpoint: ApiHintEndpoint): EnrichedToolCall |
     // boolean, and a string would fail schema validation on the suggested call.
     if (mapping.queryParams) {
       for (const [key, value] of search.entries()) {
-        if (!mapping.queryParams.has(key)) continue;
-        if (value === "true" || value === "false") {
-          parametersExample[key] = value === "true";
-        } else {
-          parametersExample[key] = value;
-        }
+        const paramName = mapping.queryParams[key];
+        if (!paramName) continue;
+        parametersExample[paramName] =
+          value === "true" || value === "false" ? value === "true" : value;
       }
     }
     if (mapping.extraParams) Object.assign(parametersExample, mapping.extraParams);
@@ -583,9 +586,12 @@ export function enrichHints<T>(data: T): T {
       } else if (hint.url) {
         // Legacy: single URL → toolCall. Kept for backwards compatibility with
         // hints that pre-date the endpoints[] payload.
-        let rawUrl = hint.url;
-        const apiPrefixMatch = rawUrl.match(/^https?:\/\/[^/]+\/api(\/.*)/);
-        if (apiPrefixMatch) rawUrl = apiPrefixMatch[1];
+        // Strip an optional host, then an optional /api prefix. Previously only the
+        // host-qualified form was handled, so a bare "/api/..." hint matched no pattern
+        // and was reported as unrecognized. normalizeEndpointPath does both for the
+        // endpoints[] payload; this is the same rule for the legacy url field.
+        let rawUrl = hint.url.replace(/^https?:\/\/[^/]+/, "");
+        rawUrl = rawUrl.replace(/^\/api(?=\/)/, "");
         const [path, queryString] = rawUrl.split("?");
         const searchParams = new URLSearchParams(queryString || "");
         let matched = false;
