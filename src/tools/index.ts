@@ -593,7 +593,7 @@ export const schemas = {
 
   getNest: z.object({
     nestId: z.string().describe("Nest ID. Supports comma-separated IDs to fetch multiple nests in one call (e.g., 'id1,id2,id3') — returns an array instead of a single object. Keep total URL under 2000 chars to avoid HTTP limits."),
-    fieldsMetaData: z.boolean().optional().describe("Set to true to include field schema metadata (e.g., available options for project.status)"),
+    fieldsMetaData: z.boolean().optional().describe("Set to true to include field schema metadata (e.g., available options for project.status). Entries carrying proxySource name another nest the field lives on: writes go there and are authorised there"),
     hints: z.boolean().optional().describe("Include contextual hints on each nest (default: true). Hints surface actionable signals like unassigned roles, stale projects, or unread comments. Set to false for bulk lookups where you only need structural data, not contextual guidance."),
     provenance: z.boolean().optional().describe("Single-nest only. Include field/property provenance: which label (and circle context) defines each field and property."),
     rights: z.boolean().optional().describe("Single-nest only. Include the caller's composed rights on the nest plus a deny trace naming the profiles that block each op."),
@@ -1223,7 +1223,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID, or comma-separated IDs to fetch multiple nests at once (e.g., 'id1,id2,id3'). Keep total URL under 2000 chars." },
-        fieldsMetaData: { type: "boolean", description: "Set to true to include field schema metadata (available options, field types)" },
+        fieldsMetaData: { type: "boolean", description: "Set to true to include field schema metadata (available options, field types, and proxySource when a field lives on another nest)" },
         hints: { type: "boolean", description: "Include contextual hints (default: true). Set to false for bulk lookups where you only need structural data." },
         stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
         provenance: { type: "boolean", description: "Single-nest only. Include field/property provenance: which label (and circle context) defines each field and property, e.g. why a role has a given icon." },
