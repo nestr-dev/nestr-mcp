@@ -34,17 +34,42 @@ describe("nestr_register_connector's advertised schema", () => {
 
 // The general form of the same defect, so the next parameter added to a zod
 // schema alone fails here rather than silently never being offered.
-describe("every zod parameter is advertised", () => {
-  const pairs: Array<[string, keyof typeof schemas]> = [
-    ["nestr_register_connector", "registerConnector"],
-    ["nestr_bind_connector", "bindConnector"],
-    ["nestr_create_agent", "createAgent"],
-  ];
+const pairs: Array<[string, keyof typeof schemas]> = [
+  ["nestr_register_connector", "registerConnector"],
+  ["nestr_bind_connector", "bindConnector"],
+  ["nestr_create_agent", "createAgent"],
+];
 
+describe("every zod parameter is advertised", () => {
   it.each(pairs)("%s", (toolName, schemaKey) => {
     const zodShape = Object.keys((schemas[schemaKey] as { shape: Record<string, unknown> }).shape);
     const declared = Object.keys(advertised(toolName).properties);
 
     expect(zodShape.filter((key) => !declared.includes(key))).toEqual([]);
+  });
+});
+
+// And every VALUE of an enum, which is the same defect one level down and has
+// already happened once on its own: nestr_bind_connector accepted ownerType
+// "role" in zod, the handler implemented it, and the post-registration message
+// told callers to use it, while the advertised enum listed only "role-domain"
+// and "workspace". A client reading the schema could not reach the path the
+// tool described as the usual one.
+describe("every zod enum value is advertised", () => {
+  it.each(pairs)("%s", (toolName, schemaKey) => {
+    const shape = (schemas[schemaKey] as { shape: Record<string, unknown> }).shape;
+    const declared = advertised(toolName).properties as Record<string, { enum?: string[] }>;
+
+    Object.entries(shape).forEach(([key, def]) => {
+      // Reach through .optional() to the enum underneath, and skip anything that
+      // is not one: only a declared enum can drift from a declared enum.
+      const inner = (def as { _def?: { innerType?: unknown } })?._def?.innerType ?? def;
+      const options = (inner as { options?: unknown })?.options;
+      if (!Array.isArray(options)) return;
+
+      const advertisedValues = declared[key]?.enum;
+      expect(advertisedValues, `${toolName}.${key} advertises an enum`).toBeDefined();
+      expect([...options].sort()).toEqual([...(advertisedValues as string[])].sort());
+    });
   });
 });
