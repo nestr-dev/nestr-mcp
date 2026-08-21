@@ -149,6 +149,36 @@ describe("help articles", () => {
       // "scu" is too short to rescue and isn't a substring of any haystack.
       expect(searchArticleIndex(entries, "scu")).toEqual([]);
     });
+
+  // Operator names live in article bodies, which the index never reads. Without
+  // curated keywords a user searching the exact operator got nothing back, and
+  // at least one agent read that emptiness as proof the operator did not exist.
+  describe("searchArticleIndex — operator and view vocabulary", () => {
+    const entries = [
+      { slug: "nestr-search", url: "https://nestr.io/help/articles/nestr-search" },
+      { slug: "customising-views", url: "https://nestr.io/help/articles/customising-views" },
+      { slug: "customising-tabs", url: "https://nestr.io/help/articles/customising-tabs" },
+      { slug: "custom-fields", url: "https://nestr.io/help/articles/custom-fields" },
+      { slug: "getting-started-with-nestr", url: "https://nestr.io/help/articles/getting-started-with-nestr" },
+    ];
+
+    it("finds the search article by operator name", () => {
+      for (const q of ["groupby", "groupbycol", "operator", "syntax"]) {
+        expect(searchArticleIndex(entries, q).map(h => h.slug)).toContain("nestr-search");
+      }
+    });
+
+    it("finds the view and tab articles for column and board vocabulary", () => {
+      const columns = searchArticleIndex(entries, "columns").map(h => h.slug);
+      expect(columns).toContain("customising-views");
+      const tabs = searchArticleIndex(entries, "tab").map(h => h.slug);
+      expect(tabs).toContain("customising-tabs");
+    });
+
+    it("finds the custom fields article for dropdown vocabulary", () => {
+      expect(searchArticleIndex(entries, "dropdown").map(h => h.slug)).toContain("custom-fields");
+    });
+  });
   });
 
   // ─── Article body extraction ──────────────────────────────────────────────

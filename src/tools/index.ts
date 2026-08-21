@@ -226,6 +226,23 @@ const HINT_TYPE_TOOL_CALLS: Record<
       },
     };
   },
+  // `purpose` is a first-class nest field, so there is no per-label field key to pick;
+  // only the example text differs between a role and a circle.
+  no_purpose(nest) {
+    const nestId = nest._id as string | undefined;
+    if (!nestId) return null;
+    const labels = (nest.labels as string[] | undefined) || [];
+    const isRole = labels.includes("circleplus-role") || labels.includes("role");
+    return {
+      tool: "nestr_update_nest",
+      params: {
+        nestId,
+        purpose: isRole
+          ? "<purpose statement: why this role exists and the future state it works towards>"
+          : "<purpose statement: the north star every role and project here traces back to>",
+      },
+    };
+  },
 };
 
 /**
@@ -2802,7 +2819,7 @@ async function _handleToolCall(
             const entries = await loadArticleIndex();
             const hits = searchArticleIndex(entries, parsed.search, 8);
             if (hits.length === 0) {
-              return { content: [{ type: "text", text: `_Resolved as: help-article search._\n\nNo help articles matched "${parsed.search}". Try broader terms or a synonym, or call nestr_help({ topic: "topics" }) for internal MCP topics.` }] };
+              return { content: [{ type: "text", text: `_Resolved as: help-article search._\n\nNo help articles matched "${parsed.search}". The index scores article slugs and curated keywords, not article bodies, so an exact feature, operator or field name often misses even when the docs cover it. Try broader terms or a synonym, or call nestr_help({ topic: "topics" }) for internal MCP topics. An empty result is not evidence the thing does not exist: say you could not find it documented, never that it is unsupported.` }] };
             }
             // Enrich the top hits with a title + one-line summary so the caller
             // can pick the right article without a blind fetch. Best-effort:
