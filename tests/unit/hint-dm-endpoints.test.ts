@@ -49,3 +49,26 @@ describe("DM hint endpoints translate to tool calls", () => {
     expect(container?.tool).toBe("nestr_get_dm");
   });
 });
+
+describe("posts responses keep their unread hint", () => {
+  it("enriches the hint on a regular nest's posts, not just a DM's", async () => {
+    const { enrichHints } = await import("../../src/tools/index.js");
+    // The shape getNestPosts actually returns: the envelope, not a bare array.
+    const enriched: any = enrichHints({
+      status: "success",
+      data: [{ _id: "p1" }],
+      hints: [
+        {
+          type: "unread_posts",
+          count: 2,
+          endpoints: [{ purpose: "Mark read", method: "POST", path: "/api/posts/p9/read" }],
+        },
+      ],
+    });
+    // endpoints[] populates toolCalls (plural); toolCall is the legacy url path.
+    expect(enriched.hints[0].toolCalls[0].tool).toBe("nestr_mark_post_read");
+    expect(enriched.hints[0].toolCalls[0].parametersExample).toEqual({ postId: "p9" });
+    // The payload must survive the envelope branch.
+    expect(enriched.data).toHaveLength(1);
+  });
+});

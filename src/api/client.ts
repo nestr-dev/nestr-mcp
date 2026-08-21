@@ -98,6 +98,18 @@ export interface Nest {
   updatedAt?: string;
 }
 
+/**
+ * What GET .../posts actually returns. The envelope is kept rather than unwrapped to
+ * `data`, because the route carries an unread_posts hint beside it (when the caller is
+ * user-scoped) and `meta` for paging, and both are the point.
+ */
+export interface PostsEnvelope {
+  status?: string;
+  data?: Post[];
+  hints?: unknown[];
+  meta?: Record<string, unknown>;
+}
+
 export interface Post {
   _id: string;
   body: string;
@@ -976,15 +988,21 @@ export class NestrClient {
 
   // ============ POSTS/COMMENTS ============
 
+
+  /**
+   * Wraps GET /nests/:id/posts. Deliberately NOT unwrapped to `data`: the route
+   * carries an unread_posts hint alongside it when the caller is user-scoped, and
+   * `meta` for paging. Unwrapping would throw both away.
+   */
   async getNestPosts(
     nestId: string,
     options?: { depth?: number | "all" }
-  ): Promise<Post[]> {
+  ): Promise<PostsEnvelope> {
     const params = new URLSearchParams();
     if (options?.depth !== undefined) params.set("depth", options.depth.toString());
 
     const query = params.toString();
-    return this.fetch<Post[]>(`/nests/${nestId}/posts${query ? `?${query}` : ""}`);
+    return this.fetch<PostsEnvelope>(`/nests/${nestId}/posts${query ? `?${query}` : ""}`);
   }
 
   async createPost(
@@ -1055,16 +1073,17 @@ export class NestrClient {
     });
   }
 
+  /** Same envelope as getNestPosts: the DM route delegates to the same handler. */
   async getDMPosts(
     containerId: string,
     threadId: string,
     options?: { unread?: boolean; depth?: number | "all" }
-  ): Promise<Post[]> {
+  ): Promise<PostsEnvelope> {
     const params = new URLSearchParams();
     if (options?.unread !== undefined) params.set("unread", String(options.unread));
     if (options?.depth !== undefined) params.set("depth", options.depth.toString());
     const query = params.toString();
-    return this.fetch<Post[]>(
+    return this.fetch<PostsEnvelope>(
       `/users/me/dm/${containerId}/threads/${threadId}/posts${query ? `?${query}` : ""}`
     );
   }

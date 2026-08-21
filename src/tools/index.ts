@@ -554,13 +554,17 @@ export function enrichHints<T>(data: T): T {
     return data.map((item) => enrichHints(item)) as T;
   }
 
-  // Handle wrapped responses { data: [...] }
-  if ("data" in data && Array.isArray((data as Record<string, unknown>).data)) {
-    return { ...data, data: enrichHints((data as Record<string, unknown>).data) } as T;
+  // Handle wrapped responses { data: [...] }. Enrich the payload, then fall through so
+  // the envelope's OWN hints are enriched too: a posts response carries unread_posts
+  // beside its data, and returning here left that hint as a bare URL.
+  let subject = data as Record<string, unknown>;
+  if ("data" in subject && Array.isArray(subject.data)) {
+    subject = { ...subject, data: enrichHints(subject.data) };
+    if (!Array.isArray(subject.hints)) return subject as T;
   }
 
   // Enrich hints on this nest
-  const record = data as Record<string, unknown>;
+  const record = subject;
   if (Array.isArray(record.hints)) {
     // Extract workspaceId from ancestors (last element is always the workspace)
     const ancestors = record.ancestors as string[] | undefined;
@@ -613,7 +617,9 @@ export function enrichHints<T>(data: T): T {
     });
   }
 
-  return data;
+  // subject, not data: the wrapped-response branch above works on a copy, so returning
+  // `data` would discard both the enriched payload and the enriched envelope hints.
+  return subject as T;
 }
 
 // Canonical web URL for a nest in the Nestr app.
@@ -1889,7 +1895,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_comments",
-    description: "Get comments and discussion history on a nest, including full nested reply threads. By default returns only comments posted directly on the given nest. Widen with depth to also include comments on descendant nests, or pass a workspace/circle nest ID with depth='all' to gather large sets of communication for analysis.",
+    description: "Get comments and discussion history on a nest, including full nested reply threads. By default returns only comments posted directly on the given nest. Widen with depth to also include comments on descendant nests, or pass a workspace/circle nest ID with depth='all' to gather large sets of communication for analysis. Carries an unread_posts hint when you have not read everything; nestr_mark_post_read acknowledges up to a given post, on any nest, not just direct messages.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3374,7 +3380,10 @@ async function _handleToolCall(
         const comments = await client.getNestPosts(parsed.nestId, {
           depth: parsed.depth,
         });
-        return formatResult(comments);
+        // enrichHints turns the unread_posts hint's endpoint into a nestr_mark_post_read
+        // call. Without it the hint still arrives, but as a raw URL the model has to
+        // recognise and hand-assemble.
+        return formatResult(enrichHints(comments));
       }
 
       case "nestr_get_circle": {
@@ -3544,7 +3553,7 @@ async function _handleToolCall(
           unread: parsed.unread,
           depth: parsed.depth,
         });
-        return formatResult({ posts: result });
+        return formatResult(enrichHints(result));
       }
 
       case "nestr_post_dm_message": {
