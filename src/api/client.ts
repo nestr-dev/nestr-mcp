@@ -1002,6 +1002,97 @@ export class NestrClient {
     });
   }
 
+  // ============ DIRECT MESSAGES ============
+  //
+  // A container (one per pair of participants) holds threads, each holding posts. Posts
+  // and read markers are the ordinary Nestr ones: the DM routes delegate to the shared
+  // posts handler server-side, so grants, depth and nesting behave the same here.
+
+  async listDMs(options?: { withUser?: string }): Promise<Record<string, unknown>[]> {
+    const params = new URLSearchParams();
+    if (options?.withUser) params.set("user", options.withUser);
+    const query = params.toString();
+    return this.fetch<Record<string, unknown>[]>(`/users/me/dm${query ? `?${query}` : ""}`);
+  }
+
+  async getDM(containerId: string): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>(`/users/me/dm/${containerId}`);
+  }
+
+  async listDMThreads(
+    containerId: string,
+    options?: { unread?: boolean }
+  ): Promise<Record<string, unknown>[]> {
+    const params = new URLSearchParams();
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    const query = params.toString();
+    return this.fetch<Record<string, unknown>[]>(
+      `/users/me/dm/${containerId}/threads${query ? `?${query}` : ""}`
+    );
+  }
+
+  async getDMThread(
+    containerId: string,
+    threadId: string,
+    options?: { unread?: boolean }
+  ): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    const query = params.toString();
+    return this.fetch<Record<string, unknown>>(
+      `/users/me/dm/${containerId}/threads/${threadId}${query ? `?${query}` : ""}`
+    );
+  }
+
+  async updateDMThread(
+    containerId: string,
+    threadId: string,
+    body: { title?: string; addUsers?: string[]; removeUsers?: string[] }
+  ): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>(`/users/me/dm/${containerId}/threads/${threadId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async getDMPosts(
+    containerId: string,
+    threadId: string,
+    options?: { unread?: boolean; depth?: number | "all" }
+  ): Promise<Post[]> {
+    const params = new URLSearchParams();
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    if (options?.depth !== undefined) params.set("depth", options.depth.toString());
+    const query = params.toString();
+    return this.fetch<Post[]>(
+      `/users/me/dm/${containerId}/threads/${threadId}/posts${query ? `?${query}` : ""}`
+    );
+  }
+
+  async createDMPost(containerId: string, threadId: string, body: string): Promise<Post> {
+    return this.fetch<Post>(`/users/me/dm/${containerId}/threads/${threadId}/posts`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    });
+  }
+
+  // The read marker lives on the post's context nest and never moves backwards, so this
+  // is safe to call out of order and works for any post, not only a DM.
+  async markPostRead(postId: string): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>(`/posts/${postId}/read`, { method: "POST" });
+  }
+
+  async escalateDMThread(
+    containerId: string,
+    threadId: string,
+    reason?: string
+  ): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>(
+      `/users/me/dm/${containerId}/threads/${threadId}/escalate`,
+      { method: "POST", body: JSON.stringify(reason ? { reason } : {}) }
+    );
+  }
+
   // ============ CIRCLES & ROLES ============
 
   async listCircles(

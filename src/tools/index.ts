@@ -147,6 +147,55 @@ const HINT_URL_PATTERNS: Array<{
     tool: "nestr_search",
     params: (m, sp) => ({ workspaceId: m[1], query: sp.get("search") || "" }),
   },
+  // Direct-message hints. The unread hints on a container and a thread each carry the
+  // endpoint that answers them, so these turn "3 threads you have not read" into the one
+  // call that lists them rather than a URL the model has to hand-assemble.
+  // /users/me/dm/{c}/threads/{t}/posts → nestr_get_dm_posts (before the thread pattern)
+  {
+    pattern: /^\/users\/me\/dm\/([^/]+)\/threads\/([^/]+)\/posts$/,
+    tool: "nestr_get_dm_posts",
+    params: (m, sp) => {
+      const result: Record<string, string> = { containerId: m[1], threadId: m[2] };
+      const unread = sp.get("unread");
+      if (unread) result.unread = unread;
+      return result;
+    },
+  },
+  // /users/me/dm/{c}/threads/{t} → nestr_get_dm_thread
+  {
+    pattern: /^\/users\/me\/dm\/([^/]+)\/threads\/([^/]+)$/,
+    tool: "nestr_get_dm_thread",
+    params: (m, sp) => {
+      const result: Record<string, string> = { containerId: m[1], threadId: m[2] };
+      const unread = sp.get("unread");
+      if (unread) result.unread = unread;
+      return result;
+    },
+  },
+  // /users/me/dm/{c}/threads → nestr_list_dm_threads
+  {
+    pattern: /^\/users\/me\/dm\/([^/]+)\/threads$/,
+    tool: "nestr_list_dm_threads",
+    params: (m, sp) => {
+      const result: Record<string, string> = { containerId: m[1] };
+      const unread = sp.get("unread");
+      if (unread) result.unread = unread;
+      return result;
+    },
+  },
+  // /users/me/dm/{c} → nestr_get_dm (after the deeper patterns above)
+  {
+    pattern: /^\/users\/me\/dm\/([^/]+)$/,
+    tool: "nestr_get_dm",
+    params: (m) => ({ containerId: m[1] }),
+  },
+  // /posts/{id}/read → nestr_mark_post_read. Carried by the unread_posts hint that
+  // nests/{id}/posts returns, so acknowledging what you just read is one call.
+  {
+    pattern: /^\/posts\/([^/]+)\/read$/,
+    tool: "nestr_mark_post_read",
+    params: (m) => ({ postId: m[1] }),
+  },
   // /nests/{id}/posts → nestr_get_comments
   { pattern: /^\/nests\/([^/]+)\/posts$/, tool: "nestr_get_comments", params: (m) => ({ nestId: m[1] }) },
   // /nests/{id}/files → nestr_get_nest_files
@@ -264,9 +313,87 @@ interface EndpointToolMapping {
   bodyParams: ReadonlySet<string>;
   /** Fixed args added to parametersExample (e.g. { removeNest: true }). */
   extraParams?: Record<string, unknown>;
+  /**
+   * Query-string params the tool accepts. A hint endpoint may carry a query (the unread
+   * hints do: `.../threads?unread=true`), and without this the value would be dropped and
+   * the suggested call would fetch everything instead of the thing the hint pointed at.
+   */
+  queryParams?: ReadonlySet<string>;
 }
 
 const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
+  // Direct messages. The unread hints on a container and a thread each carry the endpoint
+  // that answers them, so these turn "3 threads you have not read" into the one call that
+  // lists them. Deeper routes first: the patterns are tried in order.
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/threads\/([^/]+)\/posts\/?$/,
+    tool: "nestr_get_dm_posts",
+    pathParamNames: ["containerId", "threadId"],
+    bodyParams: new Set([]),
+    queryParams: new Set(["unread", "depth"]),
+  },
+  {
+    method: "POST",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/threads\/([^/]+)\/posts\/?$/,
+    tool: "nestr_post_dm_message",
+    pathParamNames: ["containerId", "threadId"],
+    bodyParams: new Set(["body"]),
+  },
+  {
+    method: "POST",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/threads\/([^/]+)\/escalate\/?$/,
+    tool: "nestr_escalate_to_support",
+    pathParamNames: ["containerId", "threadId"],
+    bodyParams: new Set(["reason"]),
+  },
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/threads\/([^/]+)\/?$/,
+    tool: "nestr_get_dm_thread",
+    pathParamNames: ["containerId", "threadId"],
+    bodyParams: new Set([]),
+    queryParams: new Set(["unread"]),
+  },
+  {
+    method: "PATCH",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/threads\/([^/]+)\/?$/,
+    tool: "nestr_update_dm_thread",
+    pathParamNames: ["containerId", "threadId"],
+    bodyParams: new Set(["title", "addUsers", "removeUsers"]),
+  },
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/threads\/?$/,
+    tool: "nestr_list_dm_threads",
+    pathParamNames: ["containerId"],
+    bodyParams: new Set([]),
+    queryParams: new Set(["unread"]),
+  },
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/?$/,
+    tool: "nestr_get_dm",
+    pathParamNames: ["containerId"],
+    bodyParams: new Set([]),
+  },
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/dm\/?$/,
+    tool: "nestr_list_dms",
+    pathParamNames: [],
+    bodyParams: new Set([]),
+    queryParams: new Set(["user"]),
+  },
+  // Carried by the unread_posts hint on nests/{id}/posts, so acknowledging what you just
+  // read is one call. Works for any post, not only a DM.
+  {
+    method: "POST",
+    pattern: /^\/posts\/([^/]+)\/read\/?$/,
+    tool: "nestr_mark_post_read",
+    pathParamNames: ["postId"],
+    bodyParams: new Set([]),
+  },
   {
     method: "POST",
     pattern: /^\/nests\/?$/,
@@ -326,10 +453,18 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
   },
 ];
 
-/** Strip optional host + /api prefix so we match against canonical routes. */
-function normalizeEndpointPath(path: string): string {
+/**
+ * Strip optional host + /api prefix so we match against canonical routes, and split the
+ * query off: the patterns describe paths, so a trailing `?unread=true` would stop every
+ * one of them matching.
+ */
+function normalizeEndpointPath(path: string): { path: string; search: URLSearchParams } {
   const hostStripped = path.replace(/^https?:\/\/[^/]+/, "");
-  return hostStripped.replace(/^\/api(?=\/)/, "");
+  const [rawPath, queryString] = hostStripped.split("?");
+  return {
+    path: rawPath.replace(/^\/api(?=\/)/, ""),
+    search: new URLSearchParams(queryString || ""),
+  };
 }
 
 /**
@@ -340,7 +475,7 @@ export function translateEndpoint(endpoint: ApiHintEndpoint): EnrichedToolCall |
   if (!endpoint || typeof endpoint !== "object") return null;
   const method = (endpoint.method || "").toUpperCase();
   if (!method) return null;
-  const path = normalizeEndpointPath(endpoint.path || "");
+  const { path, search } = normalizeEndpointPath(endpoint.path || "");
 
   for (const mapping of HINT_ENDPOINT_TOOL_MAPPINGS) {
     if (mapping.method !== method) continue;
@@ -351,6 +486,18 @@ export function translateEndpoint(endpoint: ApiHintEndpoint): EnrichedToolCall |
     mapping.pathParamNames.forEach((name, i) => {
       parametersExample[name] = match[i + 1];
     });
+    // "true"/"false" become booleans: every tool that takes one of these declares it as a
+    // boolean, and a string would fail schema validation on the suggested call.
+    if (mapping.queryParams) {
+      for (const [key, value] of search.entries()) {
+        if (!mapping.queryParams.has(key)) continue;
+        if (value === "true" || value === "false") {
+          parametersExample[key] = value === "true";
+        } else {
+          parametersExample[key] = value;
+        }
+      }
+    }
     if (mapping.extraParams) Object.assign(parametersExample, mapping.extraParams);
 
     const droppedFields: string[] = [];
@@ -564,6 +711,56 @@ export const schemas = {
     sort: z.string().optional().describe(SORT_DESCRIPTION),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number (1-indexed) for pagination"),
+  }),
+
+  listDMs: z.object({
+    withUser: z.string().optional().describe("Only the container shared with this user id. Use 'nestr_support' for the Nestradamus conversation."),
+  }),
+
+  getDM: z.object({
+    containerId: z.string().describe("DM container id"),
+  }),
+
+  listDMThreads: z.object({
+    containerId: z.string().describe("DM container id"),
+    unread: z.boolean().optional().describe("true returns only threads with posts you have not read"),
+  }),
+
+  getDMThread: z.object({
+    containerId: z.string().describe("DM container id"),
+    threadId: z.string().describe("Thread id"),
+    unread: z.boolean().optional().describe("true embeds the posts you have not read, false the ones you have. Omit for the thread alone."),
+  }),
+
+  updateDMThread: z.object({
+    containerId: z.string().describe("DM container id"),
+    threadId: z.string().describe("Thread id"),
+    title: z.string().optional().describe("New thread title"),
+    addUsers: z.array(z.string()).optional().describe("User ids to invite. You must share a workspace with them; they will see the whole thread."),
+    removeUsers: z.array(z.string()).optional().describe("User ids to remove. Pass your own id to leave. The bot and the thread owner cannot be removed."),
+  }),
+
+  getDMPosts: z.object({
+    containerId: z.string().describe("DM container id"),
+    threadId: z.string().describe("Thread id"),
+    unread: z.boolean().optional().describe("true for posts you have not read, false for the ones you have. Omit for all."),
+    depth: z.union([z.number(), z.literal("all")]).optional().describe("Include posts on descendant nests"),
+  }),
+
+  createDMPost: z.object({
+    containerId: z.string().describe("DM container id"),
+    threadId: z.string().describe("Thread id"),
+    body: z.string().describe("Message text. Supports HTML and Markdown."),
+  }),
+
+  markPostRead: z.object({
+    postId: z.string().describe("Post to mark read up to. Everything up to and including it becomes read."),
+  }),
+
+  escalateToSupport: z.object({
+    containerId: z.string().describe("DM container id for the Nestradamus conversation"),
+    threadId: z.string().describe("Thread id to escalate"),
+    reason: z.string().describe("One or two sentences for whoever picks this up: what is needed and what has been tried."),
   }),
 
   getWorkspace: z.object({
@@ -1488,6 +1685,130 @@ export const toolDefinitions = [
       required: ["workspaceId"],
     },
     ...readOnly,
+  },
+  // ---- Direct messages ----
+  // A container (one per pair of participants) holds threads, each holding posts. Start
+  // from nestr_list_dms with withUser to turn a person into a container id.
+  {
+    name: "nestr_list_dms",
+    description: "List your direct-message containers, most recently posted first. Pass withUser to find the one shared with a specific person; withUser:'nestr_support' finds your Nestradamus conversation.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        withUser: { type: "string", description: "Only the container shared with this user id" },
+      },
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_get_dm",
+    description: "Get a direct-message container as a nest, with hints. The unread_threads hint tells you whether anything has moved since you last looked, and its threads live one level down (nestr_list_dm_threads).",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        containerId: { type: "string", description: "DM container id" },
+      },
+      required: ["containerId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_list_dm_threads",
+    description: "List the threads in a direct-message container, most recently posted first. Pass unread:true to get only the ones with posts you have not read.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        containerId: { type: "string", description: "DM container id" },
+        unread: { type: "boolean", description: "Only threads with posts you have not read" },
+      },
+      required: ["containerId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_get_dm_thread",
+    description: "Get a direct-message thread as a nest, with hints. Pass unread:true to embed the posts you have not read in the same call, which is usually what you want when picking a thread back up.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        containerId: { type: "string", description: "DM container id" },
+        threadId: { type: "string", description: "Thread id" },
+        unread: { type: "boolean", description: "true embeds unread posts, false embeds read ones" },
+      },
+      required: ["containerId", "threadId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_update_dm_thread",
+    description: "Rename a direct-message thread, or invite and remove people. Inviting shows them the whole thread, and you must share a workspace with them. Pass your own id in removeUsers to leave; the bot and the thread owner cannot be removed.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        containerId: { type: "string", description: "DM container id" },
+        threadId: { type: "string", description: "Thread id" },
+        title: { type: "string", description: "New thread title" },
+        addUsers: { type: "array", items: { type: "string" }, description: "User ids to invite" },
+        removeUsers: { type: "array", items: { type: "string" }, description: "User ids to remove" },
+      },
+      required: ["containerId", "threadId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_get_dm_posts",
+    description: "Read the posts in a direct-message thread, oldest first, each with its nested replies. Pass unread:true for just what is new, false for the rest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        containerId: { type: "string", description: "DM container id" },
+        threadId: { type: "string", description: "Thread id" },
+        unread: { type: "boolean", description: "true for unread posts, false for read ones. Omit for all." },
+        depth: { type: ["number", "string"], description: "Include posts on descendant nests, or 'all'" },
+      },
+      required: ["containerId", "threadId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_post_dm_message",
+    description: "Post a message into a direct-message thread.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        containerId: { type: "string", description: "DM container id" },
+        threadId: { type: "string", description: "Thread id" },
+        body: { type: "string", description: "Message text. Supports HTML and Markdown." },
+      },
+      required: ["containerId", "threadId", "body"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_mark_post_read",
+    description: "Mark a conversation read up to and including this post. Works for any post, not only direct messages. The marker never moves backwards, so calling it on an older post is harmless.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        postId: { type: "string", description: "Post to mark read up to" },
+      },
+      required: ["postId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_escalate_to_support",
+    description: "Bring a human from Nestr support into a Nestradamus conversation. Use it when the person asks for a human, when you have answered the wrong question more than once, or when something needs Nestr staff to look at their account. Find the conversation with nestr_list_dms({withUser:'nestr_support'}). Safe to call twice; a thread already waiting stays as it is. Only works on a conversation Nestradamus is in.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        containerId: { type: "string", description: "DM container id for the Nestradamus conversation" },
+        threadId: { type: "string", description: "Thread id to escalate" },
+        reason: { type: "string", description: "One or two sentences for whoever picks this up: what is needed and what has been tried. They can read the thread, so do not summarise it." },
+      },
+      required: ["containerId", "threadId", "reason"],
+    },
+    ...mutating,
   },
   {
     name: "nestr_get_insights",
@@ -3175,6 +3496,83 @@ async function _handleToolCall(
           icon: parsed.icon,
         });
         return formatResult({ message: "Personal label created successfully", label });
+      }
+
+      // Direct messages
+      case "nestr_list_dms": {
+        const parsed = schemas.listDMs.parse(args);
+        const result = await client.listDMs({ withUser: parsed.withUser });
+        return formatResult({ containers: result });
+      }
+
+      case "nestr_get_dm": {
+        const parsed = schemas.getDM.parse(args);
+        const result = await client.getDM(parsed.containerId);
+        return formatResult(enrichHints(result));
+      }
+
+      case "nestr_list_dm_threads": {
+        const parsed = schemas.listDMThreads.parse(args);
+        const result = await client.listDMThreads(parsed.containerId, { unread: parsed.unread });
+        return formatResult({ threads: result });
+      }
+
+      case "nestr_get_dm_thread": {
+        const parsed = schemas.getDMThread.parse(args);
+        const result = await client.getDMThread(parsed.containerId, parsed.threadId, {
+          unread: parsed.unread,
+        });
+        return formatResult(enrichHints(result));
+      }
+
+      case "nestr_update_dm_thread": {
+        const parsed = schemas.updateDMThread.parse(args);
+        if (parsed.title === undefined && !parsed.addUsers?.length && !parsed.removeUsers?.length) {
+          throw new Error("Pass at least one of title, addUsers or removeUsers.");
+        }
+        const result = await client.updateDMThread(parsed.containerId, parsed.threadId, {
+          ...(parsed.title !== undefined ? { title: parsed.title } : {}),
+          ...(parsed.addUsers ? { addUsers: parsed.addUsers } : {}),
+          ...(parsed.removeUsers ? { removeUsers: parsed.removeUsers } : {}),
+        });
+        return formatResult({ message: "Thread updated", thread: result });
+      }
+
+      case "nestr_get_dm_posts": {
+        const parsed = schemas.getDMPosts.parse(args);
+        const result = await client.getDMPosts(parsed.containerId, parsed.threadId, {
+          unread: parsed.unread,
+          depth: parsed.depth,
+        });
+        return formatResult({ posts: result });
+      }
+
+      case "nestr_post_dm_message": {
+        const parsed = schemas.createDMPost.parse(args);
+        const result = await client.createDMPost(parsed.containerId, parsed.threadId, parsed.body);
+        return formatResult({ message: "Message posted", post: result });
+      }
+
+      case "nestr_mark_post_read": {
+        const parsed = schemas.markPostRead.parse(args);
+        const result = await client.markPostRead(parsed.postId);
+        return formatResult({ message: "Marked read", read: result });
+      }
+
+      case "nestr_escalate_to_support": {
+        const parsed = schemas.escalateToSupport.parse(args);
+        const result = await client.escalateDMThread(
+          parsed.containerId,
+          parsed.threadId,
+          parsed.reason
+        );
+        const already = (result as { alreadyQueued?: boolean }).alreadyQueued;
+        return formatResult({
+          message: already
+            ? "Already with a human; nothing more to do."
+            : "A human has been brought in. Tell them so, and keep helping in the meantime.",
+          escalation: result,
+        });
       }
 
       // Reorder tools
