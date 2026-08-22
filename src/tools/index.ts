@@ -722,6 +722,7 @@ export const schemas = {
   listDMs: z.object({
     withUser: z.string().optional().describe("Only threads with this person: their user id, username or email. Use 'nestr_support' for your Nestradamus conversation. Errors if you cannot message them."),
     unread: z.boolean().optional().describe("true returns only threads with messages you have not read"),
+    includeCompleted: z.boolean().optional().describe("true also returns closed conversations. They are left out by default."),
     limit: z.number().optional().describe("Threads per page (default 50, max 200)"),
     page: z.number().optional().describe("Page number, 1-based"),
   }),
@@ -746,6 +747,7 @@ export const schemas = {
   updateDMThread: z.object({
     threadId: z.string().describe("Thread id"),
     title: z.string().optional().describe("New thread title"),
+    completed: z.boolean().nullable().optional().describe("true closes the conversation, null reopens it. A closed one drops out of nestr_list_dms unless includeCompleted is set, and stays readable and postable by id. Repeating a state changes nothing."),
     addUsers: z.array(z.string()).optional().describe("User ids to invite. You must share a workspace with them; they will see the whole thread."),
     removeUsers: z.array(z.string()).optional().describe("User ids to remove. Pass your own id to leave. The bot and the thread owner cannot be removed."),
   }),
@@ -1699,12 +1701,13 @@ export const toolDefinitions = [
   // first: start from nestr_list_dms, optionally narrowed to one person with withUser.
   {
     name: "nestr_list_dms",
-    description: "List your direct-message threads, most recently posted first. Pass withUser to see only the ones with a particular person; withUser:'nestr_support' is your Nestradamus conversation. Each thread carries participants, so a flat list still tells you who you are talking to.",
+    description: "List your open direct-message threads, most recently posted first. Closed ones are left out unless includeCompleted is set. Pass withUser to see only the ones with a particular person; withUser:'nestr_support' is your Nestradamus conversation. Each thread carries participants, so a flat list still tells you who you are talking to.",
     inputSchema: {
       type: "object" as const,
       properties: {
         withUser: { type: "string", description: "Only threads with this person: user id, username or email" },
         unread: { type: "boolean", description: "Only threads with messages you have not read" },
+        includeCompleted: { type: "boolean", description: "Also return closed conversations (left out by default)" },
         limit: { type: "number", description: "Threads per page (default 50, max 200)" },
         page: { type: "number", description: "Page number, 1-based" },
       },
@@ -1762,12 +1765,13 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_dm_thread",
-    description: "Rename a direct-message thread, or invite and remove people. Inviting shows them the whole thread, and you must share a workspace with them. Pass your own id in removeUsers to leave; the bot and the thread owner cannot be removed.",
+    description: "Rename a direct-message thread, close or reopen it, or invite and remove people. completed:true closes a conversation once it is dealt with, which takes it out of nestr_list_dms without losing it; completed:null reopens. Inviting shows them the whole thread, and you must share a workspace with them. Pass your own id in removeUsers to leave; the bot and the thread owner cannot be removed.",
     inputSchema: {
       type: "object" as const,
       properties: {
         threadId: { type: "string", description: "Thread id" },
         title: { type: "string", description: "New thread title" },
+        completed: { type: ["boolean", "null"], description: "true closes the conversation, null reopens it" },
         addUsers: { type: "array", items: { type: "string" }, description: "User ids to invite" },
         removeUsers: { type: "array", items: { type: "string" }, description: "User ids to remove" },
       },
@@ -3529,6 +3533,7 @@ async function _handleToolCall(
         const result = await client.listDMs({
           withUser: parsed.withUser,
           unread: parsed.unread,
+          includeCompleted: parsed.includeCompleted,
           limit: parsed.limit,
           page: parsed.page,
         });
@@ -3561,15 +3566,30 @@ async function _handleToolCall(
 
       case "nestr_update_dm_thread": {
         const parsed = schemas.updateDMThread.parse(args);
-        if (parsed.title === undefined && !parsed.addUsers?.length && !parsed.removeUsers?.length) {
-          throw new Error("Pass at least one of title, addUsers or removeUsers.");
+        // `completed` is meaningful as null, so presence is the test rather than truth.
+        const setsCompleted = args !== null
+          && typeof args === "object"
+          && Object.prototype.hasOwnProperty.call(args, "completed");
+        if (
+          parsed.title === undefined
+          && !setsCompleted
+          && !parsed.addUsers?.length
+          && !parsed.removeUsers?.length
+        ) {
+          throw new Error("Pass at least one of title, completed, addUsers or removeUsers.");
         }
         const result = await client.updateDMThread(parsed.threadId, {
           ...(parsed.title !== undefined ? { title: parsed.title } : {}),
+          ...(setsCompleted ? { completed: parsed.completed ?? null } : {}),
           ...(parsed.addUsers ? { addUsers: parsed.addUsers } : {}),
           ...(parsed.removeUsers ? { removeUsers: parsed.removeUsers } : {}),
         });
-        return formatResult({ message: "Thread updated", thread: result });
+        return formatResult({
+          message: setsCompleted && parsed.completed
+            ? "Conversation closed"
+            : "Thread updated",
+          thread: result,
+        });
       }
 
       case "nestr_get_dm_posts": {
