@@ -364,7 +364,7 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     pattern: /^\/users\/me\/dm\/([^/]+)\/?$/,
     tool: "nestr_update_dm_thread",
     pathParamNames: ["threadId"],
-    bodyParams: new Set(["title", "addUsers", "removeUsers"]),
+    bodyParams: new Set(["title", "completed", "users"]),
   },
   {
     method: "POST",
@@ -748,8 +748,7 @@ export const schemas = {
     threadId: z.string().describe("Thread id"),
     title: z.string().optional().describe("New thread title"),
     completed: z.boolean().nullable().optional().describe("true closes the conversation, null reopens it. A closed one drops out of nestr_list_dms unless includeCompleted is set, and stays readable and postable by id. Repeating a state changes nothing."),
-    addUsers: z.array(z.string()).optional().describe("User ids to invite. You must share a workspace with them; they will see the whole thread."),
-    removeUsers: z.array(z.string()).optional().describe("User ids to remove. Pass your own id to leave. The bot and the thread owner cannot be removed."),
+    users: z.array(z.string()).optional().describe("The participant list you want, replacing the current one — read it from nestr_get_dm_thread first. Anyone you add sees the whole thread and must be someone you share a workspace with; the bot and the person who raised the thread cannot be removed. Leave a conversation by sending the list without yourself."),
   }),
 
   getDMPosts: z.object({
@@ -1765,15 +1764,14 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_dm_thread",
-    description: "Rename a direct-message thread, close or reopen it, or invite and remove people. completed:true closes a conversation once it is dealt with, which takes it out of nestr_list_dms without losing it; completed:null reopens. Inviting shows them the whole thread, and you must share a workspace with them. Pass your own id in removeUsers to leave; the bot and the thread owner cannot be removed.",
+    description: "Update a direct-message thread: rename it, close or reopen it, or change who is in it. Send only the keys you want changed, as with nestr_update_nest. completed:true closes a conversation once it is dealt with, which takes it out of nestr_list_dms without losing it; completed:null reopens. `users` is the participant list you want, so read the thread first and send the list with someone added or removed; the bot and the person who raised the thread cannot be removed. Answers with the updated thread.",
     inputSchema: {
       type: "object" as const,
       properties: {
         threadId: { type: "string", description: "Thread id" },
         title: { type: "string", description: "New thread title" },
         completed: { type: ["boolean", "null"], description: "true closes the conversation, null reopens it" },
-        addUsers: { type: "array", items: { type: "string" }, description: "User ids to invite" },
-        removeUsers: { type: "array", items: { type: "string" }, description: "User ids to remove" },
+        users: { type: "array", items: { type: "string" }, description: "The participant list you want, replacing the current one" },
       },
       required: ["threadId"],
     },
@@ -3570,19 +3568,13 @@ async function _handleToolCall(
         const setsCompleted = args !== null
           && typeof args === "object"
           && Object.prototype.hasOwnProperty.call(args, "completed");
-        if (
-          parsed.title === undefined
-          && !setsCompleted
-          && !parsed.addUsers?.length
-          && !parsed.removeUsers?.length
-        ) {
-          throw new Error("Pass at least one of title, completed, addUsers or removeUsers.");
+        if (parsed.title === undefined && !setsCompleted && parsed.users === undefined) {
+          throw new Error("Pass at least one of title, completed or users.");
         }
         const result = await client.updateDMThread(parsed.threadId, {
           ...(parsed.title !== undefined ? { title: parsed.title } : {}),
           ...(setsCompleted ? { completed: parsed.completed ?? null } : {}),
-          ...(parsed.addUsers ? { addUsers: parsed.addUsers } : {}),
-          ...(parsed.removeUsers ? { removeUsers: parsed.removeUsers } : {}),
+          ...(parsed.users !== undefined ? { users: parsed.users } : {}),
         });
         return formatResult({
           message: setsCompleted && parsed.completed
