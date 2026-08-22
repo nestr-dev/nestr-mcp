@@ -1029,11 +1029,18 @@ export class NestrClient {
   // shared posts handler server-side, so grants, depth and nesting behave the same here.
 
   async listDMs(
-    options?: { withUser?: string; unread?: boolean; limit?: number; page?: number }
+    options?: {
+      withUser?: string;
+      unread?: boolean;
+      includeCompleted?: boolean;
+      limit?: number;
+      page?: number;
+    }
   ): Promise<Record<string, unknown>[]> {
     const params = new URLSearchParams();
     if (options?.withUser) params.set("user", options.withUser);
     if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    if (options?.includeCompleted) params.set("includeCompleted", "true");
     if (options?.limit !== undefined) params.set("limit", String(options.limit));
     if (options?.page !== undefined) params.set("page", String(options.page));
     const query = params.toString();
@@ -1083,7 +1090,14 @@ export class NestrClient {
 
   async updateDMThread(
     threadId: string,
-    body: { title?: string; addUsers?: string[]; removeUsers?: string[] }
+    body: {
+      title?: string;
+      // null reopens a closed conversation, true closes one. Absent leaves it alone,
+      // which is why the caller passes the key through rather than a boolean.
+      completed?: boolean | null;
+      addUsers?: string[];
+      removeUsers?: string[];
+    }
   ): Promise<Record<string, unknown>> {
     return this.fetch<Record<string, unknown>>(`/users/me/dm/${threadId}`, {
       method: "PATCH",
