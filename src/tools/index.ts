@@ -1700,7 +1700,7 @@ export const toolDefinitions = [
   // first: start from nestr_list_dms, optionally narrowed to one person with withUser.
   {
     name: "nestr_list_dms",
-    description: "List your open direct-message threads, most recently posted first. Closed ones are left out unless includeCompleted is set. Pass withUser to see only the ones with a particular person; withUser:'nestr_support' is your Nestradamus conversation. Each thread carries participants, so a flat list still tells you who you are talking to.",
+    description: "List your open direct-message threads, most recently posted first. Closed ones are left out unless includeCompleted is set. Pass withUser to see only the ones with a particular person; withUser:'nestr_support' is your Nestradamus conversation. Each thread carries users, everyone in it including you, so a flat list still tells you who you are talking to — and it is the list nestr_update_dm_thread takes back.",
     inputSchema: {
       type: "object" as const,
       properties: {
