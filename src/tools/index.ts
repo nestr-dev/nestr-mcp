@@ -1949,7 +1949,11 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_workspace_user",
-    description: "Add a user to a workspace by email. Creates account if needed.",
+    description:
+      "Add a user to a workspace by email. Creates the account if it does not exist, adds them, "
+      + "and SENDS THEM AN INVITE EMAIL, so confirm with the person asking before you call it: a real "
+      + "person receives that mail. This is the action behind requests about seats, membership, "
+      + "extending a plan by a person, or getting a colleague in.",
     inputSchema: {
       type: "object" as const,
       properties: {
