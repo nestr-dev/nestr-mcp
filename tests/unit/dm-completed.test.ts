@@ -15,6 +15,14 @@ describe("closing a conversation through the tools", () => {
     expect(() => schemas.updateDMThread.parse({ threadId: "t1", completed: "yes" })).toThrow();
   });
 
+  it("takes the participant list as a nest does, not an add/remove pair", () => {
+    // A DM thread is a nest, so it takes the nest's vocabulary: `users` is the list you
+    // want. addUsers/removeUsers were a second way to say the same thing.
+    expect(schemas.updateDMThread.parse({ threadId: "t1", users: ["u1", "u2"] }).users)
+      .toEqual(["u1", "u2"]);
+    expect(schemas.updateDMThread.parse({ threadId: "t1", title: "x" }).users).toBe(undefined);
+  });
+
   it("takes includeCompleted on the listing, and leaves it off by default", () => {
     expect(schemas.listDMs.parse({ includeCompleted: true }).includeCompleted).toBe(true);
     expect(schemas.listDMs.parse({}).includeCompleted).toBe(undefined);

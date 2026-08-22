@@ -1088,6 +1088,9 @@ export class NestrClient {
     );
   }
 
+  // The body is a partial nest, the same shape PATCH /nests/{id} takes: the keys you send
+  // are the ones that change, and `users` is the participant list you want rather than a
+  // pair of add/remove lists. A DM thread is a nest, so it needs no second vocabulary.
   async updateDMThread(
     threadId: string,
     body: {
@@ -1095,8 +1098,7 @@ export class NestrClient {
       // null reopens a closed conversation, true closes one. Absent leaves it alone,
       // which is why the caller passes the key through rather than a boolean.
       completed?: boolean | null;
-      addUsers?: string[];
-      removeUsers?: string[];
+      users?: string[];
     }
   ): Promise<Record<string, unknown>> {
     return this.fetch<Record<string, unknown>>(`/users/me/dm/${threadId}`, {
