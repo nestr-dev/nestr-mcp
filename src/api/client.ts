@@ -996,10 +996,11 @@ export class NestrClient {
    */
   async getNestPosts(
     nestId: string,
-    options?: { depth?: number | "all" }
+    options?: { depth?: number | "all"; unread?: boolean }
   ): Promise<PostsEnvelope> {
     const params = new URLSearchParams();
     if (options?.depth !== undefined) params.set("depth", options.depth.toString());
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
 
     const query = params.toString();
     return this.fetch<PostsEnvelope>(`/nests/${nestId}/posts${query ? `?${query}` : ""}`);
@@ -1026,11 +1027,36 @@ export class NestrClient {
   // and read markers are the ordinary Nestr ones: the DM routes delegate to the shared
   // posts handler server-side, so grants, depth and nesting behave the same here.
 
-  async listDMs(options?: { withUser?: string }): Promise<Record<string, unknown>[]> {
+  async listDMs(
+    options?: { withUser?: string; unread?: boolean }
+  ): Promise<Record<string, unknown>[]> {
     const params = new URLSearchParams();
     if (options?.withUser) params.set("user", options.withUser);
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
     const query = params.toString();
     return this.fetch<Record<string, unknown>[]>(`/users/me/dm${query ? `?${query}` : ""}`);
+  }
+
+  // ============ SUPPORT QUEUES ============
+  //
+  // A queue is a label on threads across many DM containers, not a container itself, so
+  // these are a sibling of the DM routes. Each thread comes back with its own
+  // containerId, which is how a caller crosses into the DM tree to read its posts.
+
+  async listQueues(): Promise<Record<string, unknown>[]> {
+    return this.fetch<Record<string, unknown>[]>("/users/me/queues");
+  }
+
+  async listQueueThreads(
+    key: string,
+    options?: { unread?: boolean }
+  ): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    const query = params.toString();
+    return this.fetch<Record<string, unknown>>(
+      `/users/me/queues/${encodeURIComponent(key)}/threads${query ? `?${query}` : ""}`
+    );
   }
 
   async getDM(containerId: string): Promise<Record<string, unknown>> {

@@ -330,6 +330,22 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
   // Direct messages. The unread hints on a container and a thread each carry the endpoint
   // that answers them, so these turn "3 threads you have not read" into the one call that
   // lists them. Deeper routes first: the patterns are tried in order.
+  // Support queues. Sibling of the DM routes, so these sit alongside them.
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/queues\/([^/]+)\/threads\/?$/,
+    tool: "nestr_list_queue_threads",
+    pathParamNames: ["key"],
+    bodyParams: new Set([]),
+    queryParams: { unread: "unread" },
+  },
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/queues\/?$/,
+    tool: "nestr_list_queues",
+    pathParamNames: [],
+    bodyParams: new Set([]),
+  },
   {
     method: "GET",
     pattern: /^\/users\/me\/dm\/([^/]+)\/threads\/([^/]+)\/posts\/?$/,
@@ -727,6 +743,14 @@ export const schemas = {
 
   listDMs: z.object({
     withUser: z.string().optional().describe("Only the container shared with this user id. Use 'nestr_support' for the Nestradamus conversation."),
+    unread: z.boolean().optional().describe("true returns only containers holding a thread you have not read"),
+  }),
+
+  listQueues: z.object({}),
+
+  listQueueThreads: z.object({
+    key: z.string().describe("Queue key, e.g. 'support'. From nestr_list_queues."),
+    unread: z.boolean().optional().describe("true returns only threads you have not read"),
   }),
 
   getDM: z.object({
@@ -939,6 +963,7 @@ export const schemas = {
   getComments: z.object({
     nestId: z.string().describe("Nest ID to get comments from. Pass a workspace ID to gather communication across the whole workspace (combine with depth='all')."),
     depth: z.union([z.number(), z.literal("all")]).optional().describe("How deep below the context nest to look for comments. 0 (default) returns only comments directly on this nest; N includes comments on descendants up to N levels deep; 'all' includes comments on this nest and every descendant. Use 'all' on a workspace or circle nest to analyse large sets of communication in one call."),
+    unread: z.boolean().optional().describe("true for comments you have not read, false for the ones you have. Omit for all."),
   }),
 
   getCircle: z.object({
@@ -1708,7 +1733,31 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         withUser: { type: "string", description: "Only the container shared with this user id" },
+        unread: { type: "boolean", description: "Only containers holding a thread you have not read" },
       },
+    },
+    ...readOnly,
+  },
+  // ---- Support queues ----
+  // A queue is a label on threads across many containers, not a container itself. Each
+  // thread comes back with its own containerId, which is how you cross into the DM tree
+  // to read it: nestr_get_dm_thread / nestr_get_dm_posts.
+  {
+    name: "nestr_list_queues",
+    description: "List the support queues you can see: the ones you monitor, plus any you have raised a thread in. Each carries `subscribed`, which decides what nestr_list_queue_threads returns for you.",
+    inputSchema: { type: "object" as const, properties: {} },
+    ...readOnly,
+  },
+  {
+    name: "nestr_list_queue_threads",
+    description: "List threads in a support queue, most recently posted first. If you subscribe to the queue you get every thread in it; otherwise you get only the ones you raised, which is how you find your own open support tickets. Pass unread:true for just what has moved. Each thread carries containerId, so read it with nestr_get_dm_thread.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        key: { type: "string", description: "Queue key, e.g. 'support'" },
+        unread: { type: "boolean", description: "Only threads you have not read" },
+      },
+      required: ["key"],
     },
     ...readOnly,
   },
@@ -3385,6 +3434,7 @@ async function _handleToolCall(
         const parsed = schemas.getComments.parse(args);
         const comments = await client.getNestPosts(parsed.nestId, {
           depth: parsed.depth,
+          unread: parsed.unread,
         });
         // enrichHints turns the unread_posts hint's endpoint into a nestr_mark_post_read
         // call. Without it the hint still arrives, but as a raw URL the model has to
@@ -3516,8 +3566,20 @@ async function _handleToolCall(
       // Direct messages
       case "nestr_list_dms": {
         const parsed = schemas.listDMs.parse(args);
-        const result = await client.listDMs({ withUser: parsed.withUser });
+        const result = await client.listDMs({ withUser: parsed.withUser, unread: parsed.unread });
         return formatResult({ containers: result });
+      }
+
+      case "nestr_list_queues": {
+        schemas.listQueues.parse(args ?? {});
+        const result = await client.listQueues();
+        return formatResult({ queues: result });
+      }
+
+      case "nestr_list_queue_threads": {
+        const parsed = schemas.listQueueThreads.parse(args);
+        const result = await client.listQueueThreads(parsed.key, { unread: parsed.unread });
+        return formatResult(enrichHints(result));
       }
 
       case "nestr_get_dm": {

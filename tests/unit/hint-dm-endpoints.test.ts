@@ -95,3 +95,21 @@ describe("legacy url hints emit typed values too", () => {
     expect(enriched.hints[0].toolCall.params).toEqual({ containerId: "c1", unread: true });
   });
 });
+
+describe("queue hint endpoints", () => {
+  it("maps a queue thread listing, keeping the unread filter", async () => {
+    const { translateEndpoint } = await import("../../src/tools/index.js");
+    const call = translateEndpoint({
+      method: "GET",
+      path: "/api/users/me/queues/support/threads?unread=true",
+    } as never);
+    expect(call?.tool).toBe("nestr_list_queue_threads");
+    expect(call?.parametersExample).toEqual({ key: "support", unread: true });
+  });
+
+  it("does not read the queue listing as a queue-threads listing", async () => {
+    const { translateEndpoint } = await import("../../src/tools/index.js");
+    const call = translateEndpoint({ method: "GET", path: "/api/users/me/queues" } as never);
+    expect(call?.tool).toBe("nestr_list_queues");
+  });
+});
