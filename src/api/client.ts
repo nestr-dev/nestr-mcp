@@ -1023,25 +1023,35 @@ export class NestrClient {
 
   // ============ DIRECT MESSAGES ============
   //
-  // A container (one per pair of participants) holds threads, each holding posts. Posts
-  // and read markers are the ordinary Nestr ones: the DM routes delegate to the shared
-  // posts handler server-side, so grants, depth and nesting behave the same here.
+  // A thread is the unit and its id is the whole address. The space that holds a pair's
+  // threads is a storage detail the API does not expose, so nothing here carries one.
+  // Posts and read markers are the ordinary Nestr ones: the DM routes delegate to the
+  // shared posts handler server-side, so grants, depth and nesting behave the same here.
 
   async listDMs(
-    options?: { withUser?: string; unread?: boolean }
+    options?: { withUser?: string; unread?: boolean; limit?: number; page?: number }
   ): Promise<Record<string, unknown>[]> {
     const params = new URLSearchParams();
     if (options?.withUser) params.set("user", options.withUser);
     if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+    if (options?.page !== undefined) params.set("page", String(options.page));
     const query = params.toString();
     return this.fetch<Record<string, unknown>[]>(`/users/me/dm${query ? `?${query}` : ""}`);
   }
 
+  async createDMThread(user: string, title?: string): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>("/users/me/dm", {
+      method: "POST",
+      body: JSON.stringify({ user, ...(title !== undefined ? { title } : {}) }),
+    });
+  }
+
   // ============ SUPPORT QUEUES ============
   //
-  // A queue is a label on threads across many DM containers, not a container itself, so
-  // these are a sibling of the DM routes. Each thread comes back with its own
-  // containerId, which is how a caller crosses into the DM tree to read its posts.
+  // A queue is a label on threads across many DM spaces, not a space itself, so these are
+  // a sibling of the DM routes. They hand back thread ids, which is the whole address on
+  // the DM routes: read one with getDMThread or getDMPosts.
 
   async listQueues(): Promise<Record<string, unknown>[]> {
     return this.fetch<Record<string, unknown>[]>("/users/me/queues");
@@ -1059,24 +1069,7 @@ export class NestrClient {
     );
   }
 
-  async getDM(containerId: string): Promise<Record<string, unknown>> {
-    return this.fetch<Record<string, unknown>>(`/users/me/dm/${containerId}`);
-  }
-
-  async listDMThreads(
-    containerId: string,
-    options?: { unread?: boolean }
-  ): Promise<Record<string, unknown>[]> {
-    const params = new URLSearchParams();
-    if (options?.unread !== undefined) params.set("unread", String(options.unread));
-    const query = params.toString();
-    return this.fetch<Record<string, unknown>[]>(
-      `/users/me/dm/${containerId}/threads${query ? `?${query}` : ""}`
-    );
-  }
-
   async getDMThread(
-    containerId: string,
     threadId: string,
     options?: { unread?: boolean }
   ): Promise<Record<string, unknown>> {
@@ -1084,16 +1077,15 @@ export class NestrClient {
     if (options?.unread !== undefined) params.set("unread", String(options.unread));
     const query = params.toString();
     return this.fetch<Record<string, unknown>>(
-      `/users/me/dm/${containerId}/threads/${threadId}${query ? `?${query}` : ""}`
+      `/users/me/dm/${threadId}${query ? `?${query}` : ""}`
     );
   }
 
   async updateDMThread(
-    containerId: string,
     threadId: string,
     body: { title?: string; addUsers?: string[]; removeUsers?: string[] }
   ): Promise<Record<string, unknown>> {
-    return this.fetch<Record<string, unknown>>(`/users/me/dm/${containerId}/threads/${threadId}`, {
+    return this.fetch<Record<string, unknown>>(`/users/me/dm/${threadId}`, {
       method: "PATCH",
       body: JSON.stringify(body),
     });
@@ -1101,7 +1093,6 @@ export class NestrClient {
 
   /** Same envelope as getNestPosts: the DM route delegates to the same handler. */
   async getDMPosts(
-    containerId: string,
     threadId: string,
     options?: { unread?: boolean; depth?: number | "all" }
   ): Promise<PostsEnvelope> {
@@ -1110,12 +1101,12 @@ export class NestrClient {
     if (options?.depth !== undefined) params.set("depth", options.depth.toString());
     const query = params.toString();
     return this.fetch<PostsEnvelope>(
-      `/users/me/dm/${containerId}/threads/${threadId}/posts${query ? `?${query}` : ""}`
+      `/users/me/dm/${threadId}/posts${query ? `?${query}` : ""}`
     );
   }
 
-  async createDMPost(containerId: string, threadId: string, body: string): Promise<Post> {
-    return this.fetch<Post>(`/users/me/dm/${containerId}/threads/${threadId}/posts`, {
+  async createDMPost(threadId: string, body: string): Promise<Post> {
+    return this.fetch<Post>(`/users/me/dm/${threadId}/posts`, {
       method: "POST",
       body: JSON.stringify({ body }),
     });
@@ -1127,15 +1118,11 @@ export class NestrClient {
     return this.fetch<Record<string, unknown>>(`/posts/${postId}/read`, { method: "POST" });
   }
 
-  async escalateDMThread(
-    containerId: string,
-    threadId: string,
-    reason?: string
-  ): Promise<Record<string, unknown>> {
-    return this.fetch<Record<string, unknown>>(
-      `/users/me/dm/${containerId}/threads/${threadId}/escalate`,
-      { method: "POST", body: JSON.stringify(reason ? { reason } : {}) }
-    );
+  async escalateDMThread(threadId: string, reason?: string): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>(`/users/me/dm/${threadId}/escalate`, {
+      method: "POST",
+      body: JSON.stringify(reason ? { reason } : {}),
+    });
   }
 
   // ============ CIRCLES & ROLES ============
