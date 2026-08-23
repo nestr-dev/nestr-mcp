@@ -272,6 +272,13 @@ interface Hint {
   endpoints?: ApiHintEndpoint[];
   lastPost?: string;
   readAt?: string;
+  // The `tabs` and `settings` hints carry where a PERSON can be sent in the web app —
+  // which tabs this viewer can open on this nest, and the URL for each. There is no tool
+  // call to translate them into and there should not be: the answer is a link to hand
+  // over, not an API call to make. Nestr sends these absolute, host and all, so nothing
+  // here rewrites them; the field is declared so a reader can see the passthrough is
+  // deliberate rather than an oversight.
+  tabs?: { id: string; title: string; url: string }[];
   toolCall?: { tool: string; params: Record<string, unknown> };
   toolCalls?: EnrichedToolCall[];
 }
@@ -543,6 +550,23 @@ export function commentPlacementNote(
 
 // Enrich hints with tool call parameters so models can act on hints directly.
 // Extracts workspaceId from nest ancestors (last element) for search-based hints.
+// Canonical web URL for a nest in the Nestr app.
+// Pattern: /n/{parentId}/{id} when a parent context is known, /n/{id} otherwise.
+// Parent 'inbox' is treated as no parent — inbox is not a navigable container.
+//
+// The host comes from the API base this server was pointed at, because these URLs are
+// handed to a person and have to open on the Nestr they are using. Hardcoding the
+// production host meant a self-hosted or local deployment answered with app.nestr.io
+// links for nests that only exist on their own server — a wrong link, confidently given,
+// which is the failure this whole area keeps producing. Hint URLs do not need this:
+// Nestr sends those absolute already. This is for the URLs this server mints itself.
+export function nestrWebBase(apiBase?: string): string {
+  const base = apiBase || "https://app.nestr.io/api";
+  return base.replace(/\/api\/?$/, "").replace(/\/+$/, "") || "https://app.nestr.io";
+}
+
+const NESTR_WEB_BASE = nestrWebBase(process.env.NESTR_API_BASE);
+
 export function enrichHints<T>(data: T): T {
   if (!data || typeof data !== "object") return data;
 
@@ -621,11 +645,6 @@ export function enrichHints<T>(data: T): T {
   // `data` would discard both the enriched payload and the enriched envelope hints.
   return subject as T;
 }
-
-// Canonical web URL for a nest in the Nestr app.
-// Pattern: /n/{parentId}/{id} when a parent context is known, /n/{id} otherwise.
-// Parent 'inbox' is treated as no parent — inbox is not a navigable container.
-const NESTR_WEB_BASE = "https://app.nestr.io";
 
 function buildNestUrl(id: string, parentId: string | undefined): string {
   if (parentId && parentId.toLowerCase() !== "inbox") {
