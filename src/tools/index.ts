@@ -272,6 +272,12 @@ interface Hint {
   endpoints?: ApiHintEndpoint[];
   lastPost?: string;
   readAt?: string;
+  // The `settings` hint carries where a PERSON can be sent in the web app — which
+  // settings tabs this viewer can open on this nest, and the URL for each. There is no
+  // tool call to translate it into and there should not be: the answer is a link to hand
+  // over, not an API call to make. It is declared so the enrichment keeps it rather than
+  // dropping it into the spread, and so a reader can see it is deliberate.
+  tabs?: { id: string; title: string; url: string }[];
   toolCall?: { tool: string; params: Record<string, unknown> };
   toolCalls?: EnrichedToolCall[];
 }
@@ -625,7 +631,18 @@ export function enrichHints<T>(data: T): T {
 // Canonical web URL for a nest in the Nestr app.
 // Pattern: /n/{parentId}/{id} when a parent context is known, /n/{id} otherwise.
 // Parent 'inbox' is treated as no parent — inbox is not a navigable container.
-const NESTR_WEB_BASE = "https://app.nestr.io";
+//
+// The host comes from the API base this server was pointed at, because these URLs are
+// handed to a person and have to open on the Nestr they are using. Hardcoding the
+// production host meant a self-hosted or local deployment answered with app.nestr.io
+// links for nests that only exist on their own server — a wrong link, confidently given,
+// which is the failure this whole area keeps producing.
+export function nestrWebBase(apiBase?: string): string {
+  const base = apiBase || "https://app.nestr.io/api";
+  return base.replace(/\/api\/?$/, "").replace(/\/+$/, "") || "https://app.nestr.io";
+}
+
+const NESTR_WEB_BASE = nestrWebBase(process.env.NESTR_API_BASE);
 
 function buildNestUrl(id: string, parentId: string | undefined): string {
   if (parentId && parentId.toLowerCase() !== "inbox") {
