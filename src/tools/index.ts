@@ -3627,13 +3627,19 @@ async function _handleToolCall(
       case "nestr_escalate_to_support": {
         const parsed = schemas.escalateToSupport.parse(args);
         const result = await client.escalateDMThread(parsed.threadId, parsed.reason);
-        const already = (result as { alreadyQueued?: boolean }).alreadyQueued;
-        return formatResult({
-          message: already
-            ? "Already with a human; nothing more to do."
-            : "A human has been brought in. Tell them so, and keep helping in the meantime.",
-          escalation: result,
-        });
+        const { alreadyQueued, statusMessagePosted } = result as {
+          alreadyQueued?: boolean;
+          statusMessagePosted?: boolean;
+        };
+        let message = "A human has been brought in. Tell them so, and keep helping in the meantime.";
+        if (alreadyQueued) {
+          message = "Already with a human; nothing more to do.";
+        } else if (statusMessagePosted) {
+          // Nestr posted its own confirmation into the thread, so saying it again is the
+          // double message this flag exists to avoid.
+          message = "A human has been brought in and the thread already says so. Do not repeat it; carry on helping.";
+        }
+        return formatResult({ message, escalation: result });
       }
 
       // Reorder tools
