@@ -19,21 +19,22 @@ describe("the settings hint reaches the model", () => {
           label: "You can open this nest's settings: 3 tabs",
           severity: "info",
           count: 3,
-          // Domain-relative, which is how Nestr sends every hint: `/api/...` for a
-          // route, `/n/...` for a page.
+          // Absolute, host and all, which is how Nestr sends every hint URL:
+          // `<host>/api/...` for a route, `<host>/n/...` for a page.
           tabs: [
-            { id: "users", title: "Users", url: "/n/ws1?s=1#users" },
-            { id: "details", title: "Details", url: "/n/ws1?s=1#details" },
-            { id: "plan", title: "Plan & billing", url: "/n/ws1?s=1#plan" },
+            { id: "users", title: "Users", url: "https://app.nestr.io/n/ws1?s=1#users" },
+            { id: "details", title: "Details", url: "https://app.nestr.io/n/ws1?s=1#details" },
+            { id: "plan", title: "Plan & billing", url: "https://app.nestr.io/n/ws1?s=1#plan" },
           ],
         },
       ],
     };
   };
 
-  it("keeps the tabs, and gives their URLs a host", () => {
+  it("keeps the tabs and their URLs exactly as sent", () => {
     // A page link is the one thing here that leaves this server as a URL: the assistant
-    // hands it to a person, and a relative path is not something a person can open.
+    // hands it to a person. Nestr already put its own host on it, and that host is the
+    // one the person is using, so rewriting it here could only make it wrong.
     const enriched: any = enrichHints(nestWithSettingsHint());
     const hint = enriched.hints[0];
     expect(hint.tabs).toHaveLength(3);
@@ -44,9 +45,26 @@ describe("the settings hint reaches the model", () => {
     });
   });
 
-  it("leaves an /api/ path alone", () => {
-    // Those become tool calls and never leave as URLs, so a host on them would be noise
-    // — and the pattern matching strips one anyway.
+  it("keeps a self-hosted host rather than substituting its own", () => {
+    // The failure this pins: a deployment answers with its own links, and swapping in
+    // app.nestr.io would send the person to a Nestr where the nest does not exist.
+    const enriched: any = enrichHints({
+      _id: "ws1",
+      labels: ["workspace"],
+      hints: [{
+        type: "settings",
+        label: "You can open this nest's settings: 1 tab",
+        severity: "info",
+        count: 1,
+        tabs: [{ id: "users", title: "Users", url: "https://nestr.example.com/n/ws1?s=1#users" }],
+      }],
+    });
+    expect(enriched.hints[0].tabs[0].url).toBe("https://nestr.example.com/n/ws1?s=1#users");
+  });
+
+  it("still matches an absolute API url to its tool", () => {
+    // The other half of the same contract: a route hint arrives host-qualified too, and
+    // the pattern table works on the path, so the host has to come off before matching.
     const enriched: any = enrichHints({
       _id: "n1",
       parentId: "ws1",
@@ -54,10 +72,10 @@ describe("the settings hint reaches the model", () => {
         type: "unread_posts",
         label: "2 posts you have not read",
         severity: "info",
-        url: "/api/users/me/dm/t1/posts?unread=true",
+        url: "https://app.nestr.io/api/nests/n1/posts?unread=true",
       }],
     });
-    expect(enriched.hints[0].url).toBe("/api/users/me/dm/t1/posts?unread=true");
+    expect(enriched.hints[0].toolCall?.tool).toBe("nestr_get_comments");
   });
 
   it("invents no tool call for it", () => {

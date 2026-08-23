@@ -272,11 +272,12 @@ interface Hint {
   endpoints?: ApiHintEndpoint[];
   lastPost?: string;
   readAt?: string;
-  // The `settings` hint carries where a PERSON can be sent in the web app — which
-  // settings tabs this viewer can open on this nest, and the URL for each. There is no
-  // tool call to translate it into and there should not be: the answer is a link to hand
-  // over, not an API call to make. It is declared so the enrichment keeps it rather than
-  // dropping it into the spread, and so a reader can see it is deliberate.
+  // The `tabs` and `settings` hints carry where a PERSON can be sent in the web app —
+  // which tabs this viewer can open on this nest, and the URL for each. There is no tool
+  // call to translate them into and there should not be: the answer is a link to hand
+  // over, not an API call to make. Nestr sends these absolute, host and all, so nothing
+  // here rewrites them; the field is declared so a reader can see the passthrough is
+  // deliberate rather than an oversight.
   tabs?: { id: string; title: string; url: string }[];
   toolCall?: { tool: string; params: Record<string, unknown> };
   toolCalls?: EnrichedToolCall[];
@@ -557,24 +558,14 @@ export function commentPlacementNote(
 // handed to a person and have to open on the Nestr they are using. Hardcoding the
 // production host meant a self-hosted or local deployment answered with app.nestr.io
 // links for nests that only exist on their own server — a wrong link, confidently given,
-// which is the failure this whole area keeps producing.
+// which is the failure this whole area keeps producing. Hint URLs do not need this:
+// Nestr sends those absolute already. This is for the URLs this server mints itself.
 export function nestrWebBase(apiBase?: string): string {
   const base = apiBase || "https://app.nestr.io/api";
   return base.replace(/\/api\/?$/, "").replace(/\/+$/, "") || "https://app.nestr.io";
 }
 
 const NESTR_WEB_BASE = nestrWebBase(process.env.NESTR_API_BASE);
-
-// Nestr answers with domain-relative URLs — `/api/...` for a route to call, `/n/...` for
-// a page to open — so a hint means the same thing wherever it is read. The `/api/...`
-// ones become tool calls below and never leave this server as URLs. The `/n/...` ones do
-// leave: they are what an assistant hands a person, so they need the host of the Nestr
-// this server talks to, which is what a relative path cannot carry.
-function absolutizeWebPath(url: unknown): unknown {
-  if (typeof url !== "string" || !url.startsWith("/")) return url;
-  if (url.startsWith("/api/")) return url;
-  return `${NESTR_WEB_BASE}${url}`;
-}
 
 export function enrichHints<T>(data: T): T {
   if (!data || typeof data !== "object") return data;
@@ -602,17 +593,6 @@ export function enrichHints<T>(data: T): T {
 
     record.hints = (record.hints as Hint[]).map((hint) => {
       const enriched: Hint = { ...hint };
-
-      // A tabs/settings hint carries links for a person; give them the host.
-      if (Array.isArray(hint.tabs)) {
-        enriched.tabs = hint.tabs.map((tab) => {
-          return { ...tab, url: absolutizeWebPath(tab.url) as string };
-        });
-      }
-      if (typeof enriched.url === "string" && !enriched.url.startsWith("/api/")
-        && enriched.url.startsWith("/n/")) {
-        enriched.url = absolutizeWebPath(enriched.url) as string;
-      }
 
       // Type-based overrides win over URL matching for hints whose URL is
       // just the nest itself (`/nests/{id}` → nestr_get_nest) and doesn't
