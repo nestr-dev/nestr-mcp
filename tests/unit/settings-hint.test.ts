@@ -19,17 +19,21 @@ describe("the settings hint reaches the model", () => {
           label: "You can open this nest's settings: 3 tabs",
           severity: "info",
           count: 3,
+          // Domain-relative, which is how Nestr sends every hint: `/api/...` for a
+          // route, `/n/...` for a page.
           tabs: [
-            { id: "users", title: "Users", url: "https://app.nestr.io/n/ws1?s=1#users" },
-            { id: "details", title: "Details", url: "https://app.nestr.io/n/ws1?s=1#details" },
-            { id: "plan", title: "Plan & billing", url: "https://app.nestr.io/n/ws1?s=1#plan" },
+            { id: "users", title: "Users", url: "/n/ws1?s=1#users" },
+            { id: "details", title: "Details", url: "/n/ws1?s=1#details" },
+            { id: "plan", title: "Plan & billing", url: "/n/ws1?s=1#plan" },
           ],
         },
       ],
     };
   };
 
-  it("keeps the tabs and their URLs", () => {
+  it("keeps the tabs, and gives their URLs a host", () => {
+    // A page link is the one thing here that leaves this server as a URL: the assistant
+    // hands it to a person, and a relative path is not something a person can open.
     const enriched: any = enrichHints(nestWithSettingsHint());
     const hint = enriched.hints[0];
     expect(hint.tabs).toHaveLength(3);
@@ -38,6 +42,22 @@ describe("the settings hint reaches the model", () => {
       title: "Users",
       url: "https://app.nestr.io/n/ws1?s=1#users",
     });
+  });
+
+  it("leaves an /api/ path alone", () => {
+    // Those become tool calls and never leave as URLs, so a host on them would be noise
+    // — and the pattern matching strips one anyway.
+    const enriched: any = enrichHints({
+      _id: "n1",
+      parentId: "ws1",
+      hints: [{
+        type: "unread_posts",
+        label: "2 posts you have not read",
+        severity: "info",
+        url: "/api/users/me/dm/t1/posts?unread=true",
+      }],
+    });
+    expect(enriched.hints[0].url).toBe("/api/users/me/dm/t1/posts?unread=true");
   });
 
   it("invents no tool call for it", () => {

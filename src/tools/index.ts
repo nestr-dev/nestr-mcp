@@ -549,6 +549,33 @@ export function commentPlacementNote(
 
 // Enrich hints with tool call parameters so models can act on hints directly.
 // Extracts workspaceId from nest ancestors (last element) for search-based hints.
+// Canonical web URL for a nest in the Nestr app.
+// Pattern: /n/{parentId}/{id} when a parent context is known, /n/{id} otherwise.
+// Parent 'inbox' is treated as no parent — inbox is not a navigable container.
+//
+// The host comes from the API base this server was pointed at, because these URLs are
+// handed to a person and have to open on the Nestr they are using. Hardcoding the
+// production host meant a self-hosted or local deployment answered with app.nestr.io
+// links for nests that only exist on their own server — a wrong link, confidently given,
+// which is the failure this whole area keeps producing.
+export function nestrWebBase(apiBase?: string): string {
+  const base = apiBase || "https://app.nestr.io/api";
+  return base.replace(/\/api\/?$/, "").replace(/\/+$/, "") || "https://app.nestr.io";
+}
+
+const NESTR_WEB_BASE = nestrWebBase(process.env.NESTR_API_BASE);
+
+// Nestr answers with domain-relative URLs — `/api/...` for a route to call, `/n/...` for
+// a page to open — so a hint means the same thing wherever it is read. The `/api/...`
+// ones become tool calls below and never leave this server as URLs. The `/n/...` ones do
+// leave: they are what an assistant hands a person, so they need the host of the Nestr
+// this server talks to, which is what a relative path cannot carry.
+function absolutizeWebPath(url: unknown): unknown {
+  if (typeof url !== "string" || !url.startsWith("/")) return url;
+  if (url.startsWith("/api/")) return url;
+  return `${NESTR_WEB_BASE}${url}`;
+}
+
 export function enrichHints<T>(data: T): T {
   if (!data || typeof data !== "object") return data;
 
@@ -575,6 +602,17 @@ export function enrichHints<T>(data: T): T {
 
     record.hints = (record.hints as Hint[]).map((hint) => {
       const enriched: Hint = { ...hint };
+
+      // A tabs/settings hint carries links for a person; give them the host.
+      if (Array.isArray(hint.tabs)) {
+        enriched.tabs = hint.tabs.map((tab) => {
+          return { ...tab, url: absolutizeWebPath(tab.url) as string };
+        });
+      }
+      if (typeof enriched.url === "string" && !enriched.url.startsWith("/api/")
+        && enriched.url.startsWith("/n/")) {
+        enriched.url = absolutizeWebPath(enriched.url) as string;
+      }
 
       // Type-based overrides win over URL matching for hints whose URL is
       // just the nest itself (`/nests/{id}` → nestr_get_nest) and doesn't
@@ -627,22 +665,6 @@ export function enrichHints<T>(data: T): T {
   // `data` would discard both the enriched payload and the enriched envelope hints.
   return subject as T;
 }
-
-// Canonical web URL for a nest in the Nestr app.
-// Pattern: /n/{parentId}/{id} when a parent context is known, /n/{id} otherwise.
-// Parent 'inbox' is treated as no parent — inbox is not a navigable container.
-//
-// The host comes from the API base this server was pointed at, because these URLs are
-// handed to a person and have to open on the Nestr they are using. Hardcoding the
-// production host meant a self-hosted or local deployment answered with app.nestr.io
-// links for nests that only exist on their own server — a wrong link, confidently given,
-// which is the failure this whole area keeps producing.
-export function nestrWebBase(apiBase?: string): string {
-  const base = apiBase || "https://app.nestr.io/api";
-  return base.replace(/\/api\/?$/, "").replace(/\/+$/, "") || "https://app.nestr.io";
-}
-
-const NESTR_WEB_BASE = nestrWebBase(process.env.NESTR_API_BASE);
 
 function buildNestUrl(id: string, parentId: string | undefined): string {
   if (parentId && parentId.toLowerCase() !== "inbox") {
