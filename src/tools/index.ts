@@ -117,7 +117,8 @@ export function compactResponse<T>(
 const HINT_URL_PATTERNS: Array<{
   pattern: RegExp;
   tool: string;
-  params: (match: RegExpMatchArray, searchParams: URLSearchParams, workspaceId?: string) => Record<string, string>;
+  // Values are not all strings: a tool that declares z.boolean() rejects "true".
+  params: (match: RegExpMatchArray, searchParams: URLSearchParams, workspaceId?: string) => Record<string, unknown>;
 }> = [
   // /nests/{id}/children?search=... → nestr_search with in:{id} scoped query
   {
@@ -146,6 +147,38 @@ const HINT_URL_PATTERNS: Array<{
     pattern: /^\/workspaces\/([^/]+)\/search$/,
     tool: "nestr_search",
     params: (m, sp) => ({ workspaceId: m[1], query: sp.get("search") || "" }),
+  },
+  // Direct-message hints. The unread hint on a thread carries the endpoint that answers
+  // it, so these turn "3 posts you have not read" into the one call that lists them
+  // rather than a URL the model has to hand-assemble.
+  // /users/me/dm/{t}/posts → nestr_get_dm_posts (before the thread pattern)
+  {
+    pattern: /^\/users\/me\/dm\/([^/]+)\/posts$/,
+    tool: "nestr_get_dm_posts",
+    params: (m, sp) => {
+      const result: Record<string, unknown> = { threadId: m[1] };
+      const unread = sp.get("unread");
+      if (unread) result.unread = unread === "true";
+      return result;
+    },
+  },
+  // /users/me/dm/{t} → nestr_get_dm_thread (after the deeper pattern above)
+  {
+    pattern: /^\/users\/me\/dm\/([^/]+)$/,
+    tool: "nestr_get_dm_thread",
+    params: (m, sp) => {
+      const result: Record<string, unknown> = { threadId: m[1] };
+      const unread = sp.get("unread");
+      if (unread) result.unread = unread === "true";
+      return result;
+    },
+  },
+  // /posts/{id}/read → nestr_mark_post_read. Carried by the unread_posts hint that
+  // nests/{id}/posts returns, so acknowledging what you just read is one call.
+  {
+    pattern: /^\/posts\/([^/]+)\/read$/,
+    tool: "nestr_mark_post_read",
+    params: (m) => ({ postId: m[1] }),
   },
   // /nests/{id}/posts → nestr_get_comments
   { pattern: /^\/nests\/([^/]+)\/posts$/, tool: "nestr_get_comments", params: (m) => ({ nestId: m[1] }) },
@@ -276,6 +309,13 @@ interface Hint {
   endpoints?: ApiHintEndpoint[];
   lastPost?: string;
   readAt?: string;
+  // The `tabs` and `settings` hints carry where a PERSON can be sent in the web app —
+  // which tabs this viewer can open on this nest, and the URL for each. There is no tool
+  // call to translate them into and there should not be: the answer is a link to hand
+  // over, not an API call to make. Nestr sends these absolute, host and all, so nothing
+  // here rewrites them; the field is declared so a reader can see the passthrough is
+  // deliberate rather than an oversight.
+  tabs?: { id: string; title: string; url: string }[];
   toolCall?: { tool: string; params: Record<string, unknown> };
   toolCalls?: EnrichedToolCall[];
 }
@@ -301,9 +341,102 @@ interface EndpointToolMapping {
   bodyParams: ReadonlySet<string>;
   /** Fixed args added to parametersExample (e.g. { removeNest: true }). */
   extraParams?: Record<string, unknown>;
+  /**
+   * Query-string params the tool accepts, as `queryKey -> toolParamName`. A hint endpoint
+   * may carry a query (the unread hints do: `.../threads?unread=true`), and without this
+   * the value would be dropped and the suggested call would fetch everything instead of
+   * the thing the hint pointed at.
+   *
+   * The rename matters: the route spells it `?user=`, the tool calls it `withUser`, and
+   * emitting the URL's spelling would produce a call the tool's schema rejects.
+   */
+  queryParams?: Readonly<Record<string, string>>;
 }
 
 const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
+  // Direct messages. The unread hints on a container and a thread each carry the endpoint
+  // that answers them, so these turn "3 threads you have not read" into the one call that
+  // lists them. Deeper routes first: the patterns are tried in order.
+  // Support queues. Sibling of the DM routes, so these sit alongside them.
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/queues\/([^/]+)\/threads\/?$/,
+    tool: "nestr_list_queue_threads",
+    pathParamNames: ["key"],
+    bodyParams: new Set([]),
+    queryParams: { unread: "unread" },
+  },
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/queues\/?$/,
+    tool: "nestr_list_queues",
+    pathParamNames: [],
+    bodyParams: new Set([]),
+  },
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/posts\/?$/,
+    tool: "nestr_get_dm_posts",
+    pathParamNames: ["threadId"],
+    bodyParams: new Set([]),
+    queryParams: { unread: "unread", depth: "depth" },
+  },
+  {
+    method: "POST",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/posts\/?$/,
+    tool: "nestr_post_dm_message",
+    pathParamNames: ["threadId"],
+    bodyParams: new Set(["body"]),
+  },
+  {
+    method: "POST",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/escalate\/?$/,
+    tool: "nestr_escalate_to_support",
+    pathParamNames: ["threadId"],
+    bodyParams: new Set(["reason"]),
+  },
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/?$/,
+    tool: "nestr_get_dm_thread",
+    pathParamNames: ["threadId"],
+    bodyParams: new Set([]),
+    queryParams: { unread: "unread" },
+  },
+  {
+    method: "PATCH",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/?$/,
+    tool: "nestr_update_dm_thread",
+    pathParamNames: ["threadId"],
+    bodyParams: new Set(["title", "completed", "users"]),
+  },
+  {
+    method: "POST",
+    pattern: /^\/users\/me\/dm\/?$/,
+    tool: "nestr_start_dm_thread",
+    pathParamNames: [],
+    bodyParams: new Set(["user", "title"]),
+  },
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/dm\/?$/,
+    tool: "nestr_list_dms",
+    pathParamNames: [],
+    bodyParams: new Set([]),
+    // The route spells the filter ?user=, the tool calls it withUser. unread now belongs
+    // here too: the listing is the threads themselves, so "what have I not read" is
+    // answered by this call rather than by a container's own threads route.
+    queryParams: { user: "withUser", unread: "unread" },
+  },
+  // Carried by the unread_posts hint on nests/{id}/posts, so acknowledging what you just
+  // read is one call. Works for any post, not only a DM.
+  {
+    method: "POST",
+    pattern: /^\/posts\/([^/]+)\/read\/?$/,
+    tool: "nestr_mark_post_read",
+    pathParamNames: ["postId"],
+    bodyParams: new Set([]),
+  },
   {
     method: "POST",
     pattern: /^\/nests\/?$/,
@@ -363,10 +496,18 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
   },
 ];
 
-/** Strip optional host + /api prefix so we match against canonical routes. */
-function normalizeEndpointPath(path: string): string {
+/**
+ * Strip optional host + /api prefix so we match against canonical routes, and split the
+ * query off: the patterns describe paths, so a trailing `?unread=true` would stop every
+ * one of them matching.
+ */
+function normalizeEndpointPath(path: string): { path: string; search: URLSearchParams } {
   const hostStripped = path.replace(/^https?:\/\/[^/]+/, "");
-  return hostStripped.replace(/^\/api(?=\/)/, "");
+  const [rawPath, queryString] = hostStripped.split("?");
+  return {
+    path: rawPath.replace(/^\/api(?=\/)/, ""),
+    search: new URLSearchParams(queryString || ""),
+  };
 }
 
 /**
@@ -377,7 +518,7 @@ export function translateEndpoint(endpoint: ApiHintEndpoint): EnrichedToolCall |
   if (!endpoint || typeof endpoint !== "object") return null;
   const method = (endpoint.method || "").toUpperCase();
   if (!method) return null;
-  const path = normalizeEndpointPath(endpoint.path || "");
+  const { path, search } = normalizeEndpointPath(endpoint.path || "");
 
   for (const mapping of HINT_ENDPOINT_TOOL_MAPPINGS) {
     if (mapping.method !== method) continue;
@@ -388,6 +529,16 @@ export function translateEndpoint(endpoint: ApiHintEndpoint): EnrichedToolCall |
     mapping.pathParamNames.forEach((name, i) => {
       parametersExample[name] = match[i + 1];
     });
+    // "true"/"false" become booleans: every tool that takes one of these declares it as a
+    // boolean, and a string would fail schema validation on the suggested call.
+    if (mapping.queryParams) {
+      for (const [key, value] of search.entries()) {
+        const paramName = mapping.queryParams[key];
+        if (!paramName) continue;
+        parametersExample[paramName] =
+          value === "true" || value === "false" ? value === "true" : value;
+      }
+    }
     if (mapping.extraParams) Object.assign(parametersExample, mapping.extraParams);
 
     const droppedFields: string[] = [];
@@ -436,6 +587,23 @@ export function commentPlacementNote(
 
 // Enrich hints with tool call parameters so models can act on hints directly.
 // Extracts workspaceId from nest ancestors (last element) for search-based hints.
+// Canonical web URL for a nest in the Nestr app.
+// Pattern: /n/{parentId}/{id} when a parent context is known, /n/{id} otherwise.
+// Parent 'inbox' is treated as no parent — inbox is not a navigable container.
+//
+// The host comes from the API base this server was pointed at, because these URLs are
+// handed to a person and have to open on the Nestr they are using. Hardcoding the
+// production host meant a self-hosted or local deployment answered with app.nestr.io
+// links for nests that only exist on their own server — a wrong link, confidently given,
+// which is the failure this whole area keeps producing. Hint URLs do not need this:
+// Nestr sends those absolute already. This is for the URLs this server mints itself.
+export function nestrWebBase(apiBase?: string): string {
+  const base = apiBase || "https://app.nestr.io/api";
+  return base.replace(/\/api\/?$/, "").replace(/\/+$/, "") || "https://app.nestr.io";
+}
+
+const NESTR_WEB_BASE = nestrWebBase(process.env.NESTR_API_BASE);
+
 export function enrichHints<T>(data: T): T {
   if (!data || typeof data !== "object") return data;
 
@@ -444,13 +612,17 @@ export function enrichHints<T>(data: T): T {
     return data.map((item) => enrichHints(item)) as T;
   }
 
-  // Handle wrapped responses { data: [...] }
-  if ("data" in data && Array.isArray((data as Record<string, unknown>).data)) {
-    return { ...data, data: enrichHints((data as Record<string, unknown>).data) } as T;
+  // Handle wrapped responses { data: [...] }. Enrich the payload, then fall through so
+  // the envelope's OWN hints are enriched too: a posts response carries unread_posts
+  // beside its data, and returning here left that hint as a bare URL.
+  let subject = data as Record<string, unknown>;
+  if ("data" in subject && Array.isArray(subject.data)) {
+    subject = { ...subject, data: enrichHints(subject.data) };
+    if (!Array.isArray(subject.hints)) return subject as T;
   }
 
   // Enrich hints on this nest
-  const record = data as Record<string, unknown>;
+  const record = subject;
   if (Array.isArray(record.hints)) {
     // Extract workspaceId from ancestors (last element is always the workspace)
     const ancestors = record.ancestors as string[] | undefined;
@@ -469,9 +641,12 @@ export function enrichHints<T>(data: T): T {
       } else if (hint.url) {
         // Legacy: single URL → toolCall. Kept for backwards compatibility with
         // hints that pre-date the endpoints[] payload.
-        let rawUrl = hint.url;
-        const apiPrefixMatch = rawUrl.match(/^https?:\/\/[^/]+\/api(\/.*)/);
-        if (apiPrefixMatch) rawUrl = apiPrefixMatch[1];
+        // Strip an optional host, then an optional /api prefix. Previously only the
+        // host-qualified form was handled, so a bare "/api/..." hint matched no pattern
+        // and was reported as unrecognized. normalizeEndpointPath does both for the
+        // endpoints[] payload; this is the same rule for the legacy url field.
+        let rawUrl = hint.url.replace(/^https?:\/\/[^/]+/, "");
+        rawUrl = rawUrl.replace(/^\/api(?=\/)/, "");
         const [path, queryString] = rawUrl.split("?");
         const searchParams = new URLSearchParams(queryString || "");
         let matched = false;
@@ -503,13 +678,10 @@ export function enrichHints<T>(data: T): T {
     });
   }
 
-  return data;
+  // subject, not data: the wrapped-response branch above works on a copy, so returning
+  // `data` would discard both the enriched payload and the enriched envelope hints.
+  return subject as T;
 }
-
-// Canonical web URL for a nest in the Nestr app.
-// Pattern: /n/{parentId}/{id} when a parent context is known, /n/{id} otherwise.
-// Parent 'inbox' is treated as no parent — inbox is not a navigable container.
-const NESTR_WEB_BASE = "https://app.nestr.io";
 
 function buildNestUrl(id: string, parentId: string | undefined): string {
   if (parentId && parentId.toLowerCase() !== "inbox") {
@@ -601,6 +773,58 @@ export const schemas = {
     sort: z.string().optional().describe(SORT_DESCRIPTION),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number (1-indexed) for pagination"),
+  }),
+
+  listDMs: z.object({
+    withUser: z.string().optional().describe("Only threads with this person: their user id, username or email. Use 'nestr_support' for your Nestradamus conversation. Errors if you cannot message them."),
+    unread: z.boolean().optional().describe("true returns only threads with messages you have not read"),
+    includeCompleted: z.boolean().optional().describe("true also returns closed conversations. They are left out by default."),
+    limit: z.number().optional().describe("Threads per page (default 50, max 200)"),
+    page: z.number().optional().describe("Page number, 1-based"),
+  }),
+
+  startDMThread: z.object({
+    user: z.string().describe("Who to message: their user id, username or email. Must be someone you share a workspace with, or already have a conversation with."),
+    title: z.string().optional().describe("Optional thread title. Defaults to a dated one, as the app uses."),
+  }),
+
+  listQueues: z.object({}),
+
+  listQueueThreads: z.object({
+    key: z.string().describe("Queue key, e.g. 'support'. From nestr_list_queues."),
+    unread: z.boolean().optional().describe("true returns only threads you have not read"),
+  }),
+
+  getDMThread: z.object({
+    threadId: z.string().describe("Thread id"),
+    unread: z.boolean().optional().describe("true embeds the posts you have not read, false the ones you have. Omit for the thread alone."),
+  }),
+
+  updateDMThread: z.object({
+    threadId: z.string().describe("Thread id"),
+    title: z.string().optional().describe("New thread title"),
+    completed: z.boolean().nullable().optional().describe("true closes the conversation, null reopens it. A closed one drops out of nestr_list_dms unless includeCompleted is set, and stays readable and postable by id. Repeating a state changes nothing."),
+    users: z.array(z.string()).optional().describe("The participant list you want, replacing the current one — read it from nestr_get_dm_thread first. Anyone you add sees the whole thread and must be someone you share a workspace with; the bot and the person who raised the thread cannot be removed. Leave a conversation by sending the list without yourself."),
+  }),
+
+  getDMPosts: z.object({
+    threadId: z.string().describe("Thread id"),
+    unread: z.boolean().optional().describe("true for posts you have not read, false for the ones you have. Omit for all."),
+    depth: z.union([z.number(), z.literal("all")]).optional().describe("Include posts on descendant nests"),
+  }),
+
+  createDMPost: z.object({
+    threadId: z.string().describe("Thread id"),
+    body: z.string().describe("Message text. Supports HTML and Markdown."),
+  }),
+
+  markPostRead: z.object({
+    postId: z.string().describe("Post to mark read up to. Everything up to and including it becomes read."),
+  }),
+
+  escalateToSupport: z.object({
+    threadId: z.string().describe("Thread id to escalate. It must be a conversation Nestradamus is in."),
+    reason: z.string().describe("One or two sentences for whoever picks this up: what is needed and what has been tried."),
   }),
 
   getWorkspace: z.object({
@@ -767,6 +991,7 @@ export const schemas = {
   getComments: z.object({
     nestId: z.string().describe("Nest ID to get comments from. Pass a workspace ID to gather communication across the whole workspace (combine with depth='all')."),
     depth: z.union([z.number(), z.literal("all")]).optional().describe("How deep below the context nest to look for comments. 0 (default) returns only comments directly on this nest; N includes comments on descendants up to N levels deep; 'all' includes comments on this nest and every descendant. Use 'all' on a workspace or circle nest to analyse large sets of communication in one call."),
+    unread: z.boolean().optional().describe("true for comments you have not read, false for the ones you have. Omit for all."),
   }),
 
   getCircle: z.object({
@@ -1586,6 +1811,140 @@ export const toolDefinitions = [
     },
     ...readOnly,
   },
+  // ---- Direct messages ----
+  // A thread is the unit and its id is the whole address. There is no container to fetch
+  // first: start from nestr_list_dms, optionally narrowed to one person with withUser.
+  {
+    name: "nestr_list_dms",
+    description: "List your open direct-message threads, most recently posted first. Closed ones are left out unless includeCompleted is set. Pass withUser to see only the ones with a particular person; withUser:'nestr_support' is your Nestradamus conversation. Each thread carries participants, so a flat list still tells you who you are talking to.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        withUser: { type: "string", description: "Only threads with this person: user id, username or email" },
+        unread: { type: "boolean", description: "Only threads with messages you have not read" },
+        includeCompleted: { type: "boolean", description: "Also return closed conversations (left out by default)" },
+        limit: { type: "number", description: "Threads per page (default 50, max 200)" },
+        page: { type: "number", description: "Page number, 1-based" },
+      },
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_start_dm_thread",
+    description: "Start a new direct-message thread with someone. Use it for a new subject rather than reopening an old thread. You must share a workspace with them, or already have a conversation with them.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        user: { type: "string", description: "Who to message: user id, username or email" },
+        title: { type: "string", description: "Optional title. Defaults to a dated one, as the app uses." },
+      },
+      required: ["user"],
+    },
+    ...mutating,
+  },
+  // ---- Support queues ----
+  // A queue is a label on threads across many DM spaces, not a space itself. It hands
+  // back thread ids, and a thread id is the whole address: nestr_get_dm_thread /
+  // nestr_get_dm_posts take it directly.
+  {
+    name: "nestr_list_queues",
+    description: "List the support queues you can see: the ones you monitor, plus any you have raised a thread in. Each carries `subscribed`, which decides what nestr_list_queue_threads returns for you.",
+    inputSchema: { type: "object" as const, properties: {} },
+    ...readOnly,
+  },
+  {
+    name: "nestr_list_queue_threads",
+    description: "List threads in a support queue, most recently posted first. If you subscribe to the queue you get every thread in it; otherwise you get only the ones you raised, which is how you find your own open support tickets. Pass unread:true for just what has moved. Read one with nestr_get_dm_thread using the id you get back.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        key: { type: "string", description: "Queue key, e.g. 'support'" },
+        unread: { type: "boolean", description: "Only threads you have not read" },
+      },
+      required: ["key"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_get_dm_thread",
+    description: "Get a direct-message thread as a nest, with hints. Pass unread:true to embed the posts you have not read in the same call, which is usually what you want when picking a thread back up.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        threadId: { type: "string", description: "Thread id" },
+        unread: { type: "boolean", description: "true embeds unread posts, false embeds read ones" },
+      },
+      required: ["threadId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_update_dm_thread",
+    description: "Update a direct-message thread: rename it, close or reopen it, or change who is in it. Send only the keys you want changed, as with nestr_update_nest. completed:true closes a conversation once it is dealt with, which takes it out of nestr_list_dms without losing it; completed:null reopens. `users` is the participant list you want, so read the thread first and send the list with someone added or removed; the bot and the person who raised the thread cannot be removed. Answers with the updated thread.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        threadId: { type: "string", description: "Thread id" },
+        title: { type: "string", description: "New thread title" },
+        completed: { type: ["boolean", "null"], description: "true closes the conversation, null reopens it" },
+        users: { type: "array", items: { type: "string" }, description: "The participant list you want, replacing the current one" },
+      },
+      required: ["threadId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_get_dm_posts",
+    description: "Read the posts in a direct-message thread, oldest first, each with its nested replies. Pass unread:true for just what is new, false for the rest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        threadId: { type: "string", description: "Thread id" },
+        unread: { type: "boolean", description: "true for unread posts, false for read ones. Omit for all." },
+        depth: { type: ["number", "string"], description: "Include posts on descendant nests, or 'all'" },
+      },
+      required: ["threadId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_post_dm_message",
+    description: "Post a message into a direct-message thread.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        threadId: { type: "string", description: "Thread id" },
+        body: { type: "string", description: "Message text. Supports HTML and Markdown." },
+      },
+      required: ["threadId", "body"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_mark_post_read",
+    description: "Mark a conversation read up to and including this post. Works for any post, not only direct messages. The marker never moves backwards, so calling it on an older post is harmless.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        postId: { type: "string", description: "Post to mark read up to" },
+      },
+      required: ["postId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_escalate_to_support",
+    description: "Bring a human from Nestr support into a Nestradamus conversation. Use it when the person asks for a human, when you have answered the wrong question more than once, or when something needs Nestr staff to look at their account. Find the thread with nestr_list_dms({withUser:'nestr_support'}). Safe to call twice; a thread already waiting stays as it is. Only works on a conversation Nestradamus is in.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        threadId: { type: "string", description: "Thread id to escalate" },
+        reason: { type: "string", description: "One or two sentences for whoever picks this up: what is needed and what has been tried. They can read the thread, so do not summarise it." },
+      },
+      required: ["threadId", "reason"],
+    },
+    ...mutating,
+  },
   {
     name: "nestr_get_insights",
     description: "Get organizational health metrics and trends. Each metric has currentValue and compareValue for direction. Pro plan: filter by circle (nestId) or user (userId). Requires Insights app. See nestr_help('insights').",
@@ -1665,7 +2024,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_comments",
-    description: "Get comments and discussion history on a nest, including full nested reply threads. By default returns only comments posted directly on the given nest. Widen with depth to also include comments on descendant nests, or pass a workspace/circle nest ID with depth='all' to gather large sets of communication for analysis.",
+    description: "Get comments and discussion history on a nest, including full nested reply threads. By default returns only comments posted directly on the given nest. Widen with depth to also include comments on descendant nests, or pass a workspace/circle nest ID with depth='all' to gather large sets of communication for analysis. Carries an unread_posts hint when you have not read everything; nestr_mark_post_read acknowledges up to a given post, on any nest, not just direct messages.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1708,7 +2067,11 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_workspace_user",
-    description: "Add a user to a workspace by email. Creates account if needed.",
+    description:
+      "Add a user to a workspace by email. Creates the account if it does not exist, adds them, "
+      + "and SENDS THEM AN INVITE EMAIL, so confirm with the person asking before you call it: a real "
+      + "person receives that mail. This is the action behind requests about seats, membership, "
+      + "extending a plan by a person, or getting a colleague in.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3302,8 +3665,12 @@ async function _handleToolCall(
         const parsed = schemas.getComments.parse(args);
         const comments = await client.getNestPosts(parsed.nestId, {
           depth: parsed.depth,
+          unread: parsed.unread,
         });
-        return formatResult(comments);
+        // enrichHints turns the unread_posts hint's endpoint into a nestr_mark_post_read
+        // call. Without it the hint still arrives, but as a raw URL the model has to
+        // recognise and hand-assemble.
+        return formatResult(enrichHints(comments));
       }
 
       case "nestr_get_circle": {
@@ -3425,6 +3792,104 @@ async function _handleToolCall(
           icon: parsed.icon,
         });
         return formatResult({ message: "Personal label created successfully", label });
+      }
+
+      // Direct messages
+      case "nestr_list_dms": {
+        const parsed = schemas.listDMs.parse(args);
+        const result = await client.listDMs({
+          withUser: parsed.withUser,
+          unread: parsed.unread,
+          includeCompleted: parsed.includeCompleted,
+          limit: parsed.limit,
+          page: parsed.page,
+        });
+        return formatResult({ threads: result });
+      }
+
+      case "nestr_start_dm_thread": {
+        const parsed = schemas.startDMThread.parse(args);
+        const result = await client.createDMThread(parsed.user, parsed.title);
+        return formatResult({ message: "Thread started", thread: result });
+      }
+
+      case "nestr_list_queues": {
+        schemas.listQueues.parse(args ?? {});
+        const result = await client.listQueues();
+        return formatResult({ queues: result });
+      }
+
+      case "nestr_list_queue_threads": {
+        const parsed = schemas.listQueueThreads.parse(args);
+        const result = await client.listQueueThreads(parsed.key, { unread: parsed.unread });
+        return formatResult(enrichHints(result));
+      }
+
+      case "nestr_get_dm_thread": {
+        const parsed = schemas.getDMThread.parse(args);
+        const result = await client.getDMThread(parsed.threadId, { unread: parsed.unread });
+        return formatResult(enrichHints(result));
+      }
+
+      case "nestr_update_dm_thread": {
+        const parsed = schemas.updateDMThread.parse(args);
+        // `completed` is meaningful as null, so presence is the test rather than truth.
+        const setsCompleted = args !== null
+          && typeof args === "object"
+          && Object.prototype.hasOwnProperty.call(args, "completed");
+        if (parsed.title === undefined && !setsCompleted && parsed.users === undefined) {
+          throw new Error("Pass at least one of title, completed or users.");
+        }
+        const result = await client.updateDMThread(parsed.threadId, {
+          ...(parsed.title !== undefined ? { title: parsed.title } : {}),
+          ...(setsCompleted ? { completed: parsed.completed ?? null } : {}),
+          ...(parsed.users !== undefined ? { users: parsed.users } : {}),
+        });
+        return formatResult({
+          message: setsCompleted && parsed.completed
+            ? "Conversation closed"
+            : "Thread updated",
+          thread: result,
+        });
+      }
+
+      case "nestr_get_dm_posts": {
+        const parsed = schemas.getDMPosts.parse(args);
+        const result = await client.getDMPosts(parsed.threadId, {
+          unread: parsed.unread,
+          depth: parsed.depth,
+        });
+        return formatResult(enrichHints(result));
+      }
+
+      case "nestr_post_dm_message": {
+        const parsed = schemas.createDMPost.parse(args);
+        const result = await client.createDMPost(parsed.threadId, parsed.body);
+        return formatResult({ message: "Message posted", post: result });
+      }
+
+      case "nestr_mark_post_read": {
+        const parsed = schemas.markPostRead.parse(args);
+        const result = await client.markPostRead(parsed.postId);
+        return formatResult({ message: "Marked read", read: result });
+      }
+
+      case "nestr_escalate_to_support": {
+        const parsed = schemas.escalateToSupport.parse(args);
+        const result = await client.escalateDMThread(parsed.threadId, parsed.reason);
+        const { alreadyQueued, statusMessagePosted } = result as {
+          alreadyQueued?: boolean;
+          statusMessagePosted?: boolean;
+        };
+        let message = "A human has been brought in. Tell them so, and keep helping in the meantime.";
+        if (alreadyQueued) {
+          message = "Already with a human; nothing more to do.";
+        } else if (statusMessagePosted) {
+          // Nestr posted its own confirmation into the thread, so saying it again is the
+          // double message this flag exists to avoid.
+          message = "A human has been brought in and the thread already says so. Do not repeat it; carry on helping.";
+        }
+        return formatResult({ message, escalation: result });
       }
 
       // Reorder tools

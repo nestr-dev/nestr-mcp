@@ -98,6 +98,18 @@ export interface Nest {
   updatedAt?: string;
 }
 
+/**
+ * What GET .../posts actually returns. The envelope is kept rather than unwrapped to
+ * `data`, because the route carries an unread_posts hint beside it (when the caller is
+ * user-scoped) and `meta` for paging, and both are the point.
+ */
+export interface PostsEnvelope {
+  status?: string;
+  data?: Post[];
+  hints?: unknown[];
+  meta?: Record<string, unknown>;
+}
+
 export interface Post {
   _id: string;
   body: string;
@@ -1025,15 +1037,22 @@ export class NestrClient {
 
   // ============ POSTS/COMMENTS ============
 
+
+  /**
+   * Wraps GET /nests/:id/posts. Deliberately NOT unwrapped to `data`: the route
+   * carries an unread_posts hint alongside it when the caller is user-scoped, and
+   * `meta` for paging. Unwrapping would throw both away.
+   */
   async getNestPosts(
     nestId: string,
-    options?: { depth?: number | "all" }
-  ): Promise<Post[]> {
+    options?: { depth?: number | "all"; unread?: boolean }
+  ): Promise<PostsEnvelope> {
     const params = new URLSearchParams();
     if (options?.depth !== undefined) params.set("depth", options.depth.toString());
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
 
     const query = params.toString();
-    return this.fetch<Post[]>(`/nests/${nestId}/posts${query ? `?${query}` : ""}`);
+    return this.fetch<PostsEnvelope>(`/nests/${nestId}/posts${query ? `?${query}` : ""}`);
   }
 
   async createPost(
@@ -1049,6 +1068,138 @@ export class NestrClient {
         ...(options?.labels !== undefined ? { labels: options.labels } : {}),
       }),
     });
+  }
+
+  // ============ DIRECT MESSAGES ============
+  //
+  // A thread is the unit and its id is the whole address. The space that holds a pair's
+  // threads is a storage detail the API does not expose, so nothing here carries one.
+  // Posts and read markers are the ordinary Nestr ones: the DM routes delegate to the
+  // shared posts handler server-side, so grants, depth and nesting behave the same here.
+
+  async listDMs(
+    options?: {
+      withUser?: string;
+      unread?: boolean;
+      includeCompleted?: boolean;
+      limit?: number;
+      page?: number;
+    }
+  ): Promise<Record<string, unknown>[]> {
+    const params = new URLSearchParams();
+    if (options?.withUser) params.set("user", options.withUser);
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    if (options?.includeCompleted) params.set("includeCompleted", "true");
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+    if (options?.page !== undefined) params.set("page", String(options.page));
+    const query = params.toString();
+    return this.fetch<Record<string, unknown>[]>(`/users/me/dm${query ? `?${query}` : ""}`);
+  }
+
+  async createDMThread(user: string, title?: string): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>("/users/me/dm", {
+      method: "POST",
+      body: JSON.stringify({ user, ...(title !== undefined ? { title } : {}) }),
+    });
+  }
+
+  // ============ SUPPORT QUEUES ============
+  //
+  // A queue is a label on threads across many DM spaces, not a space itself, so these are
+  // a sibling of the DM routes. They hand back thread ids, which is the whole address on
+  // the DM routes: read one with getDMThread or getDMPosts.
+
+  async listQueues(): Promise<Record<string, unknown>[]> {
+    return this.fetch<Record<string, unknown>[]>("/users/me/queues");
+  }
+
+  async listQueueThreads(
+    key: string,
+    options?: { unread?: boolean }
+  ): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    const query = params.toString();
+    return this.fetch<Record<string, unknown>>(
+      `/users/me/queues/${encodeURIComponent(key)}/threads${query ? `?${query}` : ""}`
+    );
+  }
+
+  async getDMThread(
+    threadId: string,
+    options?: { unread?: boolean }
+  ): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    const query = params.toString();
+    return this.fetch<Record<string, unknown>>(
+      `/users/me/dm/${threadId}${query ? `?${query}` : ""}`
+    );
+  }
+
+  // The body is a partial nest, the same shape PATCH /nests/{id} takes: the keys you send
+  // are the ones that change, and `users` is the participant list you want rather than a
+  // pair of add/remove lists. A DM thread is a nest, so it needs no second vocabulary.
+  async updateDMThread(
+    threadId: string,
+    body: {
+      title?: string;
+      // null reopens a closed conversation, true closes one. Absent leaves it alone,
+      // which is why the caller passes the key through rather than a boolean.
+      completed?: boolean | null;
+      users?: string[];
+    }
+  ): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>(`/users/me/dm/${threadId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** Same envelope as getNestPosts: the DM route delegates to the same handler. */
+  async getDMPosts(
+    threadId: string,
+    options?: { unread?: boolean; depth?: number | "all" }
+  ): Promise<PostsEnvelope> {
+    const params = new URLSearchParams();
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    if (options?.depth !== undefined) params.set("depth", options.depth.toString());
+    const query = params.toString();
+    return this.fetch<PostsEnvelope>(
+      `/users/me/dm/${threadId}/posts${query ? `?${query}` : ""}`
+    );
+  }
+
+  async createDMPost(threadId: string, body: string): Promise<Post> {
+    return this.fetch<Post>(`/users/me/dm/${threadId}/posts`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    });
+  }
+
+  // The read marker lives on the post's context nest and never moves backwards, so this
+  // is safe to call out of order and works for any post, not only a DM.
+  async markPostRead(postId: string): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>(`/posts/${postId}/read`, { method: "POST" });
+  }
+
+  // suppressStatusMessage always rides along: whoever called this tool is told to say a
+  // human is coming, so the canned confirmation on the thread would be the same news
+  // twice. It is a request, not an instruction. Nestr grants it only while an agent
+  // reply to that same thread is pending, so a client whose answer lands somewhere else
+  // (this server also runs outside the Nestradamus runtime) leaves the thread with the
+  // confirmation it needs. The response says which way it went.
+  // Unwrapped to `data`, unlike its DM siblings: the caller reads flags off this
+  // (alreadyQueued, statusMessagePosted) and reading them off the envelope silently
+  // yielded undefined every time, so the already-queued branch never fired.
+  async escalateDMThread(threadId: string, reason?: string): Promise<Record<string, unknown>> {
+    const body: Record<string, unknown> = { suppressStatusMessage: true };
+    if (reason) body.reason = reason;
+    const response = await this.fetch<{ data?: Record<string, unknown> }>(
+      `/users/me/dm/${threadId}/escalate`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+    return response?.data ?? {};
   }
 
   // ============ CIRCLES & ROLES ============
