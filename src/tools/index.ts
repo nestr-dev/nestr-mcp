@@ -2517,6 +2517,7 @@ export const toolDefinitions = [
       },
       required: ["nestId", "tensionId", "partId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_create_tension_part_child",
@@ -2773,6 +2774,16 @@ export const toolDefinitions = [
   },
 ];
 
+// The read-only surface (/mcp/readonly) serves an authenticated bearer but only
+// tools that cannot change anything. Derived from the annotations rather than a
+// hand-kept list, so a new tool is denied until someone marks it readOnly: the
+// failure mode of forgetting is a missing capability, not a silent write.
+export const READONLY_TOOL_NAMES: ReadonlySet<string> = new Set(
+  toolDefinitions
+    .filter((t) => (t as { annotations?: { readOnlyHint?: boolean } }).annotations?.readOnlyHint === true)
+    .map((t) => t.name),
+);
+
 // Tool handler type
 export type ToolResult = {
   content: Array<
@@ -2884,6 +2895,12 @@ export interface ToolCallContext {
    * payload without contacting the Nestr API. Any other tool is refused.
    */
   isPublic?: boolean;
+  /**
+   * When true, this call came in on the READ-ONLY MCP surface. The bearer is
+   * real and workspace data is readable, but only READONLY_TOOL_NAMES are
+   * permitted. Anything that could change state is refused.
+   */
+  isReadOnly?: boolean;
 }
 
 export async function handleToolCall(
@@ -2936,6 +2953,19 @@ async function _handleToolCall(
         schemas.getMe.parse(args);
         return formatResult(PUBLIC_GUEST_ME);
       }
+    }
+
+    // READ-ONLY surface gate (defense in depth — the readonly route also filters
+    // the advertised tool list). Anything not marked readOnlyHint is refused,
+    // including tools carrying no annotation at all.
+    if (context?.isReadOnly && !READONLY_TOOL_NAMES.has(name)) {
+      return formatError({
+        error: true,
+        code: "AUTH_SCOPE_INSUFFICIENT",
+        message: `Tool '${name}' is not available on the read-only Nestr MCP. This workspace is out of AI credit, so the agent can read but not change anything.`,
+        retryable: false,
+        hint: "Add AI credit, or raise the monthly ceiling if that is what was reached, to restore the full toolset.",
+      });
     }
 
     switch (name) {
