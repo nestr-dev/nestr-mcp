@@ -707,8 +707,11 @@ const coerceIntArray = <T extends z.ZodTypeAny>(schema: T) =>
 // Shared description for the sort parameter on list/fetch tools. All of these
 // endpoints honor a `sort` query param server-side (field name, '-' prefix for
 // descending) — the same fields the search `sort:` operator uses.
+const STRIP_DESCRIPTION =
+  "Strip description fields to shrink the response. Use for bulk or index reads.";
+
 const SORT_DESCRIPTION =
-  "Field to sort by, e.g. 'title', 'createdAt', 'updatedAt', 'due', 'activityAt', 'order' (manual order). Prefix with '-' for descending. For 'recently active' ordering use '-activityAt' (last activity anywhere in the item, including its children); '-updatedAt' only reflects the item's own edits.";
+  "Sort field: title, createdAt, updatedAt, due, activityAt, order. Prefix '-' to reverse. For 'recently active' use '-activityAt' (includes children), not '-updatedAt' (own edits only).";
 
 // Tool input schemas using Zod
 export const schemas = {
@@ -1343,7 +1346,7 @@ export const toolDefinitions = [
         sort: { type: "string", description: SORT_DESCRIPTION },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed) for pagination" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for bulk/index operations." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
     },
     ...readOnly,
@@ -1355,7 +1358,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
       required: ["workspaceId"],
     },
@@ -1412,7 +1415,7 @@ export const toolDefinitions = [
         sort: { type: "string", description: `${SORT_DESCRIPTION} Takes precedence over sort:/sort-order: operators in the query.` },
         limit: { type: "number", description: "Max results per page. Do NOT set on first call - let API return default with meta.total count showing total matches." },
         page: { type: "number", description: "Page number (1-indexed) for fetching additional pages" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for bulk/index operations." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
         _listTitle: { type: "string", description: "Short descriptive title for the list UI header (2-4 words, e.g., \"Marketing projects\", \"Overdue tasks\", \"Urgent work\"). Describe WHAT is being shown, not the query syntax." },
       },
       required: ["workspaceId", "query"],
@@ -1430,7 +1433,7 @@ export const toolDefinitions = [
         nestId: { type: "string", description: "Nest ID, or comma-separated IDs to fetch multiple nests at once (e.g., 'id1,id2,id3'). Keep total URL under 2000 chars." },
         fieldsMetaData: { type: "boolean", description: "Set to true to include field schema metadata (available options, field types)" },
         hints: { type: "boolean", description: "Include contextual hints (default: true). Set to false for bulk lookups where you only need structural data." },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
         provenance: { type: "boolean", description: "Single-nest only. Include field/property provenance: which label (and circle context) defines each field and property, e.g. why a role has a given icon." },
         rights: { type: "boolean", description: "Single-nest only. Include the caller's composed rights on the nest (self read/update/delete) plus a deny trace naming the profiles that block each op, and why." },
         forUser: { type: "string", description: "Single-nest only, with rights=true. Report rights for this user id instead of the caller. Requires the caller to be an admin of the nest." },
@@ -1465,7 +1468,7 @@ export const toolDefinitions = [
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
         hints: { type: "boolean", description: "Include contextual hints (default: true). Set to false for large result sets or bulk operations." },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for bulk/index operations." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
         _listTitle: { type: "string", description: "Short descriptive title for the list UI header (e.g., \"Tasks for Website Redesign\", \"API project sub-tasks\"). Include the parent name for context." },
       },
       required: ["nestId"],
@@ -1643,7 +1646,7 @@ export const toolDefinitions = [
         sort: { type: "string", description: SORT_DESCRIPTION },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large workspaces." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
       required: ["workspaceId"],
     },
@@ -1660,7 +1663,7 @@ export const toolDefinitions = [
         sort: { type: "string", description: SORT_DESCRIPTION },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large circles." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
       required: ["workspaceId", "circleId"],
     },
@@ -1688,7 +1691,7 @@ export const toolDefinitions = [
         sort: { type: "string", description: SORT_DESCRIPTION },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large workspaces." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
       required: ["workspaceId"],
     },
@@ -1896,7 +1899,7 @@ export const toolDefinitions = [
         sort: { type: "string", description: SORT_DESCRIPTION },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large workspaces." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
         _listTitle: { type: "string", description: "Short descriptive title for the list UI header (e.g., \"Engineering projects\", \"All projects\"). Omit for default." },
       },
       required: ["workspaceId"],
@@ -1928,7 +1931,7 @@ export const toolDefinitions = [
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         circleId: { type: "string", description: "Circle ID" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
       required: ["workspaceId", "circleId"],
     },
@@ -2021,7 +2024,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         completedAfter: { type: "string", description: "Include completed items from this date (ISO format). If omitted, only non-completed items are returned. For reordering, this default is usually sufficient — nestr_reorder_inbox only requires the IDs of items you want to reposition." },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
     },
     _meta: completableListUi,
@@ -2047,7 +2050,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Inbox item ID" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
       required: ["nestId"],
     },
@@ -2163,7 +2166,7 @@ export const toolDefinitions = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
     },
     _meta: completableListUi,
