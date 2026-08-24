@@ -2281,10 +2281,23 @@ export class NestrClient {
     workspaceId: string,
     agentUserId: string,
     body: { nestId: string; message?: string }
-  ): Promise<{ agentUserId: string; nestId: string; dispatched: boolean }> {
+  ): Promise<{
+    agentUserId: string;
+    nestId: string;
+    dispatched: boolean;
+    watchUrl?: string;
+  }> {
     const response = await this.fetch<{
       status: string;
-      data: { agentUserId: string; nestId: string; dispatched: boolean };
+      data: {
+        agentUserId: string;
+        nestId: string;
+        dispatched: boolean;
+        // The page the run reports back on, absolute. Built server-side: whether
+        // the nest has a feed tab is a label question and the host is the
+        // deployment's own, so neither is ours to assemble.
+        watchUrl?: string;
+      };
     }>(`/workspaces/${workspaceId}/agents/${agentUserId}/run`, {
       method: "POST",
       body: JSON.stringify(body),

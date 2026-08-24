@@ -4464,8 +4464,15 @@ async function _handleToolCall(
           nestId: parsed.nestId,
           message: parsed.message,
         });
+        // A run somebody else asked for is invisible to them until someone says
+        // where it is happening, and this tool's caller is the only party in a
+        // position to. Naming the handover, not just the url, because a link
+        // that reaches the model and not the person is a link nobody sees.
+        const watching = result.watchUrl
+          ? ` Tell whoever asked for this that they can watch it at ${result.watchUrl}, where the agent reports back as it works.`
+          : " It reports back on the item it was run on.";
         return formatResult({
-          message: "The agent was dispatched. It reports back on the item it was run on.",
+          message: `The agent was dispatched.${watching}`,
           ...result,
         });
       }

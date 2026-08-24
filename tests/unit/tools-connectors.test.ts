@@ -396,6 +396,50 @@ describe("connector tools", () => {
     expect(parseResult(result.content[0].text).dispatched).toBe(true);
   });
 
+  it("nestr_run_agent hands the watch page on, since the caller is the only one who can", async () => {
+    // A run another agent started is invisible to the person who asked until
+    // someone tells them where it is. The url is built server-side; this pins
+    // that the tool passes it to the model AND says to give it to the person,
+    // because a link only the model sees is a link nobody sees.
+    mockFetch.mockResolvedValue(mockResponse(200, {
+      status: "success",
+      data: {
+        agentUserId: "bot-1",
+        nestId: "role-7",
+        dispatched: true,
+        watchUrl: "https://app.example.com/n/role-7#feed",
+      },
+    }));
+
+    const result = await handleToolCall(client, "nestr_run_agent", {
+      workspaceId: "ws1",
+      agentUserId: "bot-1",
+      nestId: "role-7",
+    });
+    expect(result.isError).toBeFalsy();
+
+    const parsed = parseResult(result.content[0].text);
+    expect(parsed.watchUrl).toBe("https://app.example.com/n/role-7#feed");
+    expect(parsed.message).toContain("https://app.example.com/n/role-7#feed");
+    expect(parsed.message).toMatch(/tell whoever asked/i);
+  });
+
+  it("nestr_run_agent says nothing about a watch page when the server named none", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, {
+      status: "success",
+      data: { agentUserId: "bot-1", nestId: "role-7", dispatched: true },
+    }));
+
+    const result = await handleToolCall(client, "nestr_run_agent", {
+      workspaceId: "ws1",
+      agentUserId: "bot-1",
+      nestId: "role-7",
+    });
+    const parsed = parseResult(result.content[0].text);
+    expect(parsed.message).not.toContain("watch it at");
+    expect(parsed.message).toContain("reports back on the item");
+  });
+
   it("nestr_run_agent requires the nest the run is pinned to", async () => {
     const result = await handleToolCall(client, "nestr_run_agent", {
       workspaceId: "ws1",
