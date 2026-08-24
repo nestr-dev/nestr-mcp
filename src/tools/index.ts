@@ -2517,6 +2517,7 @@ export const toolDefinitions = [
       },
       required: ["nestId", "tensionId", "partId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_create_tension_part_child",
@@ -2772,6 +2773,16 @@ export const toolDefinitions = [
     ...destructive,
   },
 ];
+
+// The read-only surface (/mcp/readonly) serves an authenticated bearer but only
+// tools that cannot change anything. Derived from the annotations rather than a
+// hand-kept list, so a new tool is denied until someone marks it readOnly: the
+// failure mode of forgetting is a missing capability, not a silent write.
+export const READONLY_TOOL_NAMES: ReadonlySet<string> = new Set(
+  toolDefinitions
+    .filter((t) => (t as { annotations?: { readOnlyHint?: boolean } }).annotations?.readOnlyHint === true)
+    .map((t) => t.name),
+);
 
 // Tool handler type
 export type ToolResult = {
