@@ -22,6 +22,7 @@ vi.mock("mcpcat", () => ({
 }));
 
 const { app, sessions, publicSessions, sweepStaleSessions, SSE_DEAD_IDLE_TIMEOUT_MS } = await import("../src/http.js");
+const { READONLY_TOOL_NAMES } = await import("../src/tools/index.js");
 
 describe("HTTP Server", () => {
   beforeEach(() => {
@@ -1090,6 +1091,159 @@ describe("HTTP Server", () => {
         .set("Accept", "application/json, text/event-stream")
         .send({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "x", version: "1" } }, id: 1 });
       expect(guest.status).toBe(200);
+    });
+  });
+
+  // ─── Read-only (authenticated) MCP surface ─────────────────────────
+  // POST /mcp/readonly is authenticated exactly like POST /mcp — the only
+  // differences are the filtered tools/list and the isReadOnly gate on
+  // handleToolCall. Sessions live in the normal `sessions` map (not an
+  // isolated one) and are persisted for rehydration like any authed session.
+
+  describe("POST /mcp/readonly", () => {
+    /** Parse a JSON-mode MCP response (transport returns SSE-framed text even in JSON mode for tool calls). */
+    function parseBody(res: { text: string; body: any }): any {
+      if (res.body && Object.keys(res.body).length > 0 && res.body.jsonrpc) return res.body;
+      const dataLine = res.text.split("\n").find((l) => l.startsWith("data: "));
+      if (!dataLine) throw new Error(`No JSON-RPC payload in: ${res.text.slice(0, 200)}`);
+      return JSON.parse(dataLine.slice("data: ".length));
+    }
+
+    async function initReadonlySession(token: string): Promise<string> {
+      // Init probes /users/me to identify the caller — return success so the
+      // session gets created, mirroring how /mcp Flow B sessions initialize.
+      const initFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ _id: "user-1", username: "alice", profile: { fullName: "Alice" } }),
+        json: async () => ({ _id: "user-1", username: "alice", profile: { fullName: "Alice" } }),
+      });
+      vi.stubGlobal("fetch", initFetch);
+
+      const res = await request(app)
+        .post("/mcp/readonly")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", `Bearer ${token}`)
+        .send({
+          jsonrpc: "2.0",
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "readonly-test", version: "1.0" },
+          },
+          id: 1,
+        });
+
+      vi.unstubAllGlobals();
+      expect(res.status).toBe(200);
+      const sid = res.headers["mcp-session-id"];
+      expect(sid).toBeDefined();
+      return sid;
+    }
+
+    it("401s without a bearer, same as /mcp", async () => {
+      const res = await request(app)
+        .post("/mcp/readonly")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .send({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "x", version: "1" } }, id: 1 });
+      expect(res.status).toBe(401);
+    });
+
+    it("tools/list (no session) returns exactly READONLY_TOOL_NAMES, even with a bearer", async () => {
+      const res = await request(app)
+        .post("/mcp/readonly")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", "Bearer some-bearer")
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 1 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.result.tools.length).toBe(READONLY_TOOL_NAMES.size);
+      expect(res.body.result.tools.every((t: { annotations?: { readOnlyHint?: boolean } }) => t.annotations?.readOnlyHint === true)).toBe(true);
+    });
+
+    it("a real session lives in the authenticated `sessions` map, tagged isReadOnly", async () => {
+      const sid = await initReadonlySession("readonly-token-a");
+      expect(sessions[sid]).toBeDefined();
+      expect(sessions[sid].isReadOnly).toBe(true);
+      expect(sessions[sid].isPublic).toBeFalsy();
+    });
+
+    it("tools/list within a session also returns exactly READONLY_TOOL_NAMES", async () => {
+      const sid = await initReadonlySession("readonly-token-b");
+      const res = await request(app)
+        .post("/mcp/readonly")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", "Bearer readonly-token-b")
+        .set("mcp-session-id", sid)
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 2 });
+
+      expect(res.status).toBe(200);
+      const payload = parseBody(res);
+      expect(payload.result.tools.length).toBe(READONLY_TOOL_NAMES.size);
+    });
+
+    it("refuses a write tool (nestr_update_nest) with AUTH_SCOPE_INSUFFICIENT after a valid auth check", async () => {
+      const sid = await initReadonlySession("readonly-token-c");
+
+      // A tool call always re-probes preflight (not cached from init, which
+      // isn't a tools/call), so the probe fetch fires once and succeeds. The
+      // gate then refuses before any second, tool-level Nestr call.
+      const probeOnly = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ _id: "user-1" }),
+        json: async () => ({ _id: "user-1" }),
+      });
+      vi.stubGlobal("fetch", probeOnly);
+
+      const res = await request(app)
+        .post("/mcp/readonly")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", "Bearer readonly-token-c")
+        .set("mcp-session-id", sid)
+        .send({ jsonrpc: "2.0", method: "tools/call", params: { name: "nestr_update_nest", arguments: { nestId: "x" } }, id: 2 });
+
+      expect(res.status).toBe(200); // tool-level refusal, not a transport error
+      const payload = parseBody(res);
+      expect(payload.result.isError).toBe(true);
+      const parsed = JSON.parse(payload.result.content[0].text);
+      expect(parsed.code).toBe("AUTH_SCOPE_INSUFFICIENT");
+      // Only the preflight probe fired — the gate refused before any
+      // tool-level (write) call reached Nestr.
+      expect(probeOnly).toHaveBeenCalledTimes(1);
+      vi.unstubAllGlobals();
+    });
+
+    it("does NOT refuse a read tool at the gate (reaches the real handler instead)", async () => {
+      const sid = await initReadonlySession("readonly-token-d");
+
+      const toolFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ _id: "nest-1", title: "A nest" }),
+        json: async () => ({ _id: "nest-1", title: "A nest" }),
+      });
+      vi.stubGlobal("fetch", toolFetch);
+
+      const res = await request(app)
+        .post("/mcp/readonly")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", "Bearer readonly-token-d")
+        .set("mcp-session-id", sid)
+        .send({ jsonrpc: "2.0", method: "tools/call", params: { name: "nestr_get_nest", arguments: { nestId: "nest-1" } }, id: 2 });
+
+      expect(res.status).toBe(200);
+      const payload = parseBody(res);
+      const text = payload.result.content[0].text;
+      expect(text).not.toContain("AUTH_SCOPE_INSUFFICIENT");
+      vi.unstubAllGlobals();
     });
   });
 

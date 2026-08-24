@@ -12,7 +12,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { NestrClient, createClientFromEnv } from "./api/client.js";
 import { VERSION } from "./version.js";
-import { toolDefinitions, handleToolCall, PUBLIC_TOOL_NAMES } from "./tools/index.js";
+import { toolDefinitions, handleToolCall, PUBLIC_TOOL_NAMES, READONLY_TOOL_NAMES } from "./tools/index.js";
 import { getCompletableListHtml, appResources } from "./apps/index.js";
 // Skills instructions are now served on-demand via nestr_help tool (see src/help/topics.ts)
 import * as mcpcat from "mcpcat";
@@ -38,6 +38,14 @@ export interface NestrMcpServerConfig {
    * false — the standard authenticated /mcp surface is unchanged.
    */
   isPublic?: boolean;
+  /**
+   * Read-only mode. When true the server advertises only READONLY_TOOL_NAMES
+   * (tools annotated readOnlyHint: true) and every tool call is run with
+   * isReadOnly=true, so anything that could change state is refused. Unlike
+   * isPublic, the bearer is real: workspace data is readable. Defaults to
+   * false.
+   */
+  isReadOnly?: boolean;
 }
 
 // Server instructions provide context to AI assistants about what Nestr is and how to use it
@@ -136,7 +144,9 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const tools = config.isPublic
       ? toolDefinitions.filter((t) => PUBLIC_TOOL_NAMES.has(t.name))
-      : toolDefinitions;
+      : config.isReadOnly
+        ? toolDefinitions.filter((t) => READONLY_TOOL_NAMES.has(t.name))
+        : toolDefinitions;
     return { tools };
   });
 
@@ -149,6 +159,7 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
       const result = await handleToolCall(client, name, toolArgs, {
         getDiagnose: config.getDiagnose,
         isPublic: config.isPublic,
+        isReadOnly: config.isReadOnly,
       });
 
       // Track successful tool call
