@@ -1953,9 +1953,10 @@ export const toolDefinitions = [
       "Adds a user to a workspace by email, creating the account if needed. It SENDS A REAL INVITE "
       + "EMAIL, so confirm with the requester first. Covers seats, membership, plan headcount, adding "
       + "a colleague. It provisions only domains the workspace added and Nestr verified: personal "
-      + "providers (gmail.com) are always refused, pending domains until verified. That limits this "
-      + "tool, not the workspace. The in-app invite (Workspace settings, Users, \"Invite users\") "
-      + "takes any address unverified, so offer it first on a refusal. NEVER suggest clearing the "
+      + "providers (gmail.com) are always refused, and an added domain stays refused until verified. "
+      + "That limits this tool, not the workspace. The in-app invite (Workspace settings, Users, "
+      + "\"Invite users\") accepts any address with no domain check, so offer it first on a refusal. "
+      + "NEVER suggest clearing the "
       + "workspace domain list: it keeps the requirement, kills the only way to meet it, and breaks "
       + "auto-join. Suggest adding a domain only when they control that company domain. Nestr review "
       + "takes up to 24 hours.",
