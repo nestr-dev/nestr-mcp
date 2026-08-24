@@ -1029,11 +1029,18 @@ export class NestrClient {
   // shared posts handler server-side, so grants, depth and nesting behave the same here.
 
   async listDMs(
-    options?: { withUser?: string; unread?: boolean; limit?: number; page?: number }
+    options?: {
+      withUser?: string;
+      unread?: boolean;
+      includeCompleted?: boolean;
+      limit?: number;
+      page?: number;
+    }
   ): Promise<Record<string, unknown>[]> {
     const params = new URLSearchParams();
     if (options?.withUser) params.set("user", options.withUser);
     if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    if (options?.includeCompleted) params.set("includeCompleted", "true");
     if (options?.limit !== undefined) params.set("limit", String(options.limit));
     if (options?.page !== undefined) params.set("page", String(options.page));
     const query = params.toString();
@@ -1081,9 +1088,18 @@ export class NestrClient {
     );
   }
 
+  // The body is a partial nest, the same shape PATCH /nests/{id} takes: the keys you send
+  // are the ones that change, and `users` is the participant list you want rather than a
+  // pair of add/remove lists. A DM thread is a nest, so it needs no second vocabulary.
   async updateDMThread(
     threadId: string,
-    body: { title?: string; addUsers?: string[]; removeUsers?: string[] }
+    body: {
+      title?: string;
+      // null reopens a closed conversation, true closes one. Absent leaves it alone,
+      // which is why the caller passes the key through rather than a boolean.
+      completed?: boolean | null;
+      users?: string[];
+    }
   ): Promise<Record<string, unknown>> {
     return this.fetch<Record<string, unknown>>(`/users/me/dm/${threadId}`, {
       method: "PATCH",
@@ -1118,11 +1134,23 @@ export class NestrClient {
     return this.fetch<Record<string, unknown>>(`/posts/${postId}/read`, { method: "POST" });
   }
 
+  // suppressStatusMessage always rides along: whoever called this tool is told to say a
+  // human is coming, so the canned confirmation on the thread would be the same news
+  // twice. It is a request, not an instruction. Nestr grants it only while an agent
+  // reply to that same thread is pending, so a client whose answer lands somewhere else
+  // (this server also runs outside the Nestradamus runtime) leaves the thread with the
+  // confirmation it needs. The response says which way it went.
+  // Unwrapped to `data`, unlike its DM siblings: the caller reads flags off this
+  // (alreadyQueued, statusMessagePosted) and reading them off the envelope silently
+  // yielded undefined every time, so the already-queued branch never fired.
   async escalateDMThread(threadId: string, reason?: string): Promise<Record<string, unknown>> {
-    return this.fetch<Record<string, unknown>>(`/users/me/dm/${threadId}/escalate`, {
-      method: "POST",
-      body: JSON.stringify(reason ? { reason } : {}),
-    });
+    const body: Record<string, unknown> = { suppressStatusMessage: true };
+    if (reason) body.reason = reason;
+    const response = await this.fetch<{ data?: Record<string, unknown> }>(
+      `/users/me/dm/${threadId}/escalate`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+    return response?.data ?? {};
   }
 
   // ============ CIRCLES & ROLES ============

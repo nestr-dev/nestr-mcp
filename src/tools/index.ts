@@ -272,6 +272,13 @@ interface Hint {
   endpoints?: ApiHintEndpoint[];
   lastPost?: string;
   readAt?: string;
+  // The `tabs` and `settings` hints carry where a PERSON can be sent in the web app —
+  // which tabs this viewer can open on this nest, and the URL for each. There is no tool
+  // call to translate them into and there should not be: the answer is a link to hand
+  // over, not an API call to make. Nestr sends these absolute, host and all, so nothing
+  // here rewrites them; the field is declared so a reader can see the passthrough is
+  // deliberate rather than an oversight.
+  tabs?: { id: string; title: string; url: string }[];
   toolCall?: { tool: string; params: Record<string, unknown> };
   toolCalls?: EnrichedToolCall[];
 }
@@ -364,7 +371,7 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     pattern: /^\/users\/me\/dm\/([^/]+)\/?$/,
     tool: "nestr_update_dm_thread",
     pathParamNames: ["threadId"],
-    bodyParams: new Set(["title", "addUsers", "removeUsers"]),
+    bodyParams: new Set(["title", "completed", "users"]),
   },
   {
     method: "POST",
@@ -543,6 +550,23 @@ export function commentPlacementNote(
 
 // Enrich hints with tool call parameters so models can act on hints directly.
 // Extracts workspaceId from nest ancestors (last element) for search-based hints.
+// Canonical web URL for a nest in the Nestr app.
+// Pattern: /n/{parentId}/{id} when a parent context is known, /n/{id} otherwise.
+// Parent 'inbox' is treated as no parent — inbox is not a navigable container.
+//
+// The host comes from the API base this server was pointed at, because these URLs are
+// handed to a person and have to open on the Nestr they are using. Hardcoding the
+// production host meant a self-hosted or local deployment answered with app.nestr.io
+// links for nests that only exist on their own server — a wrong link, confidently given,
+// which is the failure this whole area keeps producing. Hint URLs do not need this:
+// Nestr sends those absolute already. This is for the URLs this server mints itself.
+export function nestrWebBase(apiBase?: string): string {
+  const base = apiBase || "https://app.nestr.io/api";
+  return base.replace(/\/api\/?$/, "").replace(/\/+$/, "") || "https://app.nestr.io";
+}
+
+const NESTR_WEB_BASE = nestrWebBase(process.env.NESTR_API_BASE);
+
 export function enrichHints<T>(data: T): T {
   if (!data || typeof data !== "object") return data;
 
@@ -621,11 +645,6 @@ export function enrichHints<T>(data: T): T {
   // `data` would discard both the enriched payload and the enriched envelope hints.
   return subject as T;
 }
-
-// Canonical web URL for a nest in the Nestr app.
-// Pattern: /n/{parentId}/{id} when a parent context is known, /n/{id} otherwise.
-// Parent 'inbox' is treated as no parent — inbox is not a navigable container.
-const NESTR_WEB_BASE = "https://app.nestr.io";
 
 function buildNestUrl(id: string, parentId: string | undefined): string {
   if (parentId && parentId.toLowerCase() !== "inbox") {
@@ -737,6 +756,7 @@ export const schemas = {
   listDMs: z.object({
     withUser: z.string().optional().describe("Only threads with this person: their user id, username or email. Use 'nestr_support' for your Nestradamus conversation. Errors if you cannot message them."),
     unread: z.boolean().optional().describe("true returns only threads with messages you have not read"),
+    includeCompleted: z.boolean().optional().describe("true also returns closed conversations. They are left out by default."),
     limit: z.number().optional().describe("Threads per page (default 50, max 200)"),
     page: z.number().optional().describe("Page number, 1-based"),
   }),
@@ -761,8 +781,8 @@ export const schemas = {
   updateDMThread: z.object({
     threadId: z.string().describe("Thread id"),
     title: z.string().optional().describe("New thread title"),
-    addUsers: z.array(z.string()).optional().describe("User ids to invite. You must share a workspace with them; they will see the whole thread."),
-    removeUsers: z.array(z.string()).optional().describe("User ids to remove. Pass your own id to leave. The bot and the thread owner cannot be removed."),
+    completed: z.boolean().nullable().optional().describe("true closes the conversation, null reopens it. A closed one drops out of nestr_list_dms unless includeCompleted is set, and stays readable and postable by id. Repeating a state changes nothing."),
+    users: z.array(z.string()).optional().describe("The participant list you want, replacing the current one — read it from nestr_get_dm_thread first. Anyone you add sees the whole thread and must be someone you share a workspace with; the bot and the person who raised the thread cannot be removed. Leave a conversation by sending the list without yourself."),
   }),
 
   getDMPosts: z.object({
@@ -1714,12 +1734,13 @@ export const toolDefinitions = [
   // first: start from nestr_list_dms, optionally narrowed to one person with withUser.
   {
     name: "nestr_list_dms",
-    description: "List your direct-message threads, most recently posted first. Pass withUser to see only the ones with a particular person; withUser:'nestr_support' is your Nestradamus conversation. Each thread carries participants, so a flat list still tells you who you are talking to.",
+    description: "List your open direct-message threads, most recently posted first. Closed ones are left out unless includeCompleted is set. Pass withUser to see only the ones with a particular person; withUser:'nestr_support' is your Nestradamus conversation. Each thread carries participants, so a flat list still tells you who you are talking to.",
     inputSchema: {
       type: "object" as const,
       properties: {
         withUser: { type: "string", description: "Only threads with this person: user id, username or email" },
         unread: { type: "boolean", description: "Only threads with messages you have not read" },
+        includeCompleted: { type: "boolean", description: "Also return closed conversations (left out by default)" },
         limit: { type: "number", description: "Threads per page (default 50, max 200)" },
         page: { type: "number", description: "Page number, 1-based" },
       },
@@ -1777,14 +1798,14 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_dm_thread",
-    description: "Rename a direct-message thread, or invite and remove people. Inviting shows them the whole thread, and you must share a workspace with them. Pass your own id in removeUsers to leave; the bot and the thread owner cannot be removed.",
+    description: "Update a direct-message thread: rename it, close or reopen it, or change who is in it. Send only the keys you want changed, as with nestr_update_nest. completed:true closes a conversation once it is dealt with, which takes it out of nestr_list_dms without losing it; completed:null reopens. `users` is the participant list you want, so read the thread first and send the list with someone added or removed; the bot and the person who raised the thread cannot be removed. Answers with the updated thread.",
     inputSchema: {
       type: "object" as const,
       properties: {
         threadId: { type: "string", description: "Thread id" },
         title: { type: "string", description: "New thread title" },
-        addUsers: { type: "array", items: { type: "string" }, description: "User ids to invite" },
-        removeUsers: { type: "array", items: { type: "string" }, description: "User ids to remove" },
+        completed: { type: ["boolean", "null"], description: "true closes the conversation, null reopens it" },
+        users: { type: "array", items: { type: "string" }, description: "The participant list you want, replacing the current one" },
       },
       required: ["threadId"],
     },
@@ -1971,9 +1992,9 @@ export const toolDefinitions = [
       + "providers (gmail.com) are always refused, and an added domain stays refused until verified. "
       + "That limits this tool, not the workspace. The in-app invite (Workspace settings, Users, "
       + "\"Invite users\") accepts any address with no domain check, so offer it first on a refusal. "
-      + "NEVER suggest clearing the "
-      + "workspace domain list: it keeps the requirement, kills the only way to meet it, and breaks "
-      + "auto-join. Suggest adding a domain only when they control that company domain. Nestr review "
+      + "NEVER suggest clearing the workspace domain list: it keeps the requirement, kills the only "
+      + "way to meet it, and breaks auto-join. Suggest adding a domain only when they control that "
+      + "company domain. Nestr review "
       + "takes up to 24 hours.",
     inputSchema: {
       type: "object" as const,
@@ -3550,6 +3571,7 @@ async function _handleToolCall(
         const result = await client.listDMs({
           withUser: parsed.withUser,
           unread: parsed.unread,
+          includeCompleted: parsed.includeCompleted,
           limit: parsed.limit,
           page: parsed.page,
         });
@@ -3582,15 +3604,24 @@ async function _handleToolCall(
 
       case "nestr_update_dm_thread": {
         const parsed = schemas.updateDMThread.parse(args);
-        if (parsed.title === undefined && !parsed.addUsers?.length && !parsed.removeUsers?.length) {
-          throw new Error("Pass at least one of title, addUsers or removeUsers.");
+        // `completed` is meaningful as null, so presence is the test rather than truth.
+        const setsCompleted = args !== null
+          && typeof args === "object"
+          && Object.prototype.hasOwnProperty.call(args, "completed");
+        if (parsed.title === undefined && !setsCompleted && parsed.users === undefined) {
+          throw new Error("Pass at least one of title, completed or users.");
         }
         const result = await client.updateDMThread(parsed.threadId, {
           ...(parsed.title !== undefined ? { title: parsed.title } : {}),
-          ...(parsed.addUsers ? { addUsers: parsed.addUsers } : {}),
-          ...(parsed.removeUsers ? { removeUsers: parsed.removeUsers } : {}),
+          ...(setsCompleted ? { completed: parsed.completed ?? null } : {}),
+          ...(parsed.users !== undefined ? { users: parsed.users } : {}),
         });
-        return formatResult({ message: "Thread updated", thread: result });
+        return formatResult({
+          message: setsCompleted && parsed.completed
+            ? "Conversation closed"
+            : "Thread updated",
+          thread: result,
+        });
       }
 
       case "nestr_get_dm_posts": {
@@ -3617,13 +3648,19 @@ async function _handleToolCall(
       case "nestr_escalate_to_support": {
         const parsed = schemas.escalateToSupport.parse(args);
         const result = await client.escalateDMThread(parsed.threadId, parsed.reason);
-        const already = (result as { alreadyQueued?: boolean }).alreadyQueued;
-        return formatResult({
-          message: already
-            ? "Already with a human; nothing more to do."
-            : "A human has been brought in. Tell them so, and keep helping in the meantime.",
-          escalation: result,
-        });
+        const { alreadyQueued, statusMessagePosted } = result as {
+          alreadyQueued?: boolean;
+          statusMessagePosted?: boolean;
+        };
+        let message = "A human has been brought in. Tell them so, and keep helping in the meantime.";
+        if (alreadyQueued) {
+          message = "Already with a human; nothing more to do.";
+        } else if (statusMessagePosted) {
+          // Nestr posted its own confirmation into the thread, so saying it again is the
+          // double message this flag exists to avoid.
+          message = "A human has been brought in and the thread already says so. Do not repeat it; carry on helping.";
+        }
+        return formatResult({ message, escalation: result });
       }
 
       // Reorder tools
