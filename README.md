@@ -115,7 +115,7 @@ Ask your AI assistant things like:
 | `nestr_list_roles` | List all roles |
 | `nestr_list_users` | List workspace members |
 | `nestr_get_user` | Get user details |
-| `nestr_add_workspace_user` | Add a user to the workspace |
+| `nestr_add_workspace_user` | Add a user to the workspace and email them an invite (API provisioning needs a verified domain; the in-app invite does not) |
 
 ### Tensions
 

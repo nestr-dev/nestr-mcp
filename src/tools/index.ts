@@ -1953,7 +1953,16 @@ export const toolDefinitions = [
       "Add a user to a workspace by email. Creates the account if it does not exist, adds them, "
       + "and SENDS THEM AN INVITE EMAIL, so confirm with the person asking before you call it: a real "
       + "person receives that mail. This is the action behind requests about seats, membership, "
-      + "extending a plan by a person, or getting a colleague in.",
+      + "extending a plan by a person, or getting a colleague in. "
+      + "This tool only provisions addresses on a domain the workspace has added AND that Nestr has "
+      + "verified, so it refuses personal providers such as gmail.com outright and refuses any domain "
+      + "while verification is pending. That limit is on this tool, NOT on the workspace: the in-app "
+      + "invite under Workspace settings, Users, \"Invite users\" accepts any email address and needs "
+      + "no domain verification. When this tool refuses, walk the person through that in-app invite "
+      + "as the first option, since they can do it themselves in seconds. Never tell them to remove or "
+      + "clear the workspace domain list: that does not lift the requirement, it destroys the only way "
+      + "to satisfy it and breaks auto-join. Only suggest adding and verifying a domain when it is a "
+      + "company domain they control, and say it needs a Nestr review that takes up to 24 hours.",
     inputSchema: {
       type: "object" as const,
       properties: {
