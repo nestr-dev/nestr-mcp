@@ -1778,6 +1778,27 @@ async function handleMcpPost(req: Request, res: Response, routeOpts: { isReadOnl
           return;
         }
 
+        // Route/session confinement, same shape as the token-swap check above.
+        // A session created on plain /mcp (isReadOnly falsy) presented to
+        // /mcp/readonly must not silently inherit the full toolset just
+        // because the two routes share one session map. The reverse is
+        // already safe without a check: a read-only session presented to
+        // /mcp stays gated by its own isReadOnly flag inside handleToolCall.
+        // Don't close the session here — it's still perfectly valid on /mcp,
+        // just not on this route. Re-initialize on /mcp/readonly instead.
+        if (isReadOnly && !session.isReadOnly) {
+          console.log(`Session ${sessionId} was not created on /mcp/readonly — refusing, client must re-initialize`);
+          res.status(404).json({
+            jsonrpc: "2.0",
+            error: {
+              code: -32001,
+              message: "Session not created on the read-only surface; re-initialize.",
+            },
+            id: req.body?.id ?? null,
+          });
+          return;
+        }
+
         // Pre-flight upstream auth check. For Flow A this leans on the existing
         // getOAuthSession refresh-or-return logic; for Flow B (Cowork etc.) it
         // probes Nestr with /users/me on tool calls. Either way, if the bearer

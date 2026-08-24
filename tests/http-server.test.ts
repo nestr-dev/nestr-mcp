@@ -1245,6 +1245,50 @@ describe("HTTP Server", () => {
       expect(text).not.toContain("AUTH_SCOPE_INSUFFICIENT");
       vi.unstubAllGlobals();
     });
+
+    it("refuses a full session (initialized on plain /mcp) presented to /mcp/readonly", async () => {
+      // Session created on the FULL surface, not the read-only one.
+      const initFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ _id: "user-1", username: "alice" }),
+        json: async () => ({ _id: "user-1", username: "alice" }),
+      });
+      vi.stubGlobal("fetch", initFetch);
+
+      const initRes = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", "Bearer full-session-token")
+        .send({
+          jsonrpc: "2.0",
+          method: "initialize",
+          params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "full-client", version: "1.0" } },
+          id: 1,
+        });
+      vi.unstubAllGlobals();
+      expect(initRes.status).toBe(200);
+      const sid = initRes.headers["mcp-session-id"];
+      expect(sessions[sid].isReadOnly).toBeFalsy();
+
+      // Same session id, same bearer, presented to /mcp/readonly. Must be
+      // refused (404, re-initialize) rather than silently served the full
+      // toolset — the route, not just the credential, decides the surface.
+      const res = await request(app)
+        .post("/mcp/readonly")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", "Bearer full-session-token")
+        .set("mcp-session-id", sid)
+        .send({ jsonrpc: "2.0", method: "tools/list", id: 2 });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error.message).toMatch(/re-initialize/i);
+
+      // The session itself is untouched — still valid on /mcp.
+      expect(sessions[sid]).toBeDefined();
+    });
   });
 
   // ─── Stale-Session Sweep ──────────────────────────────────────────
