@@ -34,7 +34,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createServer } from "./server.js";
-import { toolDefinitions, PUBLIC_TOOL_NAMES } from "./tools/index.js";
+import { toolDefinitions, PUBLIC_TOOL_NAMES, READONLY_TOOL_NAMES } from "./tools/index.js";
 import { NestrClient, NestrApiError, tokenFingerprint } from "./api/client.js";
 import {
   getProtectedResourceMetadata,
@@ -1047,6 +1047,7 @@ export interface SessionData {
   mcpClientVersion?: string; // MCP client version from clientInfo.version (e.g., "1.4.2")
   isApiKey: boolean; // Whether the auth came in via X-Nestr-API-Key
   isPublic?: boolean; // Public (unauthenticated) guest session — exposes only the help tools, never touches Nestr data
+  isReadOnly?: boolean; // Read-only (authenticated) session — real bearer, but only READONLY_TOOL_NAMES are permitted
   wantsJsonOnly: boolean; // Whether the client preferred JSON over SSE at init
   hasStoredOAuthSession: boolean; // Whether the server holds a refreshable OAuth session for this token
   userId?: string; // Resolved user ID (or workspace ID for API keys)
@@ -1223,6 +1224,8 @@ function buildMcpSession(opts: {
   isApiKey: boolean;
   /** Public (unauthenticated) guest session — only the help tools, no Nestr data access. */
   isPublic?: boolean;
+  /** Read-only (authenticated) session — real bearer, but only READONLY_TOOL_NAMES are permitted. */
+  isReadOnly?: boolean;
   mcpClient?: string;
   /** MCP `clientInfo.version` from the initialize handshake. Forwarded to OAuth + diagnose. */
   mcpClientVersion?: string;
@@ -1280,6 +1283,7 @@ function buildMcpSession(opts: {
   const server = createServer({
     client,
     isPublic: opts.isPublic,
+    isReadOnly: opts.isReadOnly,
     userId: opts.userId,
     userName: opts.userName,
     onToolCall: (toolName, args, success, error) => {
@@ -1327,6 +1331,7 @@ function buildMcpSession(opts: {
         mcpClientVersion: opts.mcpClientVersion,
         isApiKey: opts.isApiKey,
         isPublic: opts.isPublic,
+        isReadOnly: opts.isReadOnly,
         wantsJsonOnly: opts.wantsJsonOnly,
         hasStoredOAuthSession: opts.hasStoredOAuthSession,
         userId: opts.userId,
@@ -1344,6 +1349,8 @@ function buildMcpSession(opts: {
       // Persist for rehydration after restart. Public guest sessions are never
       // persisted: they hold no token, so rehydration's token cross-check could
       // never match, and there's no user state worth surviving a restart.
+      // Read-only sessions ARE persisted: they carry a real bearer and should
+      // rehydrate across a pod restart just like the full authenticated surface.
       if (!opts.isPublic) getStore().storeMcpSession(newSessionId, {
         authToken: opts.authToken,
         mcpClient: opts.mcpClient,
@@ -1351,6 +1358,7 @@ function buildMcpSession(opts: {
         userId: opts.userId,
         userName: opts.userName,
         isApiKey: opts.isApiKey,
+        isReadOnly: opts.isReadOnly,
         wantsJsonOnly: opts.wantsJsonOnly,
         hasStoredOAuthSession: opts.hasStoredOAuthSession,
         createdAt: Date.now(),
@@ -1413,6 +1421,7 @@ function buildMcpSession(opts: {
       mcpClientVersion: opts.mcpClientVersion,
       isApiKey: opts.isApiKey,
       isPublic: opts.isPublic,
+      isReadOnly: opts.isReadOnly,
       wantsJsonOnly: opts.wantsJsonOnly,
       hasStoredOAuthSession: opts.hasStoredOAuthSession,
       userId: opts.userId,
@@ -1440,6 +1449,7 @@ function buildMcpSession(opts: {
     mcpClientVersion: opts.mcpClientVersion,
     isApiKey: opts.isApiKey,
     isPublic: opts.isPublic,
+    isReadOnly: opts.isReadOnly,
     wantsJsonOnly: opts.wantsJsonOnly,
     hasStoredOAuthSession: opts.hasStoredOAuthSession,
     userId: opts.userId,
@@ -1485,6 +1495,7 @@ async function rehydrateSession(sessionId: string, authToken: string): Promise<S
   const session = buildMcpSession({
     authToken: stored.authToken,
     isApiKey: stored.isApiKey,
+    isReadOnly: stored.isReadOnly,
     mcpClient: stored.mcpClient,
     mcpClientVersion: stored.mcpClientVersion,
     userId: stored.userId,
@@ -1714,7 +1725,15 @@ app.post("/mcp", async (req: Request, res: Response) => {
   await runWithContext({ correlationId }, () => handleMcpPost(req, res));
 });
 
-async function handleMcpPost(req: Request, res: Response): Promise<void> {
+/**
+ * Shared handler for POST /mcp and POST /mcp/readonly. `routeOpts.isReadOnly`
+ * is the only behavioral difference between the two surfaces: it narrows the
+ * session-less tools/list shortcut to READONLY_TOOL_NAMES and tags the built
+ * session with isReadOnly so handleToolCall's gate refuses everything else.
+ * Auth, session lookup, rehydration and preflight are identical either way.
+ */
+async function handleMcpPost(req: Request, res: Response, routeOpts: { isReadOnly?: boolean } = {}): Promise<void> {
+  const isReadOnly = routeOpts.isReadOnly === true;
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   const authToken = getAuthToken(req);
   const isApiKey = !!req.headers["x-nestr-api-key"];
@@ -1753,6 +1772,27 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
             error: {
               code: -32001,
               message: "Session credential changed; re-initialize.",
+            },
+            id: req.body?.id ?? null,
+          });
+          return;
+        }
+
+        // Route/session confinement, same shape as the token-swap check above.
+        // A session created on plain /mcp (isReadOnly falsy) presented to
+        // /mcp/readonly must not silently inherit the full toolset just
+        // because the two routes share one session map. The reverse is
+        // already safe without a check: a read-only session presented to
+        // /mcp stays gated by its own isReadOnly flag inside handleToolCall.
+        // Don't close the session here — it's still perfectly valid on /mcp,
+        // just not on this route. Re-initialize on /mcp/readonly instead.
+        if (isReadOnly && !session.isReadOnly) {
+          console.log(`Session ${sessionId} was not created on /mcp/readonly — refusing, client must re-initialize`);
+          res.status(404).json({
+            jsonrpc: "2.0",
+            error: {
+              code: -32001,
+              message: "Session not created on the read-only surface; re-initialize.",
             },
             id: req.body?.id ?? null,
           });
@@ -1808,11 +1848,14 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
     }
 
     // Allow unauthenticated tools/list for tool scanners (e.g., OpenAI app submission)
-    // Tool definitions are public (published on npm/GitHub), no data is exposed
-    if (!authToken && req.body?.method === "tools/list") {
+    // Tool definitions are public (published on npm/GitHub), no data is exposed.
+    // On the read-only surface this shortcut always applies (not only when
+    // authToken is absent), so a bearer-carrying client can fetch the filtered
+    // list without first standing up a session.
+    if ((isReadOnly || !authToken) && req.body?.method === "tools/list") {
       res.json({
         jsonrpc: "2.0",
-        result: { tools: toolDefinitions },
+        result: { tools: isReadOnly ? toolDefinitions.filter((t) => READONLY_TOOL_NAMES.has(t.name)) : toolDefinitions },
         id: req.body?.id ?? null,
       });
       return;
@@ -1988,6 +2031,7 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
     const session = buildMcpSession({
       authToken,
       isApiKey,
+      isReadOnly,
       mcpClient: mcpClientName,
       mcpClientVersion,
       userId,
@@ -2239,10 +2283,40 @@ app.delete("/mcp/public", async (req: Request, res: Response) => {
   }
 });
 
+// ─── READ-ONLY (authenticated) MCP surface ─────────────────────────────────
+//
+// POST /mcp/readonly is an AUTHENTICATED surface for agents whose workspace has
+// run out of AI credit. It reads real workspace data with the caller's own
+// bearer, and refuses anything that could change state:
+//   - tools/list advertises only READONLY_TOOL_NAMES (readOnlyHint === true).
+//   - handleToolCall refuses everything else, so a hand-crafted tools/call
+//     cannot reach a write path.
+//   - Tools carrying no annotation are denied, not allowed.
+// Unlike /mcp/public this is NOT credential-free: without the bearer there is
+// nothing to read. The gate is about writes, not about identity. Sessions here
+// use the same authenticated session storage and Redis rehydration as /mcp —
+// there is no isolated session map, and no credential stripping before use.
+// handleMcpPost/handleMcpGet/handleMcpDelete are the exact functions /mcp
+// uses; the only difference is the isReadOnly flag passed on POST.
+app.post("/mcp/readonly", async (req: Request, res: Response) => {
+  const correlationId = randomUUID();
+  await runWithContext({ correlationId }, () => handleMcpPost(req, res, { isReadOnly: true }));
+});
+
+app.get("/mcp/readonly", async (req: Request, res: Response) => {
+  await handleMcpGet(req, res);
+});
+
+app.delete("/mcp/readonly", async (req: Request, res: Response) => {
+  await handleMcpDelete(req, res);
+});
+
 /**
- * MCP GET endpoint - handles SSE streams for server-initiated messages
+ * MCP GET endpoint - handles SSE streams for server-initiated messages.
+ * Shared by /mcp and /mcp/readonly: a session already carries its isReadOnly
+ * flag from creation, so the SSE stream and its teardown need no branching.
  */
-app.get("/mcp", async (req: Request, res: Response) => {
+async function handleMcpGet(req: Request, res: Response): Promise<void> {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   // Capture auth token before stripping headers, so we can rehydrate.
   const authToken = getAuthToken(req);
@@ -2344,12 +2418,17 @@ app.get("/mcp", async (req: Request, res: Response) => {
       });
     }
   }
+}
+
+app.get("/mcp", async (req: Request, res: Response) => {
+  await handleMcpGet(req, res);
 });
 
 /**
- * MCP DELETE endpoint - handles session termination
+ * MCP DELETE endpoint - handles session termination.
+ * Shared by /mcp and /mcp/readonly, for the same reason as handleMcpGet above.
  */
-app.delete("/mcp", async (req: Request, res: Response) => {
+async function handleMcpDelete(req: Request, res: Response): Promise<void> {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   const authToken = getAuthToken(req);
   delete req.headers.authorization;
@@ -2412,6 +2491,10 @@ app.delete("/mcp", async (req: Request, res: Response) => {
       });
     }
   }
+}
+
+app.delete("/mcp", async (req: Request, res: Response) => {
+  await handleMcpDelete(req, res);
 });
 
 // Return a proper JSON-RPC error for malformed request bodies instead of Express's default HTML.
