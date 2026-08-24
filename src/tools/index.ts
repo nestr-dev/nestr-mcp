@@ -1950,19 +1950,15 @@ export const toolDefinitions = [
   {
     name: "nestr_add_workspace_user",
     description:
-      "Add a user to a workspace by email. Creates the account if it does not exist, adds them, "
-      + "and SENDS THEM AN INVITE EMAIL, so confirm with the person asking before you call it: a real "
-      + "person receives that mail. This is the action behind requests about seats, membership, "
-      + "extending a plan by a person, or getting a colleague in. "
-      + "This tool only provisions addresses on a domain the workspace has added AND that Nestr has "
-      + "verified, so it refuses personal providers such as gmail.com outright and refuses any domain "
-      + "while verification is pending. That limit is on this tool, NOT on the workspace: the in-app "
-      + "invite under Workspace settings, Users, \"Invite users\" accepts any email address and needs "
-      + "no domain verification. When this tool refuses, walk the person through that in-app invite "
-      + "as the first option, since they can do it themselves in seconds. Never tell them to remove or "
-      + "clear the workspace domain list: that does not lift the requirement, it destroys the only way "
-      + "to satisfy it and breaks auto-join. Only suggest adding and verifying a domain when it is a "
-      + "company domain they control, and say it needs a Nestr review that takes up to 24 hours.",
+      "Adds a user to a workspace by email, creating the account if needed. It SENDS A REAL INVITE "
+      + "EMAIL, so confirm with the requester first. Covers seats, membership, plan headcount, adding "
+      + "a colleague. It provisions only domains the workspace added and Nestr verified: personal "
+      + "providers (gmail.com) are always refused, pending domains until verified. That limits this "
+      + "tool, not the workspace. The in-app invite (Workspace settings, Users, \"Invite users\") "
+      + "takes any address unverified, so offer it first on a refusal. NEVER suggest clearing the "
+      + "workspace domain list: it keeps the requirement, kills the only way to meet it, and breaks "
+      + "auto-join. Suggest adding a domain only when they control that company domain. Nestr review "
+      + "takes up to 24 hours.",
     inputSchema: {
       type: "object" as const,
       properties: {
