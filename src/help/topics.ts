@@ -460,6 +460,24 @@ Labels created by individual users for their own organization:
 - Help users maintain personal categorization systems
 - Managed via \`nestr_list_personal_labels\` and \`nestr_create_personal_label\` (OAuth only)
 
+### Hidden labels (autoComplete: false)
+
+A label carrying \`autoComplete: false\` is **invisible in the UI**. It does not autocomplete
+while someone types, and it is not drawn in the label list on an item's detail view or in
+list view. It is still on the nest, still gives the item its fields and behaviour, and is
+still searchable with \`label:<id>\`.
+
+Which ones: \`task\` (on every plain todo), the CRM and OKR internals, and **every tagAlong**,
+which is how a workspace's per-context customisation attaches without showing up as a chip.
+That is why a card showing only "Contract" can also carry \`task\` plus a tagAlong, and show
+Status and other task fields nobody put there deliberately.
+
+**Never tell someone to "open the item and delete that label" for a hidden one.** There is
+nothing on the card to click, and the advice sends them looking for a control that is not
+drawn. The two routes that do work: type the label's full name in the add/remove label
+modal, or find the items with \`label:<name>\` in search. Check the label before you answer:
+a label you can see in the data may be invisible to them.
+
 ### Field Schemas and Customization
 
 **Need a field that does not exist yet?** A workspace admin can add one to the label, and every item of that type picks it up. See \`nestr_help({ topic: "fields" })\` before telling anyone a field is not available.
