@@ -67,8 +67,11 @@ const COMPACT_FIELDS = {
   base: ["_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description", "due", "users", "hints"],
   // Additional fields for roles
   role: ["accountabilities", "domains"],
-  // Additional fields for users
-  user: ["_id", "username", "profile"],
+  // Additional fields for users. `bot` and `assistant` are not optional trim:
+  // stripping them makes an agent indistinguishable from a person in a list, and
+  // "which of these can act on my own credentials for me" then has no answer in
+  // the data at all. Two booleans per row.
+  user: ["_id", "username", "profile", "bot", "assistant"],
   // Additional fields for labels
   label: ["_id", "title"],
 };
@@ -984,6 +987,7 @@ export const schemas = {
   listUsers: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     search: z.string().optional().describe("Search by name or email"),
+    agents: z.enum(["only", "exclude"]).optional().describe("'only' for this workspace's agents, 'exclude' for its people. Omit for both."),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
   }),
@@ -1991,12 +1995,17 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_users",
-    description: "List members of a workspace. Response includes meta.total showing total matching count. Also the tool to resolve user ids in bulk: when presenting users to a person, show names and/or emails, never bare ids.",
+    description: "List members of a workspace: its people, its agents, or both. Response includes meta.total showing total matching count. Also the tool to resolve user ids in bulk: when presenting users to a person, show names and/or emails, never bare ids. With agents:'only' this is how you find out which other agents exist and what each is for: an agent carries bot:true, its purpose in profile.agentDescription, and assistant:true when it may never fill a role. An assistant is the one to hand work to that needs a person's OWN credentials, which a role-filling agent cannot reach.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         search: { type: "string", description: "Search by name or email" },
+        agents: {
+          type: "string",
+          enum: ["only", "exclude"],
+          description: "'only' for this workspace's agents, 'exclude' for its people. Omit for both.",
+        },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
       },
@@ -3685,6 +3694,7 @@ async function _handleToolCall(
         const parsed = schemas.listUsers.parse(args);
         const users = await client.listUsers(parsed.workspaceId, {
           search: parsed.search,
+          agents: parsed.agents,
           limit: parsed.limit,
           page: parsed.page,
         });

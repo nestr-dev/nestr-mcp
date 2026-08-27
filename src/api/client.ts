@@ -125,10 +125,22 @@ export interface User {
   username: string;
   /** True when the authenticated user is a bot (agent acting as role filler) */
   bot?: boolean;
+  /**
+   * True when this agent may never fill a role, so it can only ever assist a
+   * person. The one to hand work to that needs a person's OWN credentials.
+   * Only present on agents, and only when a workspace was in context.
+   */
+  assistant?: boolean;
   profile?: {
     email?: string;
     fullName?: string;
     avatar?: string;
+    /** Set on agents: the workspace the agent was created in. */
+    agentWorkspaceId?: string;
+    /** Set on agents: what the agent is for. */
+    agentDescription?: string;
+    /** Set on agents: 'active' or otherwise. */
+    agentStatus?: string;
   };
 }
 
@@ -1287,10 +1299,17 @@ export class NestrClient {
 
   async listUsers(
     workspaceId: string,
-    options?: { search?: string; limit?: number; page?: number; includeSuspended?: boolean }
+    options?: {
+      search?: string;
+      agents?: "only" | "exclude";
+      limit?: number;
+      page?: number;
+      includeSuspended?: boolean;
+    }
   ): Promise<User[]> {
     const params = new URLSearchParams();
     if (options?.search) params.set("search", options.search);
+    if (options?.agents) params.set("agents", options.agents);
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.page) params.set("page", options.page.toString());
     if (options?.includeSuspended) params.set("includeSuspended", "true");
