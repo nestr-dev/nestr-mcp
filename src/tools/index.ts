@@ -2846,11 +2846,11 @@ export const toolDefinitions = [
         ownerType: {
           type: "string",
           enum: ["role", "workspace", "role-domain", "user"],
-          description: "Owner type. 'role' is the usual path: pass the role nest ID and the server finds or creates the connector's domain under it. 'role-domain' targets an existing domain directly. 'workspace' gives everyone. Personal owners ('user', 'agent') are deliberately not available here.",
+          description: "Owner type. 'role' is the usual path: pass the role nest ID and the server finds or creates the connector's domain under it. 'role-domain' targets an existing domain directly. 'workspace' gives everyone. 'user' is for one person's own account (not a role). 'agent' is deliberately not available here.",
         },
         ownerId: {
           type: "string",
-          description: "Owner ID. role: the role nest ID. role-domain: the domain nest ID. workspace: the workspace ID.",
+          description: "Owner ID. role: the role nest ID. role-domain: the domain nest ID. workspace: the workspace ID. user: the person's user ID.",
         },
       },
       required: ["workspaceId", "connectorId", "ownerType", "ownerId"],
