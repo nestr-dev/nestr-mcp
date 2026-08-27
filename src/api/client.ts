@@ -827,6 +827,8 @@ export class NestrClient {
     labels?: string[];
     fields?: Record<string, unknown>;
     users?: string[];
+    /** ISO 8601. The field the dated-work sweep reads; a title date is not it. */
+    due?: string;
   }): Promise<Nest> {
     return this.fetch<Nest>("/nests", {
       method: "POST",

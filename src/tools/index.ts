@@ -902,6 +902,7 @@ export const schemas = {
     labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to apply"),
     fields: coerceFromJson(z.record(z.unknown())).optional().describe("Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call."),
     users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
+    due: z.string().optional().describe("Due date (ISO 8601). SET THIS whenever the item is meant to happen at a time. It is a field, not a title: the sweep that fires dated work reads `due` and nothing else, so a task called \"Daily digest, 28 Aug\" with no due is invisible to it and simply never runs, with nothing anywhere saying so. For projects/tasks: deadline. For meetings: start time."),
     accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes an accountability child nest."),
     domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes a domain child nest."),
     workspaceId: z.string().optional().describe("Workspace ID. Required when creating roles/circles with accountabilities or domains (used to route to the self-organization API)."),
@@ -1635,6 +1636,10 @@ export const toolDefinitions = [
           type: "array",
           items: { type: "string" },
           description: "User IDs to assign. ALWAYS set this for projects and tasks — use the role filler's user ID. Placing a nest under a role does NOT auto-assign it.",
+        },
+        due: {
+          type: "string",
+          description: "Due date (ISO 8601). SET THIS whenever the item is meant to happen at a time. It is a field, not a title: the sweep that fires dated work reads `due` and nothing else, so a task called \"Daily digest, 28 Aug\" with no due is invisible to it and simply never runs, with nothing anywhere saying so. For projects/tasks: deadline. For meetings: start time.",
         },
         accountabilities: {
           type: "array",
@@ -3551,6 +3556,7 @@ async function _handleToolCall(
           labels: parsed.labels,
           fields: parsed.fields,
           users: parsed.users,
+          due: parsed.due,
         });
         return formatResult({ message: "Nest created successfully", nest });
       }
