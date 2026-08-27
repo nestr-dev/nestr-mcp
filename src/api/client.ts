@@ -2092,6 +2092,9 @@ export class NestrClient {
     workspaceId: string,
     body: {
       name: string;
+      description?: string;
+      /** false creates an assistant: never assignable to a role. */
+      roleAssignable?: boolean;
       agentConfig?: Record<string, unknown>;
     }
   ): Promise<User> {

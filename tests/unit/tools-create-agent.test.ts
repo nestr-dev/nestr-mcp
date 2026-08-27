@@ -273,3 +273,57 @@ describe("the template hint becomes a tool call", () => {
     expect(String(call.params.templateId)).toContain("template you want");
   });
 });
+
+// The gap this closes: the tool could not express an assistant at all, so every
+// agent it made was role-assignable, an onboarding run then assigned one to the
+// role, and the run could not reach anything belonging to the person it was
+// meant to be helping. Prose in a skill cannot fix a parameter that is missing.
+describe("nestr_create_agent roleAssignable", () => {
+  let mockFetch: ReturnType<typeof vi.fn>;
+  let client: NestrClient;
+  let sentBody: Record<string, unknown>;
+
+  beforeEach(() => {
+    sentBody = {};
+    mockFetch = vi.fn(async (_url: string, init: { body?: string }) => {
+      sentBody = JSON.parse(init?.body || "{}");
+      return mockResponse(200, { status: "success", data: { _id: "bot-1", username: "aide-x" } });
+    });
+    vi.stubGlobal("fetch", mockFetch);
+    client = new NestrClient({ apiKey: "t", baseUrl: "https://api.test.io/api" });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const create = async (args: Record<string, unknown>) => {
+    const res = await handleToolCall(client, "nestr_create_agent", args);
+    return parseResult((res.content[0] as { text: string }).text);
+  };
+
+  it("sends roleAssignable false so the server can make an assistant", async () => {
+    await create({ workspaceId: "ws-1", name: "Aide", roleAssignable: false });
+    expect(sentBody.roleAssignable).toBe(false);
+  });
+
+  it("leaves it off when the caller did not say, so the server default stands", async () => {
+    await create({ workspaceId: "ws-1", name: "Collab" });
+    expect(sentBody.roleAssignable).toBeUndefined();
+  });
+
+  it("carries the character through", async () => {
+    await create({ workspaceId: "ws-1", name: "Collab", description: "Precise, invents little" });
+    expect(sentBody.description).toBe("Precise, invents little");
+  });
+
+  // Telling someone who just made an assistant to "assign it to the role" is
+  // the exact mistake the parameter exists to prevent.
+  it("tells an assistant's caller to put it on the task, not the role", async () => {
+    const out = await create({ workspaceId: "ws-1", name: "Aide", roleAssignable: false });
+    expect(out.message).toContain("TASK");
+    expect(out.message).not.toContain("assign this agent to it");
+  });
+
+  it("still tells a filler's caller to assign it to a role", async () => {
+    const out = await create({ workspaceId: "ws-1", name: "Collab" });
+    expect(out.message).toContain("assign this agent to it");
+  });
+});

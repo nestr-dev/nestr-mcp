@@ -1352,6 +1352,8 @@ export const schemas = {
   createAgent: z.object({
     workspaceId: z.string().describe("Workspace ID to create the agent in"),
     name: z.string().describe("The AGENT's own name, as its identity calls it (e.g. 'Collab'). Not the name of the work: that belongs to the role this agent will fill."),
+    description: z.string().optional().describe("What the agent is LIKE: its character and what it is careful about. Not its instructions, which belong in a skill on the role."),
+    roleAssignable: z.boolean().optional().describe("Defaults to true. Pass false to create an ASSISTANT, which can never be assigned to a role and therefore only ever acts with the authority of the person it helps."),
     agentConfig: coerceFromJson(z.record(z.unknown())).optional().describe("Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Omit for an agent that runs on Nestr's own runtime."),
   }),
 
@@ -2826,7 +2828,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_agent",
-    description: "Create an agent user in the workspace. Workspace-admin only; a non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error). The agent is added to the workspace and can then fill roles like a person does.\n\nAn agent and the role it fills are two different things, named differently: the agent carries its own name (Collab), the role is named for the WORK (Marketing). Do not name the role after the agent. Create the agent here, create or find the role with nestr_create_nest, then assign the agent to the role with nestr_update_nest users. Keeping them apart is what lets the agent be replaced without the role losing its purpose, accountabilities and history, and lets one agent fill several roles.\n\nThe agent's instructions do not go here: they belong in a skill nest under the role, which loads whenever the role acts. agentConfig is runtime wiring only.",
+    description: "Create an agent user in the workspace. Workspace-admin only; a non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error).\n\nDECIDE roleAssignable FIRST, because it decides what the agent can ever do and cannot be changed later while it holds a role. Default (true) is a FILLER: assign it to a role and it acts with that role's authority and the role's connectors. Pass false for an ASSISTANT: it can never be assigned to a role, and so only ever acts with the authority of the person it is helping, reaching what they reach including their own connectors.\n\nThe two are exclusive, and the test is not 'does it fill THIS role' but 'does it fill ANY role in this workspace': one role anywhere makes every run a role-filler run. So work that follows a PERSON (their mailbox, their drive, their queue) needs an assistant, put on the TASK beside them and never in the role's users. Creating a filler and then assigning it to the role is the specific mistake: it then cannot reach anything of theirs, reports that it holds no external tool sources, and suggests binding their account to the role, which would hand it to whoever fills that role next.\n\nAn agent and the role it fills are two different things, named differently: the agent carries its own name (Collab), the role is named for the WORK (Marketing). Do not name the role after the agent. Keeping them apart is what lets the agent be replaced without the role losing its purpose, accountabilities and history, and lets one agent fill several roles.\n\nThe agent's instructions do not go here: they belong in a skill nest under the role, which loads whenever the role acts. agentConfig is runtime wiring only.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2834,6 +2836,14 @@ export const toolDefinitions = [
         name: {
           type: "string",
           description: "The AGENT's own name, as its identity calls it (e.g. 'Collab'). Not the name of the work: that belongs to the role this agent will fill.",
+        },
+        description: {
+          type: "string",
+          description: "What the agent is LIKE: its character and what it is careful about. Not its instructions, which belong in a skill on the role.",
+        },
+        roleAssignable: {
+          type: "boolean",
+          description: "Defaults to true (a filler, which can be assigned to roles). Pass false for an ASSISTANT, which can never be assigned to a role and only ever acts with the authority of the person it helps. See the tool description: this is the choice that decides whether it can reach a person's own connectors.",
         },
         agentConfig: {
           type: "object",
@@ -4418,12 +4428,18 @@ async function _handleToolCall(
         const parsed = schemas.createAgent.parse(args);
         const agent = await client.createAgent(parsed.workspaceId, {
           name: parsed.name,
+          description: parsed.description,
+          roleAssignable: parsed.roleAssignable,
           agentConfig: parsed.agentConfig,
         });
-        return formatResult({
-          message: "Agent created. Next, give it work to fill: create or find a role named for the WORK (not for the agent) with nestr_create_nest, then assign this agent to it with nestr_update_nest users. Its instructions belong in a skill nest under that role, not on the agent.",
-          agent,
-        });
+        // Two different next steps, because the two kinds of agent are put to
+        // work in different places and saying "assign it to the role" to
+        // someone who just made an assistant is the mistake this tool exists to
+        // stop.
+        const nextStep = parsed.roleAssignable === false
+          ? "Assistant created: it can never be assigned to a role. Put it on the TASK beside the person it helps (nestr_update_nest users on the task, naming both), and leave the role's users to that person alone. Its instructions belong in a skill nest under the role."
+          : "Agent created. Next, give it work to fill: create or find a role named for the WORK (not for the agent) with nestr_create_nest, then assign this agent to it with nestr_update_nest users. Its instructions belong in a skill nest under that role, not on the agent.";
+        return formatResult({ message: nextStep, agent });
       }
 
       case "nestr_bind_connector": {
