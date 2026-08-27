@@ -172,18 +172,31 @@ describe("connector tools", () => {
     expect(parsed.message).not.toMatch(/role's domain/i);
   });
 
-  // One agent arranging a credential for ANOTHER agent from a tool call is how an
-  // agent would acquire access nobody granted it. That one stays in the UI.
-  it("nestr_bind_connector refuses an agent owner", async () => {
+  // Both personal owner types reach the server, which is what decides:
+  // bind-authority requires a workspace admin and the catalog's user/agent
+  // exposure dial for either. The tool no longer pre-refuses them, because
+  // refusing a person's own mailbox left agents with no correct move and they
+  // took the incorrect one, binding it to a role.
+  it("nestr_bind_connector accepts an agent owner, for a bot's own account", async () => {
+    const connection = {
+      _id: "conn3",
+      workspaceId: "ws1",
+      owner: { type: "agent", id: "bot-2" },
+      status: "active",
+    };
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: connection }));
+
     const result = await handleToolCall(client, "nestr_bind_connector", {
       workspaceId: "ws1",
       connectorId: "c9",
       ownerType: "agent",
       ownerId: "bot-2",
     });
-    expect(result.isError).toBe(true);
-    expect(parseResult(result.content[0].text).code).toBe("VALIDATION");
-    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({
+      connectorId: "c9",
+      owner: { type: "agent", id: "bot-2" },
+    });
   });
 
   // A person's own mailbox or drive is the one case where a role binding is
