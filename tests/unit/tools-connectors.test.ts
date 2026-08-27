@@ -172,22 +172,44 @@ describe("connector tools", () => {
     expect(parsed.message).not.toMatch(/role's domain/i);
   });
 
-  // Attaching a credential to a person or a bot is not a decision to make from a
-  // tool call, and one agent handing another agent access is the case that makes
-  // it dangerous. Personal bindings go through an admin in the UI.
-  it("nestr_bind_connector refuses a personal owner", async () => {
-    for (const ownerType of ["user", "agent"]) {
-      // eslint-disable-next-line no-await-in-loop
-      const result = await handleToolCall(client, "nestr_bind_connector", {
-        workspaceId: "ws1",
-        connectorId: "c9",
-        ownerType,
-        ownerId: "user-2",
-      });
-      expect(result.isError, `${ownerType} must be refused`).toBe(true);
-      expect(parseResult(result.content[0].text).code).toBe("VALIDATION");
-    }
+  // One agent arranging a credential for ANOTHER agent from a tool call is how an
+  // agent would acquire access nobody granted it. That one stays in the UI.
+  it("nestr_bind_connector refuses an agent owner", async () => {
+    const result = await handleToolCall(client, "nestr_bind_connector", {
+      workspaceId: "ws1",
+      connectorId: "c9",
+      ownerType: "agent",
+      ownerId: "bot-2",
+    });
+    expect(result.isError).toBe(true);
+    expect(parseResult(result.content[0].text).code).toBe("VALIDATION");
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  // A person's own mailbox or drive is the one case where a role binding is
+  // wrong: it would hand their account to whoever fills that role next. The
+  // server still requires a workspace admin and the catalog's user/agent
+  // exposure, so allowing it here widens what can be asked for, not who may.
+  it("nestr_bind_connector accepts a user owner, for one person's own account", async () => {
+    const connection = {
+      _id: "conn2",
+      workspaceId: "ws1",
+      owner: { type: "user", id: "user-2" },
+      status: "active",
+    };
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: connection }));
+
+    const result = await handleToolCall(client, "nestr_bind_connector", {
+      workspaceId: "ws1",
+      connectorId: "c9",
+      ownerType: "user",
+      ownerId: "user-2",
+    });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({
+      connectorId: "c9",
+      owner: { type: "user", id: "user-2" },
+    });
   });
 
   it("nestr_bind_connector reports the domain a role binding landed on", async () => {
