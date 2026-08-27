@@ -1846,7 +1846,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_start_dm_thread",
-    description: "Start a new direct-message thread with someone. Use it for a new subject rather than reopening an old thread. You must share a workspace with them, or already have a conversation with them.",
+    description: "Start a new direct-message thread with someone. Use it for a new subject rather than reopening an old thread. You must share a workspace with them, or already have a conversation with them. A DM needs at least one PERSON in it: agents cannot hold a private conversation with each other, and the server refuses one. That is the wrong channel rather than a missing permission, so do not ask anyone to widen anything. To reach another agent, comment on the work itself and mention them there, or raise a tension to the role that owns it, which keeps the exchange where the people accountable for the work can read it.",
     inputSchema: {
       type: "object" as const,
       properties: {
