@@ -318,12 +318,17 @@ describe("nestr_create_agent roleAssignable", () => {
   // the exact mistake the parameter exists to prevent.
   it("tells an assistant's caller to put it on the task, not the role", async () => {
     const out = await create({ workspaceId: "ws-1", name: "Aide", roleAssignable: false });
-    expect(out.message).toContain("TASK");
-    expect(out.message).not.toContain("assign this agent to it");
+    expect(out.message as string).toContain("TASK");
+    expect(out.message as string).toContain("never be assigned to a role");
   });
 
-  it("still tells a filler's caller to assign it to a role", async () => {
+  // An assignable agent is not thereby a filler: it assists until someone
+  // assigns it to a role. Saying only "assign it to a role" reads as the one
+  // thing it is for, which is how the assisting shape got lost.
+  it("tells an assignable agent's caller about both shapes", async () => {
     const out = await create({ workspaceId: "ws-1", name: "Collab" });
-    expect(out.message).toContain("assign this agent to it");
+    expect(out.message as string).toContain("assignable to roles");
+    expect(out.message as string).toContain("assists while it holds none");
+    expect(out.message as string).toContain("task beside them");
   });
 });
