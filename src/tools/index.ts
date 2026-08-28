@@ -2861,7 +2861,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_bind_connector",
-    description: "Bind a registered connector to an owner so that owner can use it. Owner types: 'role' (ownerId is the role nest ID — the server finds or creates the connector's domain under it), 'role-domain' (ownerId is an existing domain nest ID), 'workspace' (ownerId is the workspace ID), 'user' (ownerId is a person's user ID, for their own account), or 'agent' (ownerId is a bot's user ID, for its own). A 'role' or 'role-domain' owner materialises a credentials field on the domain nest, so the role can use the connector and the Connect button renders there; the response then includes credentialsField { domainId, fieldId, fieldCode }. After binding, a human or agent connects the account via that Connect button. The secret is captured out-of-band and is never seen by the agent. Workspace-admin only: a non-admin caller gets AUTH_SCOPE_INSUFFICIENT. The connector must already be registered (nestr_register_connector) and enabled.\n\nBIND TO THE ROLE, not to whoever fills it. A role binding is the governance act: the access belongs to the work, survives the filler changing, and is visible to the circle. Reach for 'role' by default — it is the usual onboarding path: pass the role nest ID and the server does the domain lookup. Use 'role-domain' only when you already have the domain nest ID and want to target it directly.\n\n'user' is for what is genuinely one person's: their own mailbox, their own drive. Binding that to a role would hand it to whoever fills the role next, which is the opposite of what they asked for, so this is the one case where a role binding is wrong. It needs a workspace admin and the connector has to be open to user owners in the catalog; if either is missing, say which and what the admin has to do rather than falling back to a role binding. The work on a personal connection is then done by an agent that fills NO role, because filling a role and assisting are exclusive and only an assistant can act with a person's own access.\n\n'agent' is the same shape for a bot's own account, used where a provider gives the agent its own login rather than borrowing a person's. It is the rarest of the four: prefer 'role', so the access belongs to the work and survives the filler changing. Both personal types are workspace-admin only and both need the connector open to user/agent owners, so a caller who is not an admin gets AUTH_SCOPE_INSUFFICIENT and should say which of the two is missing rather than binding to a role instead. Be careful arranging one agent's credential from another agent's run: it is a decision about what that agent may reach, so name what you are about to do and why before doing it.",
+    description: "Bind a registered connector to an owner so that owner can use it. Owner types: 'role' (ownerId is the role nest ID — the server finds or creates the connector's domain under it), 'role-domain' (ownerId is an existing domain nest ID), 'workspace' (ownerId is the workspace ID), 'user' (ownerId is a person's user ID, for their own account), or 'agent' (ownerId is a bot's user ID, for its own). A 'role' or 'role-domain' owner materialises a credentials field on the domain nest, so the role can use the connector and the Connect button renders there; the response then carries domainId (and domainCreated when the bind created it). After binding, a human or agent connects the account via that Connect button. The secret is captured out-of-band and is never seen by the agent. Workspace-admin only: a non-admin caller gets AUTH_SCOPE_INSUFFICIENT. The connector must already be registered (nestr_register_connector) and enabled.\n\nBIND TO THE ROLE, not to whoever fills it. A role binding is the governance act: the access belongs to the work, survives the filler changing, and is visible to the circle. Reach for 'role' by default — it is the usual onboarding path: pass the role nest ID and the server does the domain lookup. Use 'role-domain' only when you already have the domain nest ID and want to target it directly.\n\n'user' is for what is genuinely one person's: their own mailbox, their own drive. Binding that to a role would hand it to whoever fills the role next, which is the opposite of what they asked for, so this is the one case where a role binding is wrong. It needs a workspace admin and the connector has to be open to user owners in the catalog; if either is missing, say which and what the admin has to do rather than falling back to a role binding. The work on a personal connection is then done by an agent that fills NO role, because filling a role and assisting are exclusive and only an assistant can act with a person's own access.\n\n'agent' is the same shape for a bot's own account, used where a provider gives the agent its own login rather than borrowing a person's. It is the rarest of the four: prefer 'role', so the access belongs to the work and survives the filler changing. Both personal types are workspace-admin only and both need the connector open to user/agent owners, so a caller who is not an admin gets AUTH_SCOPE_INSUFFICIENT and should say which of the two is missing rather than binding to a role instead. Be careful arranging one agent's credential from another agent's run: it is a decision about what that agent may reach, so name what you are about to do and why before doing it.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2916,6 +2916,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_connections",
+    ...readOnly,
     description: "List who has access to what in this workspace: each binding's connector, its owner (a role's domain, a person, an agent, or the whole workspace), and who holds a credential on it. Shows when an agent is using a person's account, and never returns a secret. Use it to check whether access already exists before giving more, and to find the connectionId for nestr_get_connect_link.",
     inputSchema: {
       type: "object" as const,
@@ -2967,6 +2968,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_agent_connectors",
+    ...readOnly,
     description: "What an agent can and cannot use, and why. Groups each connector by where the grant comes from (its own binding, the workspace, or a role it fills) and, when unavailable, names the reason: no credential yet, the connector is disabled, it has no usable tools, or it no longer allows this kind of access. Reach for this when an agent seems to be missing something it should have.",
     inputSchema: {
       type: "object" as const,
@@ -4399,6 +4401,9 @@ async function _handleToolCall(
           return formatResult({
             message: "Connector registered from a template, so its endpoint and auth strategy are the vendor's own. Next, bind it to a role's DOMAIN with nestr_bind_connector, then a human connects the account via the Connect button.",
             connector: fromTemplate.connector,
+            // The route's hints say what to do next (a Connect link, a missing
+            // OAuth client); dropping them cost the model its follow-up.
+            ...(fromTemplate.hints ? { hints: fromTemplate.hints } : {}),
           });
         }
         if (!parsed.type || !parsed.name) {
@@ -4466,6 +4471,14 @@ async function _handleToolCall(
       case "nestr_update_connector": {
         const parsed = schemas.updateConnector.parse(args);
         const { workspaceId, connectorId, ...updates } = parsed;
+        if (Object.keys(updates).length === 0) {
+          return formatError({
+            error: true,
+            code: "VALIDATION",
+            message: "Nothing to update: pass at least one field to change.",
+            retryable: false,
+          });
+        }
         const connector = await client.updateConnector(workspaceId, connectorId, updates);
         return formatResult({ message: "Connector updated.", connector });
       }
