@@ -25,6 +25,7 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 - search: Full search query syntax with all operators and examples
 - fields: Adding custom fields to labels when Nestr has no field for something yet
 - web-app-links: URL formats for linking to the Nestr web app
+- workspace-settings: Where workspace settings are, every tab, and the link to hand over
 - inbox: Inbox quick capture, processing workflow, and reordering
 - daily-plan: Daily plan usage, scope, and planning workflows
 - notifications: Notification types, groups, and when to check them
@@ -459,6 +460,24 @@ Labels created by individual users for their own organization:
 - Help users maintain personal categorization systems
 - Managed via \`nestr_list_personal_labels\` and \`nestr_create_personal_label\` (OAuth only)
 
+### Hidden labels (autoComplete: false)
+
+A label carrying \`autoComplete: false\` is **invisible in the UI**. It does not autocomplete
+while someone types, and it is not drawn in the label list on an item's detail view or in
+list view. It is still on the nest, still gives the item its fields and behaviour, and is
+still searchable with \`label:<id>\`.
+
+Which ones: \`task\` (on every plain todo), the CRM and OKR internals, and **every tagAlong**,
+which is how a workspace's per-context customisation attaches without showing up as a chip.
+That is why a card showing only "Contract" can also carry \`task\` plus a tagAlong, and show
+Status and other task fields nobody put there deliberately.
+
+**Never tell someone to "open the item and delete that label" for a hidden one.** There is
+nothing on the card to click, and the advice sends them looking for a control that is not
+drawn. The two routes that do work: type the label's full name in the add/remove label
+modal, or find the items with \`label:<name>\` in search. Check the label before you answer:
+a label you can see in the data may be invisible to them.
+
 ### Field Schemas and Customization
 
 **Need a field that does not exist yet?** A workspace admin can add one to the label, and every item of that type picks it up. See \`nestr_help({ topic: "fields" })\` before telling anyone a field is not available.
@@ -507,7 +526,7 @@ Use this when you need to know what values are valid for a field, especially bef
 - **Where:** Workspace settings -> Labels, Fields & Tabs -> select the label -> add a field.
 - **Who:** a workspace admin. If the person asking is not an admin, describe the route and suggest they ask an admin, rather than saying it is not possible.
 - **Naming:** the new field is namespaced by its label, e.g. \`tension.notes\`, and is read and written through \`fields\` on the nest tools like any built-in field.
-- **Per-circle overrides:** a circle can add, alter or hide a label's fields for itself, and a circle nested inside it can override again. The same label can carry different fields in different parts of the tree.
+- **Per-circle overrides:** a circle can add, alter or hide a label's fields for itself, and a circle nested inside it can override again. The same label can carry different fields in different parts of the tree. The route is the circle's own settings, \`/n/{workspaceId}/{circleId}?s=1#labels\`, which lists the system labels under "Customize a system label" and the workspace's own labels under "Customize a workspace label". Renaming, recolouring, creating and deleting a workspace label stay at the workspace root; a circle only changes how one behaves there.
 - **Internally** this is stored as a tagAlong label on the label definition. That is implementation detail. Talk to users about "adding a field to the label".
 
 ### Check before you answer
@@ -866,9 +885,59 @@ This works for viewing colleagues too - replace userId to see what roles they fi
 
 For workspace admins, link to settings with \`/n/{workspaceId}?s=1\` plus:
 - \`#users\` - Team members
-- \`#labels\` - Label configuration
+- \`#details\` - Workspace details
+- \`#plan\` - Subscription plan and billing
+- \`#settings\` - User permissions and domains
+- \`#labels\` - Labels, fields and tabs
 - \`#workspace-apps\` - Enabled apps/features
-- \`#plan\` - Subscription plan`,
+- \`#workspace-integrations\` - Integrations
+- \`#provider\` - Provider settings (service-provider workspaces only)
+
+The same \`?s=1#labels\` opens a CIRCLE's own settings when the id is a circle rather
+than the workspace. See \`nestr_help({ topic: "workspace-settings" })\` before answering
+any "where do I find..." question about settings.`,
+
+  "workspace-settings": `## Where workspace settings are
+
+**Answer this with a link, never with a menu path.** Do not describe a gear icon, a
+hamburger menu, a sidebar, or anything else on screen: you cannot see the user's screen,
+the app differs across desktop, mobile and window widths, and a wrong walkthrough sends
+someone hunting for a control that is not there. Give the URL.
+
+\`https://app.nestr.io/n/{workspaceId}?s=1#{tab}\`
+
+| Tab | What is on it |
+|---|---|
+| \`users\` | People, invites, removing someone |
+| \`details\` | Workspace name and details |
+| \`plan\` | Plan, trial and billing |
+| \`settings\` | User permissions and email domains |
+| \`labels\` | Labels, fields and tabs |
+| \`workspace-apps\` | Applications (Scrum, OKR, CRM, Agentic work, imports) |
+| \`workspace-integrations\` | Slack, Teams and the rest |
+| \`provider\` | Provider settings, on service-provider workspaces only |
+
+A tab the workspace does not offer bounces to its first tab, so a wrong guess degrades
+to \`#users\` rather than to an error.
+
+### Which workspace id
+
+If the run already told you the workspace, use it. If it did not, do not guess and do not
+say you cannot help: call \`nestr_list_workspaces\` (or \`nestr_get_me\` with
+\`fullWorkspaces: true\`) and give a link per workspace, naming each. People routinely own
+two workspaces with the same name, so lead with the name and let the link carry the id.
+
+### Who can open it
+
+Only a workspace admin. Check before you say it, because \`nestr_get_workspace\` reports
+who the admins are: telling an owner to go and find an administrator is worse than saying
+nothing. Someone who created their own workspace is its admin and its owner.
+
+### Circles have the same screen
+
+A circle has its own settings at \`/n/{workspaceId}/{circleId}?s=1#labels\`, which is where
+a label is customised for that circle and everything under it. See
+\`nestr_help({ topic: "fields" })\`.`,
 
   "inbox": `## Inbox (Quick Capture)
 

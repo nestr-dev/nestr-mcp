@@ -2022,7 +2022,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_labels",
-    description: "List available labels in a workspace. Response includes meta.total showing total matching count.",
+    description: "List available labels in a workspace. Response includes meta.total showing total matching count. The list does not carry autoComplete, so it mixes labels a person can pick with internal machinery they cannot. Call nestr_get_label before offering a label as a choice to somebody.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2123,7 +2123,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_label",
-    description: "Get details of a specific label.",
+    description: "Get details of a specific label, including fields, properties, group and autoComplete. `autoComplete: false` marks a system label: it is withheld from the label picker, and an already-applied one is hidden from the label tags on the nest too, so the person cannot see it in either place. Do not suggest such a label to a user, apply it as if they had chosen it, or tell them to click it on an item, because there is nothing there to click. It is not unreachable though: typing the id verbatim in the add/remove label modal still matches it, and a `label:` search on the id still finds the items carrying it, so offer those two routes rather than saying it cannot be done. Every check tests for an explicit false, so a label that omits the property is shown normally: treat missing as visible, not as unknown. Only this single-label read returns autoComplete; nestr_list_labels does not.",
     inputSchema: {
       type: "object" as const,
       properties: {
