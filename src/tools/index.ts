@@ -1909,7 +1909,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_labels",
-    description: "List available labels in a workspace. Response includes meta.total showing total matching count.",
+    description: "List available labels in a workspace. Response includes meta.total showing total matching count. The list does not carry autoComplete, so it mixes labels a person can pick with internal machinery they cannot. Call nestr_get_label before offering a label as a choice to somebody.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2010,7 +2010,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_label",
-    description: "Get details of a specific label.",
+    description: "Get details of a specific label, including fields, properties, group and autoComplete. `autoComplete: false` means the label is never offered in the label picker: it is internal machinery a person is not meant to choose, so do not suggest it to a user or apply it as if they had picked it. Only an explicit false hides a label; when the property is absent the label is offered, so treat missing as pickable rather than as unknown. This governs whether a label can be picked, not whether an already-applied one is visible. Only this single-label read returns autoComplete; nestr_list_labels does not.",
     inputSchema: {
       type: "object" as const,
       properties: {
