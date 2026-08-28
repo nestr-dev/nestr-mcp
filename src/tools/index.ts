@@ -67,8 +67,11 @@ const COMPACT_FIELDS = {
   base: ["_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description", "due", "users", "hints"],
   // Additional fields for roles
   role: ["accountabilities", "domains"],
-  // Additional fields for users
-  user: ["_id", "username", "profile"],
+  // Additional fields for users. `bot` and `assistant` are not optional trim:
+  // stripping them makes an agent indistinguishable from a person in a list, and
+  // "which of these can act on my own credentials for me" then has no answer in
+  // the data at all. Two booleans per row.
+  user: ["_id", "username", "profile", "bot", "assistant"],
   // Additional fields for labels
   label: ["_id", "title"],
 };
@@ -207,6 +210,43 @@ const HINT_TYPE_TOOL_CALLS: Record<
   string,
   (nest: Record<string, unknown>) => HintTypeToolCall | null
 > = {
+  // Raised by POST /connectors when a hand-written url points at a vendor the
+  // deployment ships a template for. The follow-up is to look at the template,
+  // not to re-register blindly: the connector just created may be exactly what
+  // the caller wanted, and only they can say. The hint carries its own ids, so
+  // this works on a catalog entry rather than needing nest ancestors.
+  connector_template_available(record) {
+    const hints = (record.hints as Array<Record<string, unknown>> | undefined) || [];
+    const hint = hints.find((h) => { return h.type === "connector_template_available"; });
+    const workspaceId = (hint && hint.workspaceId) || record.workspaceId;
+    if (!workspaceId) return null;
+    return {
+      tool: "nestr_list_connector_templates",
+      params: { workspaceId },
+    };
+  },
+  // Raised by GET /connector-templates on the response that LISTS them, because
+  // listing turned out not to be enough. A caller that could see the Xero
+  // template still hand-built a connector from what the template told it, and a
+  // hand-built copy carries no settingsKey, no OAuth client and whatever
+  // endpoint the model believed, so it authorises and then fails at first use.
+  // The follow-up here is the register call itself, pre-filled with the template
+  // id, so using the template is one call rather than a thing to remember.
+  connector_template_create(record) {
+    const hints = (record.hints as Array<Record<string, unknown>> | undefined) || [];
+    const hint = hints.find((h) => { return h.type === "connector_template_create"; });
+    if (!hint) return null;
+    const workspaceId = hint.workspaceId || record.workspaceId;
+    if (!workspaceId) return null;
+    const ids = (hint.templateIds as string[] | undefined) || [];
+    return {
+      tool: "nestr_register_connector",
+      params: {
+        workspaceId,
+        templateId: ids.length === 1 ? ids[0] : "<id of the template you want, from this list>",
+      },
+    };
+  },
   no_strategy(nest) {
     const nestId = nest._id as string | undefined;
     if (!nestId) return null;
@@ -727,7 +767,7 @@ const coerceIntArray = <T extends z.ZodTypeAny>(schema: T) =>
 // endpoints honor a `sort` query param server-side (field name, '-' prefix for
 // descending) — the same fields the search `sort:` operator uses.
 const MENTION_DESC =
-  "Supports HTML and @mentions. Mentions MUST use literal curly braces: `@{userId:roleId}`, NOT `@userId`. Without braces nothing is linked and nobody is notified. Forms: `@{userId:roleId}` (preferred, names the role), `@{userId}`, `@{email}`, `@{circle}` (all fillers in the nearest ancestor circle).";
+  "Supports HTML and @mentions. Mentions MUST use literal curly braces: `@{userId:roleId}`, NOT `@userId`. Without braces nothing is linked and nobody is notified. Forms: `@{userId:roleId}` (preferred, names the role), `@{userId}`, `@{email}`, `@{circle}` (all fillers in the nearest ancestor circle). The second id MUST be a ROLE or CIRCLE nest, never the project, task or tension you are commenting on: the mention renders that nest's title where the role name belongs, so a project id produces 'Henk as Write a weekly blog post', which reads as though the project were his role. When you do not know which role the person is acting in, use `@{userId}` rather than substituting the nest you happen to be working on.";
 
 const PRIME_LABEL_RULE =
   "At most ONE prime label per nest (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback, userstory, sprint, epic, milestone): they are the nest's identity and cannot coexist. Only exception: userstory may pair with project.";
@@ -862,6 +902,7 @@ export const schemas = {
     labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to apply"),
     fields: coerceFromJson(z.record(z.unknown())).optional().describe("Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call."),
     users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
+    due: z.string().optional().describe("Due date (ISO 8601). SET THIS whenever the item is meant to happen at a time. It is a field, not a title: the sweep that fires dated work reads `due` and nothing else, so a task called \"Daily digest, 28 Aug\" with no due is invisible to it and simply never runs, with nothing anywhere saying so. For projects/tasks: deadline. For meetings: start time."),
     accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes an accountability child nest."),
     domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes a domain child nest."),
     workspaceId: z.string().optional().describe("Workspace ID. Required when creating roles/circles with accountabilities or domains (used to route to the self-organization API)."),
@@ -947,6 +988,7 @@ export const schemas = {
   listUsers: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     search: z.string().optional().describe("Search by name or email"),
+    agents: z.enum(["only", "exclude"]).optional().describe("'only' for this workspace's agents, 'exclude' for its people. Omit for both."),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
   }),
@@ -1293,21 +1335,83 @@ export const schemas = {
     workspaceId: z.string().describe("Workspace ID whose connector catalog to list"),
   }),
 
+  listConnectorTemplates: z.object({
+    workspaceId: z.string().describe("Workspace ID whose available connector templates to list"),
+  }),
+
   registerConnector: z.object({
+    templateId: z.string().optional().describe("Id of a template from nestr_list_connector_templates. Given this, everything else is filled in from the template and you should omit type/config/capabilities/exposure/authStrategy. ALWAYS prefer this over hand-registering a vendor the deployment already knows."),
     workspaceId: z.string().describe("Workspace ID to register the connector in"),
-    type: z.enum(["mcp", "cli", "api"]).describe("Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command)"),
-    name: z.string().describe("Unique connector name within the workspace catalog"),
-    config: coerceFromJson(z.record(z.unknown())).optional().describe("Transport config, no secret. mcp/api need a url, cli a command. Optional non-secret headers go under headers."),
-    capabilities: coerceFromJson(z.record(z.unknown())).optional().describe("{ discover: boolean, tools: [{ name, description, inputSchema }] }. discover:true lets the connector self-describe its tools at runtime."),
-    exposure: coerceFromJson(z.record(z.unknown())).optional().describe("Which owners may bind: { userAgent: boolean, domainGated: boolean }. domainGated:true allows binding to a role's domain."),
-    authStrategy: z.enum(["secret", "oauth2"]).optional().describe("How a principal connects: 'secret' (one-time, via the Connect button) or 'oauth2'. The agent never sees it."),
+    type: z.enum(["mcp", "cli", "api"]).optional().describe("Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command). Required unless templateId is given."),
+    name: z.string().optional().describe("Unique connector name within the workspace catalog. Required unless templateId is given, where it defaults to the template's own name."),
+    config: coerceFromJson(z.record(z.unknown())).optional().describe("Per-type transport config, no secret. mcp/api need a url (e.g., { url: 'https://...' }); cli needs a command (e.g., { command: 'some-cli' }). Optional non-secret headers go under headers."),
+    capabilities: coerceFromJson(z.record(z.unknown())).optional().describe("Capability descriptor: { discover: boolean, tools: [{ name, description, inputSchema }] }. discover:true lets the connector self-describe its tools at runtime."),
+    exposure: coerceFromJson(z.record(z.unknown())).optional().describe("Exposure policy deciding which owners may bind: { userAgent: boolean, domainGated: boolean }. Set domainGated:true to allow binding to a role's domain."),
+    authStrategy: z.enum(["secret", "oauth2"]).optional().describe("How a principal connects: 'secret' (a one-time secret captured via the Connect button) or 'oauth2'. The agent never sees the secret."),
+  }),
+
+  createAgent: z.object({
+    workspaceId: z.string().describe("Workspace ID to create the agent in"),
+    name: z.string().describe("The AGENT's own name, as its identity calls it (e.g. 'Collab'). Not the name of the work: that belongs to the role this agent will fill."),
+    description: z.string().optional().describe("What the agent is LIKE: its character and what it is careful about. Not its instructions, which belong in a skill on the role."),
+    roleAssignable: z.boolean().optional().describe("Defaults to true. Pass false to create an ASSISTANT: an agent that can never be assigned to a role, so it can never stop being able to act with the authority of the person it helps."),
+    agentConfig: coerceFromJson(z.record(z.unknown())).optional().describe("Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Omit for an agent that runs on Nestr's own runtime."),
   }),
 
   bindConnector: z.object({
     workspaceId: z.string().describe("Workspace ID the connector and owner belong to"),
     connectorId: z.string().describe("ID of an enabled connector from nestr_list_connectors"),
-    ownerType: z.enum(["user", "agent", "workspace", "role-domain"]).describe("Owner type. 'role-domain' binds to a role's domain, materialising a credentials field there."),
-    ownerId: z.string().describe("Owner ID. user/agent: the user ID. workspace: the workspace ID. role-domain: the domain nest ID."),
+    ownerType: z.enum(["role", "role-domain", "workspace", "user", "agent"]).describe("Who gets access. 'role' is usually what you want: pass a role nest ID and the connector's domain is found or created under it. 'role-domain' targets an existing domain directly. 'workspace' gives everyone. 'user' is one person's own account and 'agent' is one bot's own: both are personal, both need a workspace admin, and both are the wrong answer unless the thing really does belong to that one principal. See the tool description."),
+    ownerId: z.string().describe("Owner ID. role: the role nest ID. role-domain: the domain nest ID. workspace: the workspace ID. user: the person's user ID. agent: the bot's user ID."),
+  }),
+
+  updateConnector: z.object({
+    workspaceId: z.string().describe("Workspace ID the connector belongs to"),
+    connectorId: z.string().describe("ID of the connector to update"),
+    type: z.enum(["mcp", "cli", "api"]).optional().describe("Transport"),
+    name: z.string().optional().describe("Unique connector name within the workspace catalog"),
+    config: coerceFromJson(z.record(z.unknown())).optional().describe("Per-type transport config, no secret"),
+    capabilities: coerceFromJson(z.record(z.unknown())).optional().describe("Capability descriptor"),
+    exposure: coerceFromJson(z.record(z.unknown())).optional().describe("Exposure policy: { userAgent, domainGated }"),
+    authStrategy: z.enum(["secret", "oauth2"]).optional().describe("How a principal connects"),
+    enabled: z.boolean().optional().describe("Switch the connector on or off in this workspace"),
+  }),
+
+  removeConnector: z.object({
+    workspaceId: z.string().describe("Workspace ID the connector belongs to"),
+    connectorId: z.string().describe("ID of the connector to remove from the catalog"),
+  }),
+
+  listConnections: z.object({
+    workspaceId: z.string().describe("Workspace ID whose bindings to list"),
+    includeDisabled: z.boolean().optional().describe("Include removed (disabled) bindings. Default false."),
+  }),
+
+  removeConnection: z.object({
+    workspaceId: z.string().describe("Workspace ID the binding belongs to"),
+    connectionId: z.string().describe("ID of the binding to remove, from nestr_list_connections"),
+  }),
+
+  getConnectLink: z.object({
+    workspaceId: z.string().describe("Workspace ID the binding belongs to"),
+    connectionId: z.string().describe("ID of the binding to connect, from nestr_list_connections"),
+  }),
+
+  revokeConnectionCredential: z.object({
+    workspaceId: z.string().describe("Workspace ID the binding belongs to"),
+    connectionId: z.string().describe("ID of the binding whose credential to revoke"),
+  }),
+
+  getAgentConnectorReach: z.object({
+    workspaceId: z.string().describe("Workspace ID the agent belongs to"),
+    agentUserId: z.string().describe("The agent's bot user ID"),
+  }),
+
+  runAgent: z.object({
+    workspaceId: z.string().describe("Workspace ID the agent belongs to"),
+    agentUserId: z.string().describe("The agent's bot user ID"),
+    nestId: z.string().describe("The nest the run is pinned to: a role, a project, a task"),
+    message: z.string().optional().describe("What this run is for. Omit for a plain 'advance this item' run."),
   }),
 
   // File attachments (a comment id works as the nestId — files are keyed by nestId)
@@ -1533,6 +1637,10 @@ export const toolDefinitions = [
           items: { type: "string" },
           description: "User IDs to assign. ALWAYS set this for projects and tasks — use the role filler's user ID. Placing a nest under a role does NOT auto-assign it.",
         },
+        due: {
+          type: "string",
+          description: "Due date (ISO 8601). SET THIS whenever the item is meant to happen at a time. It is a field, not a title: the sweep that fires dated work reads `due` and nothing else, so a task called \"Daily digest, 28 Aug\" with no due is invisible to it and simply never runs, with nothing anywhere saying so. For projects/tasks: deadline. For meetings: start time.",
+        },
         accountabilities: {
           type: "array",
           items: { type: "string" },
@@ -1749,7 +1857,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_start_dm_thread",
-    description: "Start a new direct-message thread with someone. Use it for a new subject rather than reopening an old thread. You must share a workspace with them, or already have a conversation with them.",
+    description: "Start a new direct-message thread with someone. Use it for a new subject rather than reopening an old thread. You must share a workspace with them, or already have a conversation with them. A DM needs at least one PERSON in it: agents cannot hold a private conversation with each other, and the server refuses one. That is the wrong channel rather than a missing permission, so do not ask anyone to widen anything. To reach another agent, comment on the work itself and mention them there, or raise a tension to the role that owns it, which keeps the exchange where the people accountable for the work can read it.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1894,12 +2002,17 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_users",
-    description: "List members of a workspace. Response includes meta.total showing total matching count. Also the tool to resolve user ids in bulk: when presenting users to a person, show names and/or emails, never bare ids.",
+    description: "List members of a workspace: its people, its agents, or both. Response includes meta.total showing total matching count. Also the tool to resolve user ids in bulk: when presenting users to a person, show names and/or emails, never bare ids. With agents:'only' this is how you find out which other agents exist and what each is for: an agent carries bot:true, its purpose in profile.agentDescription, and assistant:true when it may never fill a role. An assistant is the one to hand work to that needs a person's OWN credentials, which a role-filling agent cannot reach.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         search: { type: "string", description: "Search by name or email" },
+        agents: {
+          type: "string",
+          enum: ["only", "exclude"],
+          description: "'only' for this workspace's agents, 'exclude' for its people. Omit for both.",
+        },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
       },
@@ -2662,18 +2775,37 @@ export const toolDefinitions = [
     ...readOnly,
   },
   {
-    name: "nestr_register_connector",
-    description: "Register a connector in the workspace catalog: a reusable mcp/cli/api template holding no secret. Workspace-admin only; a non-admin gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error). Give type ('mcp' and 'api' need a url in config, 'cli' a command) and a unique name; optionally capabilities, exposure, authStrategy. This creates the template only. Flow: register, bind to a role's domain with nestr_bind_connector, then a human or agent connects the account via the credentials field's Connect button. The secret is captured out-of-band, never by the agent.",
+    name: "nestr_list_connector_templates",
+    description: "The connector templates this deployment can add in one click, filtered to the ones it can actually offer. Each carries the vendor's real endpoint, transport, auth strategy and the deployment's OAuth client.\n\nCALL THIS FIRST, before nestr_register_connector, whenever the tool is a known vendor (Xero, HubSpot, Slack, Stripe, GitHub, Notion, Linear and so on). Hand-registering means guessing an endpoint, and a wrong guess authorises cleanly and then fails every call: a Xero connector registered against api.xero.com instead of the template's mcp.xero.com looked healthy in every record and returned 403 forever. Pass the id you find here as templateId to nestr_register_connector. Workspace-admin only.",
     inputSchema: {
       type: "object" as const,
       properties: {
+        workspaceId: { type: "string", description: "Workspace ID whose available connector templates to list" },
+      },
+      required: ["workspaceId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_register_connector",
+    description: "Register a connector in the workspace catalog. PREFER A TEMPLATE: call nestr_list_connector_templates first and pass its id as templateId, which fills in the vendor's real endpoint, transport, auth strategy and this deployment's OAuth client. Hand-registering a known vendor means guessing an endpoint, and a wrong guess authorises cleanly and then fails every call. Only describe the transport yourself for something the deployment has no template for. A reusable mcp / cli / api template that holds no secret. Workspace-admin only. A non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error). Provide type ('mcp' or 'api' need a url in config; 'cli' needs a command) and a unique name; optionally capabilities, exposure ({ userAgent, domainGated }), and authStrategy ('secret' or 'oauth2'). This only creates the template. Typical flow: register here, then bind it to a role's DOMAIN with nestr_bind_connector (create one under the role with nestr_create_nest and labels ['circleplus-domain'] if the role has none yet: the bind refuses a role id), then a human or agent connects the account via the credentials field's Connect button. The secret is captured out-of-band through that button, never by the agent.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        templateId: {
+          type: "string",
+          description: "Id of a template from nestr_list_connector_templates. Given this, everything else is filled in from the template and you should omit type/config/capabilities/exposure/authStrategy. ALWAYS prefer this over hand-registering a vendor the deployment already knows.",
+        },
         workspaceId: { type: "string", description: "Workspace ID to register the connector in" },
         type: {
           type: "string",
           enum: ["mcp", "cli", "api"],
-          description: "Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command)",
+          description: "Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command). Required unless templateId is given.",
         },
-        name: { type: "string", description: "Unique connector name within the workspace catalog" },
+        name: {
+          type: "string",
+          description: "Unique connector name within the workspace catalog. Required unless templateId is given, where it defaults to the template's own name.",
+        },
         config: {
           type: "object",
           description: "Transport config, no secret. mcp/api need a url, cli a command. Optional non-secret headers go under headers.",
@@ -2692,13 +2824,44 @@ export const toolDefinitions = [
           description: "How a principal connects: 'secret' (one-time, via the Connect button) or 'oauth2'. The agent never sees it.",
         },
       },
-      required: ["workspaceId", "type", "name"],
+      // workspaceId only: with a templateId the transport comes from the template,
+      // and demanding type and name here is what made the whole template path
+      // unreachable from a client that reads the schema.
+      required: ["workspaceId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_create_agent",
+    description: "Create an agent user in the workspace. Workspace-admin only; a non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error).\n\nWhat decides how an agent behaves at run time is not this flag: it is whether the agent FILLS ANY ROLE in the workspace at that moment. Filling one and assisting are exclusive, and the test is not 'does it fill THIS role' but 'does it fill any', so one role anywhere makes every one of its runs a role-filler run, acting with that role's authority and reaching only the role's connectors. An agent that fills none assists whoever engages it, acting with THAT person's authority and reaching what they reach, their own connectors included.\n\nroleAssignable decides whether that can ever change. Default (true) is an ordinary agent: it assists while it holds no role, and becomes a filler the moment anyone assigns it to one. Pass false for an ASSISTANT: it can never be assigned to a role, so it can never stop being able to act for a person. Prefer false whenever the agent exists to help people with work that follows them, because otherwise a single well-meant role assignment silently ends that.\n\nEither way, work that follows a PERSON (their mailbox, their drive, their queue) puts the agent on the TASK beside them and never in the role's users. Assigning it to the role is the specific mistake: it then cannot reach anything of theirs, reports that it holds no external tool sources, and suggests binding their account to the role, which would hand it to whoever fills that role next.\n\nAn agent and the role it fills are two different things, named differently: the agent carries its own name (Collab), the role is named for the WORK (Marketing). Do not name the role after the agent. Keeping them apart is what lets the agent be replaced without the role losing its purpose, accountabilities and history, and lets one agent fill several roles.\n\nThe agent's instructions do not go here: they belong in a skill nest under the role, which loads whenever the role acts. agentConfig is runtime wiring only.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID to create the agent in" },
+        name: {
+          type: "string",
+          description: "The AGENT's own name, as its identity calls it (e.g. 'Collab'). Not the name of the work: that belongs to the role this agent will fill.",
+        },
+        description: {
+          type: "string",
+          description: "What the agent is LIKE: its character and what it is careful about. Not its instructions, which belong in a skill on the role.",
+        },
+        roleAssignable: {
+          type: "boolean",
+          description: "Defaults to true, meaning it MAY be assigned to a role. It still assists while it holds none; assigning it to one is what ends that. Pass false for an ASSISTANT, which can never be assigned and so can never stop acting for a person. See the tool description.",
+        },
+        agentConfig: {
+          type: "object",
+          description: "Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Omit for an agent that runs on Nestr's own runtime.",
+        },
+      },
+      required: ["workspaceId", "name"],
     },
     ...mutating,
   },
   {
     name: "nestr_bind_connector",
-    description: "Bind a registered connector to an owner so that owner can use it. Owner types: 'user' or 'agent' (ownerId is the user ID), 'workspace' (the workspace ID), 'role-domain' (the domain nest ID). A role-domain binding also materialises a credentials field on the domain nest, so the Connect button renders there and the response carries credentialsField { domainId, fieldId, fieldCode }. A human or agent then connects the account through that button; the secret is captured out-of-band, never seen by the agent. Workspace-admin only, and the connector must already be registered and enabled.",
+    description: "Bind a registered connector to an owner so that owner can use it. Owner types: 'role' (ownerId is the role nest ID — the server finds or creates the connector's domain under it), 'role-domain' (ownerId is an existing domain nest ID), 'workspace' (ownerId is the workspace ID), 'user' (ownerId is a person's user ID, for their own account), or 'agent' (ownerId is a bot's user ID, for its own). A 'role' or 'role-domain' owner materialises a credentials field on the domain nest, so the role can use the connector and the Connect button renders there; the response then carries domainId (and domainCreated when the bind created it). After binding, a human or agent connects the account via that Connect button. The secret is captured out-of-band and is never seen by the agent. Workspace-admin only: a non-admin caller gets AUTH_SCOPE_INSUFFICIENT. The connector must already be registered (nestr_register_connector) and enabled.\n\nBIND TO THE ROLE, not to whoever fills it. A role binding is the governance act: the access belongs to the work, survives the filler changing, and is visible to the circle. Reach for 'role' by default — it is the usual onboarding path: pass the role nest ID and the server does the domain lookup. Use 'role-domain' only when you already have the domain nest ID and want to target it directly.\n\n'user' is for what is genuinely one person's: their own mailbox, their own drive. Binding that to a role would hand it to whoever fills the role next, which is the opposite of what they asked for, so this is the one case where a role binding is wrong. It needs a workspace admin and the connector has to be open to user owners in the catalog; if either is missing, say which and what the admin has to do rather than falling back to a role binding. The work on a personal connection is then done by an agent that fills NO role, because filling a role and assisting are exclusive and only an assistant can act with a person's own access.\n\n'agent' is the same shape for a bot's own account, used where a provider gives the agent its own login rather than borrowing a person's. It is the rarest of the four: prefer 'role', so the access belongs to the work and survives the filler changing. Both personal types are workspace-admin only and both need the connector open to user/agent owners, so a caller who is not an admin gets AUTH_SCOPE_INSUFFICIENT and should say which of the two is missing rather than binding to a role instead. Be careful arranging one agent's credential from another agent's run: it is a decision about what that agent may reach, so name what you are about to do and why before doing it.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2706,15 +2869,128 @@ export const toolDefinitions = [
         connectorId: { type: "string", description: "ID of an enabled connector from nestr_list_connectors" },
         ownerType: {
           type: "string",
-          enum: ["user", "agent", "workspace", "role-domain"],
-          description: "Owner type. 'role-domain' binds to a role's domain, materialising a credentials field there.",
+          enum: ["role", "workspace", "role-domain", "user", "agent"],
+          description: "Owner type. 'role' is the usual path: pass the role nest ID and the server finds or creates the connector's domain under it. 'role-domain' targets an existing domain directly. 'workspace' gives everyone. 'user' is one person's own account and 'agent' is one bot's own: both are personal, both are workspace-admin only, and both are wrong unless the thing really belongs to that single principal.",
         },
         ownerId: {
           type: "string",
-          description: "Owner ID. user/agent: the user ID. workspace: the workspace ID. role-domain: the domain nest ID.",
+          description: "Owner ID. role: the role nest ID. role-domain: the domain nest ID. workspace: the workspace ID. user: the person's user ID. agent: the bot's user ID.",
         },
       },
       required: ["workspaceId", "connectorId", "ownerType", "ownerId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_update_connector",
+    description: "Update a connector in the workspace catalog, or switch it on and off with `enabled`. Workspace-admin only. Switching it off, or narrowing its exposure, takes effect immediately everywhere it is used: the policy is re-read every time a credential is handed out, not only when access was given.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the connector belongs to" },
+        connectorId: { type: "string", description: "ID of the connector to update" },
+        type: { type: "string", enum: ["mcp", "cli", "api"], description: "Transport" },
+        name: { type: "string", description: "Unique connector name within the workspace catalog" },
+        config: { type: "object", description: "Per-type transport config, no secret" },
+        capabilities: { type: "object", description: "Capability descriptor" },
+        exposure: { type: "object", description: "Exposure policy: { userAgent, domainGated }" },
+        authStrategy: { type: "string", enum: ["secret", "oauth2"], description: "How a principal connects" },
+        enabled: { type: "boolean", description: "Switch the connector on or off in this workspace" },
+      },
+      required: ["workspaceId", "connectorId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_remove_connector",
+    description: "Remove a connector from the workspace catalog. Workspace-admin only. Bindings that named it stop resolving, so prefer nestr_update_connector with enabled:false when you only want to pause it.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the connector belongs to" },
+        connectorId: { type: "string", description: "ID of the connector to remove" },
+      },
+      required: ["workspaceId", "connectorId"],
+    },
+    ...destructive,
+  },
+  {
+    name: "nestr_list_connections",
+    ...readOnly,
+    description: "List who has access to what in this workspace: each binding's connector, its owner (a role's domain, a person, an agent, or the whole workspace), and who holds a credential on it. Shows when an agent is using a person's account, and never returns a secret. Use it to check whether access already exists before giving more, and to find the connectionId for nestr_get_connect_link.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID whose bindings to list" },
+        includeDisabled: { type: "boolean", description: "Include removed bindings. Default false." },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "nestr_remove_connection",
+    description: "Take a connector off an owner: the binding is removed and every credential on it revoked. Workspace-admin only. A domain left holding nothing goes back to being an ordinary descriptive domain.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the binding belongs to" },
+        connectionId: { type: "string", description: "Binding ID from nestr_list_connections" },
+      },
+      required: ["workspaceId", "connectionId"],
+    },
+    ...destructive,
+  },
+  {
+    name: "nestr_get_connect_link",
+    description: "Get a link a PERSON opens to connect an account for a binding. This is how you finish setting up access: you can register a connector and give a role access, but you must never handle a raw token, so the sign-in or key entry happens behind this link. The link carries no authority — whoever opens it is checked then. Give it to the user in your reply.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the binding belongs to" },
+        connectionId: { type: "string", description: "Binding ID from nestr_list_connections" },
+      },
+      required: ["workspaceId", "connectionId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_revoke_connection_credential",
+    description: "Revoke the calling user's credential on a binding. The binding stays, so access can be restored by connecting again. Use nestr_remove_connection to remove the access entirely.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the binding belongs to" },
+        connectionId: { type: "string", description: "Binding ID from nestr_list_connections" },
+      },
+      required: ["workspaceId", "connectionId"],
+    },
+    ...destructive,
+  },
+  {
+    name: "nestr_get_agent_connectors",
+    ...readOnly,
+    description: "What an agent can and cannot use, and why. Groups each connector by where the grant comes from (its own binding, the workspace, or a role it fills) and, when unavailable, names the reason: no credential yet, the connector is disabled, it has no usable tools, or it no longer allows this kind of access. Reach for this when an agent seems to be missing something it should have.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the agent belongs to" },
+        agentUserId: { type: "string", description: "The agent's bot user ID" },
+      },
+      required: ["workspaceId", "agentUserId"],
+    },
+  },
+  {
+    name: "nestr_run_agent",
+    description: "Run an agent now on a nest, optionally saying what the run is for. This is how one agent asks another to do something. The run is pinned to the nest you name and reports back there. You need assign rights on that nest and the agent must fill or be assigned to it, so this cannot run an agent anywhere in the workspace.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the agent belongs to" },
+        agentUserId: { type: "string", description: "The agent's bot user ID" },
+        nestId: { type: "string", description: "The nest the run is pinned to: a role, a project, a task" },
+        message: { type: "string", description: "What this run is for. Omit for a plain 'advance this item' run." },
+      },
+      required: ["workspaceId", "agentUserId", "nestId"],
     },
     ...mutating,
   },
@@ -3282,6 +3558,7 @@ async function _handleToolCall(
           labels: parsed.labels,
           fields: parsed.fields,
           users: parsed.users,
+          due: parsed.due,
         });
         return formatResult({ message: "Nest created successfully", nest });
       }
@@ -3435,6 +3712,7 @@ async function _handleToolCall(
         const parsed = schemas.listUsers.parse(args);
         const users = await client.listUsers(parsed.workspaceId, {
           search: parsed.search,
+          agents: parsed.agents,
           limit: parsed.limit,
           page: parsed.page,
         });
@@ -4093,9 +4371,50 @@ async function _handleToolCall(
         return formatResult(connectors);
       }
 
+      case "nestr_list_connector_templates": {
+        const parsed = schemas.listConnectorTemplates.parse(args);
+        const listed = await client.listConnectorTemplates(parsed.workspaceId);
+        const templates = listed.templates;
+        if (!Array.isArray(templates) || templates.length === 0) {
+          return { content: [{ type: "text", text: "This deployment offers no connector templates." }] };
+        }
+        // Enriched so the hint arrives as the register call itself, pre-filled
+        // with the template id, the same treatment every other hint gets.
+        const enrichedTemplates = enrichHints({
+          workspaceId: parsed.workspaceId,
+          ...(listed.hints ? { hints: listed.hints } : {}),
+        });
+        return formatResult({
+          message: "Pass the id of the one you want as templateId to nestr_register_connector. It carries the vendor's endpoint, transport and auth strategy, so nothing has to be guessed. Do not rebuild one of these by hand: a hand-built copy has no OAuth client and fails at first use.",
+          templates,
+          ...(enrichedTemplates.hints ? { hints: enrichedTemplates.hints } : {}),
+        });
+      }
+
       case "nestr_register_connector": {
         const parsed = schemas.registerConnector.parse(args);
-        const connector = await client.registerConnector(parsed.workspaceId, {
+        if (parsed.templateId) {
+          const fromTemplate = await client.registerConnector(parsed.workspaceId, {
+            templateId: parsed.templateId,
+            ...(parsed.name ? { name: parsed.name } : {}),
+          });
+          return formatResult({
+            message: "Connector registered from a template, so its endpoint and auth strategy are the vendor's own. Next, bind it to a role's DOMAIN with nestr_bind_connector, then a human connects the account via the Connect button.",
+            connector: fromTemplate.connector,
+            // The route's hints say what to do next (a Connect link, a missing
+            // OAuth client); dropping them cost the model its follow-up.
+            ...(fromTemplate.hints ? { hints: fromTemplate.hints } : {}),
+          });
+        }
+        if (!parsed.type || !parsed.name) {
+          return formatError({
+            error: true,
+            code: "VALIDATION",
+            message: "Without templateId, both type and name are required. Call nestr_list_connector_templates first: a known vendor almost always has one.",
+            retryable: false,
+          });
+        }
+        const registered = await client.registerConnector(parsed.workspaceId, {
           type: parsed.type,
           name: parsed.name,
           config: parsed.config,
@@ -4103,10 +4422,35 @@ async function _handleToolCall(
           exposure: parsed.exposure,
           authStrategy: parsed.authStrategy,
         });
-        return formatResult({
-          message: "Connector registered. Next, bind it to an owner with nestr_bind_connector (e.g. a role's domain), then a human or agent connects the account via the credentials field's Connect button.",
-          connector,
+        // Enriched so a template hint arrives as a tool call the model can make,
+        // the same treatment every other hint gets. workspaceId is on the entry,
+        // which is what lets enrichHints work on something that is not a nest.
+        const enriched = enrichHints({
+          ...(registered.connector as unknown as Record<string, unknown>),
+          ...(registered.hints ? { hints: registered.hints } : {}),
         });
+        return formatResult({
+          message: "Connector registered. It does nothing yet: nobody has access to it. Give a ROLE access with nestr_bind_connector { ownerType: 'role', ownerId: <role nest id> } and its domain is created under that role, which is the usual onboarding path. Then get a link with nestr_get_connect_link and give it to a person to open, since the credential must never pass through you.",
+          connector: enriched,
+        });
+      }
+
+      case "nestr_create_agent": {
+        const parsed = schemas.createAgent.parse(args);
+        const agent = await client.createAgent(parsed.workspaceId, {
+          name: parsed.name,
+          description: parsed.description,
+          roleAssignable: parsed.roleAssignable,
+          agentConfig: parsed.agentConfig,
+        });
+        // Two different next steps, because the two kinds of agent are put to
+        // work in different places and saying "assign it to the role" to
+        // someone who just made an assistant is the mistake this tool exists to
+        // stop.
+        const nextStep = parsed.roleAssignable === false
+          ? "Assistant created: it can never be assigned to a role, so it will always act with the authority of whoever it is helping. Put it on the TASK beside that person (nestr_update_nest users on the task, naming both), and leave the role's users to them alone. Its instructions belong in a skill nest under the role."
+          : "Agent created, and assignable to roles. It assists while it holds none; assigning it to a role is what makes it act as that role instead. To have it fill work: create or find a role named for the WORK (not for the agent) with nestr_create_nest, then assign it with nestr_update_nest users. To have it help a person with work that follows THEM, leave it out of every role and put it on the task beside them. Its instructions belong in a skill nest under the role, not on the agent.";
+        return formatResult({ message: nextStep, agent });
       }
 
       case "nestr_bind_connector": {
@@ -4115,13 +4459,97 @@ async function _handleToolCall(
           connectorId: parsed.connectorId,
           owner: { type: parsed.ownerType, id: parsed.ownerId },
         });
-        // For a role-domain binding the API materialises a credentials field on
-        // the domain; surface that explicitly so the caller knows the Connect
-        // button now renders there and the secret is captured out-of-band.
-        const message = parsed.ownerType === "role-domain"
-          ? "Connector bound to the role's domain. A credentials field was materialised on the domain (see credentialsField) so the role can use the connector and the Connect button renders. A human or agent now connects the account via that button; the secret is captured out-of-band and never by the agent."
-          : "Connector bound to the owner. The owner now connects the account out-of-band; the secret is never seen by the agent.";
+        // A role binding creates the connector's domain when there isn't one, so
+        // say where the access landed. The credential is always a separate,
+        // out-of-band step: hand the human a link from nestr_get_connect_link.
+        const message = parsed.ownerType === "role" || parsed.ownerType === "role-domain"
+          ? "Access given to the role's domain. Nobody can use it until an account is connected: get a link with nestr_get_connect_link and give it to a person to open. The secret is captured out-of-band and never by the agent."
+          : "Access given to the owner. Nobody can use it until an account is connected: get a link with nestr_get_connect_link and give it to a person to open. The secret is never seen by the agent.";
         return formatResult({ message, connection });
+      }
+
+      case "nestr_update_connector": {
+        const parsed = schemas.updateConnector.parse(args);
+        const { workspaceId, connectorId, ...updates } = parsed;
+        if (Object.keys(updates).length === 0) {
+          return formatError({
+            error: true,
+            code: "VALIDATION",
+            message: "Nothing to update: pass at least one field to change.",
+            retryable: false,
+          });
+        }
+        const connector = await client.updateConnector(workspaceId, connectorId, updates);
+        return formatResult({ message: "Connector updated.", connector });
+      }
+
+      case "nestr_remove_connector": {
+        const parsed = schemas.removeConnector.parse(args);
+        await client.removeConnector(parsed.workspaceId, parsed.connectorId);
+        return formatResult({
+          message: "Connector removed from the catalog. Bindings that named it stop resolving.",
+          connectorId: parsed.connectorId,
+        });
+      }
+
+      case "nestr_list_connections": {
+        const parsed = schemas.listConnections.parse(args);
+        const connections = await client.listConnections(parsed.workspaceId, {
+          includeDisabled: parsed.includeDisabled,
+        });
+        return formatResult(connections);
+      }
+
+      case "nestr_remove_connection": {
+        const parsed = schemas.removeConnection.parse(args);
+        const result = await client.removeConnection(parsed.workspaceId, parsed.connectionId);
+        return formatResult({
+          message: `Access removed. ${result.revokedCount} credential(s) revoked.`,
+          connectionId: parsed.connectionId,
+        });
+      }
+
+      case "nestr_get_connect_link": {
+        const parsed = schemas.getConnectLink.parse(args);
+        const link = await client.getConnectLink(parsed.workspaceId, parsed.connectionId);
+        return formatResult({
+          message: "Give this link to a person to open. They complete the sign-in or paste the key there, so the secret never passes through you.",
+          ...link,
+        });
+      }
+
+      case "nestr_revoke_connection_credential": {
+        const parsed = schemas.revokeConnectionCredential.parse(args);
+        await client.revokeConnectionCredential(parsed.workspaceId, parsed.connectionId);
+        return formatResult({
+          message: "Credential revoked. The binding stays; connect again to restore access.",
+          connectionId: parsed.connectionId,
+        });
+      }
+
+      case "nestr_get_agent_connectors": {
+        const parsed = schemas.getAgentConnectorReach.parse(args);
+        const reach = await client.getAgentConnectorReach(parsed.workspaceId, parsed.agentUserId);
+        return formatResult(reach);
+      }
+
+      case "nestr_run_agent": {
+        const parsed = schemas.runAgent.parse(args);
+        const result = await client.runAgent(parsed.workspaceId, parsed.agentUserId, {
+          nestId: parsed.nestId,
+          message: parsed.message,
+        });
+        // A run somebody else asked for is invisible to them until someone says
+        // where it is happening, and this tool's caller is the only party in a
+        // position to. Naming the handover, not just the url, because a link
+        // that reaches the model and not the person is a link nobody sees.
+        const watching = result.watchUrl
+          ? ` Tell whoever asked for this that they can watch it at ${result.watchUrl}, where the agent reports back as it works.`
+          : " It reports back on the item it was run on.";
+        return formatResult({
+          message: `The agent was dispatched.${watching}`,
+          ...result,
+        });
       }
 
       case "nestr_get_nest_files": {
