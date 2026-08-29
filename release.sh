@@ -21,16 +21,13 @@ fi
 
 echo "Bumping version: $CURRENT_VERSION -> $NEW_VERSION"
 
-# Update package.json
-node -e "
-const fs = require('fs');
-const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-pkg.version = '$NEW_VERSION';
-fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-"
+# Update package.json AND package-lock.json together. Writing package.json alone
+# left the lockfile claiming the previous version, so the next install dirtied
+# the tree and the published tarball disagreed with the lockfile in git.
+npm version "$NEW_VERSION" --no-git-tag-version >/dev/null
 
 # Commit, tag, and push
-git add package.json
+git add package.json package-lock.json
 git commit -m "v$NEW_VERSION"
 git tag "v$NEW_VERSION"
 git push
