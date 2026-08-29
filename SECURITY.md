@@ -28,15 +28,18 @@ Two mechanisms, both carried per request:
 
 ## Workspace API keys are workspace-wide. Read this before issuing one.
 
-A workspace API key is **not** scoped to the permissions of the person who
-created it. It carries full access to its workspace regardless of user
-permissions, and every action is attributed to the key rather than to a user, so
-audit trails carry no user identity for key-driven activity.
+Only a **workspace admin** can issue a workspace API key, and the key is **not**
+scoped to the permissions of the person who created it. It carries full access to
+its workspace regardless of user permissions, and every action is attributed to
+the key rather than to a user, so audit trails carry no user identity for
+key-driven activity.
 
 The practical consequences:
 
-- **Treat a workspace API key as a workspace-level credential.** Issuing it from
-  a restricted account does not restrict it.
+- **Treat a workspace API key as a workspace-level credential**, equivalent to
+  admin access, rather than as a credential belonging to whoever generated it.
+- **Who holds workspace admin is the control that matters here**, because that is
+  who can mint one.
 - **Prefer OAuth** for anything acting on behalf of a person. It is bounded by
   that person's permissions and it preserves user identity in audit trails.
 - **Prefer `/mcp/readonly`** for any integration that only needs to read.
