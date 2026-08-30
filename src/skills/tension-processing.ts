@@ -100,6 +100,8 @@ Then identify the **next physical action** — the very next concrete step.
 
 **Governance must be separate.** If a tension has both operational (pathways 1-4) AND governance needs (pathway 5), process operational work in the original tension and create a NEW tension for the governance proposal.
 
+**Spotting the governance half.** A request to DO something is not a request to CHANGE the organization, but work that falls outside what a role was given is how you find out the governance is stale. When work lands outside the role's accountabilities, or touches a domain the role does not hold, that is pathway 5 hiding inside pathway 3 or 4. See *Does the work fit the role?* in Doing Work for when to raise it and, more importantly, when to let it go: read accountabilities widely, stay quiet while governance is still young, and never hold up the work for it.
+
 ### When to Use Tensions vs Nest Tools
 
 **Tension tools** (\`nestr_create_tension\`, \`nestr_add_tension_part\`, etc.): Inter-role communication, governance proposals, elections, anything requiring consent. NEVER use tensions to create operational work (projects, tasks) under roles you or the user energize — that's what nest tools are for.

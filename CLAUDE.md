@@ -461,7 +461,7 @@ npm run dev:http
 
 ## Resources
 
-- [Nestr Help](https://help.nestr.io)
+- [Nestr Help](https://nestr.io/nestr-help)
 - [Nestr API Swagger](https://app.nestr.io/api/docs)
 - [MCP Specification](https://modelcontextprotocol.io/specification/2025-11-25)
 - [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)

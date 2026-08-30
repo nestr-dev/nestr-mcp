@@ -23,7 +23,9 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 - nest-model: Nest fields, hierarchy, hints, and fieldsMetaData
 - labels: Important labels, label architecture, and field schema customization
 - search: Full search query syntax with all operators and examples
+- fields: Adding custom fields to labels when Nestr has no field for something yet
 - web-app-links: URL formats for linking to the Nestr web app
+- workspace-settings: Where workspace settings are, every tab, and the link to hand over
 - inbox: Inbox quick capture, processing workflow, and reordering
 - daily-plan: Daily plan usage, scope, and planning workflows
 - notifications: Notification types, groups, and when to check them
@@ -52,6 +54,7 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 
 **Assistant-mode agents should:**
 - Defer to the human for all decisions — suggest, don't decide
+- Treat assisting as a real execution pattern: a role is governance and never executes anything; it is filled by a human or a dedicated agent, and any agent may additionally assist a filler by running that role's work with the filler's authority. Assisting is reactive by nature — you act when the filler engages you, never on a schedule, and you never appear in the role's users. Autonomy belongs only to agents filling roles. Never present a role as if it were an agent: creating a role creates the accountability, not the executor
 - Help the user articulate their tensions including feeling and needs
 - Surface tensions and work items for the user to review and prioritize
 - Confirm before proposing governance changes
@@ -187,7 +190,7 @@ Nestr uses different formats for different fields:
 - **\`purpose\`**: The aspirational future state this nest is working towards. **Most important for workspaces, circles, and roles** — it defines the north star and context boundary for the organization, circle, or role. Everything within that container should serve its purpose. For other nests (tasks, projects, etc.), prefer \`description\` or \`fields\` for detailed information — but purpose can be set if it serves the user. Supports HTML.
 - **\`description\`**: The primary field for detailed information about a nest. Use for project details, task context, acceptance criteria, Definition of Done, and any persistent information about the nest. Supports HTML.
 - **\`fields\`**: Structured data defined by labels (e.g., \`fields['project.status']\`, \`fields['metric.frequency']\`). Use for structured, label-specific information.
-- **Comment \`body\`**: HTML supported (same tags as above, including base64 images). Supports @mentions — **mentions MUST be wrapped in literal curly braces**: write \`@{aBcD1234eFgH5678i:roleNestId}\`, NOT \`@aBcD1234eFgH5678i\`. Without the braces the platform does not parse the mention, the user is not notified, and no link is rendered. Forms: **\`@{userId:roleId}\` is the preferred form when mentioning a user** — it addresses them in the context of a specific role (or a circle, for "individual action on a circle"), so they know which hat they're being addressed in. \`@{userId}\` mentions by user ID without role context (legacy — avoid when a role is known), \`@{email}\` mentions by any email the user is registered with in Nestr, \`@{circle}\` notifies all role fillers in the nearest ancestor circle, \`@{everyone}\` is available in the UI but not yet via the API. **Use comments for progress updates**, status changes, and conversation — not purpose or description.
+- **Comment \`body\`**: HTML supported (same tags as above, including base64 images). Supports @mentions — **mentions MUST be wrapped in literal curly braces**: write \`@{aBcD1234eFgH5678i:roleNestId}\`, NOT \`@aBcD1234eFgH5678i\`. Without the braces the platform does not parse the mention, the user is not notified, and no link is rendered. Forms: **\`@{userId:roleId}\` is the preferred form when mentioning a user** — it addresses them in the context of a specific role (or a circle, for "individual action on a circle"), so they know which hat they're being addressed in. the second id must be a ROLE or CIRCLE nest and never the project, task or tension being commented on, since the mention renders that nest's title where the role name belongs (a project id produces 'Henk as Write a weekly blog post', reading as though the project were his role). \`@{userId}\` mentions by user ID without role context (use it when the role is genuinely unknown, rather than substituting the nest you are working on), \`@{email}\` mentions by any email the user is registered with in Nestr, \`@{circle}\` notifies all role fillers in the nearest ancestor circle, \`@{everyone}\` is available in the UI but not yet via the API. **Use comments for progress updates**, status changes, and conversation — not purpose or description.
 - **\`data\`**: Generic key-value store. Also used internally by Nestr and other integrations — **never overwrite or remove existing keys**. When adding your own data, namespace it under \`mcp.\` (e.g., \`{ "mcp.lastSync": "2025-01-01" }\`) to avoid conflicts. Not rendered in UI.
 
 **Where to put information:**
@@ -199,16 +202,17 @@ Nestr uses different formats for different fields:
 | Progress updates, status changes, discussion | Comments |
 | Integration metadata, custom tracking | \`data\` (namespace under \`mcp.\`) |
 
-**Important — Always use HTML, not Markdown:** When composing purpose, description, or comment content, you must use HTML tags. This is a common mistake for AI agents that default to Markdown syntax.
+**Formatting — HTML and Markdown both render:** purpose, description and comment content passes through a Markdown renderer with HTML enabled, so \`<b>bold</b>\` and \`**bold**\` both come out bold. Write whichever reads better and stay consistent within one piece of content. Keep titles plain text: markup there is not stripped, it just renders as noise everywhere the title is listed.
 
-| Instead of (Markdown) | Use (HTML) |
-|----------------------|------------|
+| Markdown | HTML |
+|----------|------|
 | \`**bold text**\` | \`<b>bold text</b>\` |
 | \`*italic text*\` | \`<i>italic text</i>\` |
 | \`- list item\` | \`<ul><li>list item</li></ul>\` |
 | \`1. numbered item\` | \`<ol><li>numbered item</li></ol>\` |
 | \`[link text](url)\` | \`<a href="url">link text</a>\` |
-| \`\\n\\n\` (double newline) | \`<br>\` |
+
+What does not render either way is a wall of unbroken prose. Give anything longer than a few sentences headings and lists, so the humans who own the nest can read it.
 
 **Example HTML in purpose:**
 \`\`\`html
@@ -354,6 +358,7 @@ Each hint object has:
 | \`project_no_acceptance_criteria\` | suggestion | project | Missing description/acceptance criteria |
 | \`project_overdue\` | warning | project | Past due date |
 | \`no_proposed_output\` | suggestion | tension | Tension has no proposed output yet |
+| \`inline_images\` | info | all | Count of images pasted into the text (see below) |
 
 Example response with hints:
 \`\`\`json
@@ -376,6 +381,15 @@ Example response with hints:
   ]
 }
 \`\`\`
+
+**Inline images.** An image pasted into a nest's text is stored as a file and left in the
+content as a markdown reference: \`![name](/file/download?id=FILE_ID&name=NAME)\`. These are
+deliberately absent from \`nestr_get_nest_files\`, because they belong to the text rather than
+to the attachment list, and the \`files\` hint does not count them either. The
+\`inline_images\` hint is how you learn they are there. To look at one, take its FILE_ID from
+the reference in the content and call \`nestr_read_file({ nestId, fileId })\` — that works for
+inline images even though they are not listed. The hint carries no \`toolCall\`: the id belongs
+to a specific reference, so there is no single call to pre-map.
 
 Use hints to proactively surface issues to the user — for example, when reviewing a circle's roles, hints can reveal which roles need attention without separate queries. Use the \`toolCall\` to drill into any hint directly.`,
 
@@ -446,7 +460,27 @@ Labels created by individual users for their own organization:
 - Help users maintain personal categorization systems
 - Managed via \`nestr_list_personal_labels\` and \`nestr_create_personal_label\` (OAuth only)
 
+### Hidden labels (autoComplete: false)
+
+A label carrying \`autoComplete: false\` is **invisible in the UI**. It does not autocomplete
+while someone types, and it is not drawn in the label list on an item's detail view or in
+list view. It is still on the nest, still gives the item its fields and behaviour, and is
+still searchable with \`label:<id>\`.
+
+Which ones: \`task\` (on every plain todo), the CRM and OKR internals, and **every tagAlong**,
+which is how a workspace's per-context customisation attaches without showing up as a chip.
+That is why a card showing only "Contract" can also carry \`task\` plus a tagAlong, and show
+Status and other task fields nobody put there deliberately.
+
+**Never tell someone to "open the item and delete that label" for a hidden one.** There is
+nothing on the card to click, and the advice sends them looking for a control that is not
+drawn. The two routes that do work: type the label's full name in the add/remove label
+modal, or find the items with \`label:<name>\` in search. Check the label before you answer:
+a label you can see in the data may be invisible to them.
+
 ### Field Schemas and Customization
+
+**Need a field that does not exist yet?** A workspace admin can add one to the label, and every item of that type picks it up. See \`nestr_help({ topic: "fields" })\` before telling anyone a field is not available.
 
 Labels define field schemas - the custom fields available on nests with that label. Key points:
 
@@ -482,6 +516,40 @@ Use this when you need to know what values are valid for a field, especially bef
 
 **Example**: A workspace might customize the global \`project\` label to add a \`project.department\` field, and a sub-circle might further customize it to add \`project.sprint\` - both would appear on projects within that sub-circle.`,
 
+  "fields": `## Custom Fields (recording data Nestr has no field for yet)
+
+**Rule of thumb: when someone asks "can I record X on Y?" and there is no built-in field for it, the answer is almost always yes.** Fields are defined on labels, so a workspace admin adds the field to Y's label and every item of that type gets it. Never tell a user something cannot be recorded just because you could not find a field for it. Check the label's schema first, then point them at this route.
+
+### How fields work
+
+- **Defined per label, not per item.** Adding a field to a label gives it to every item carrying that label, including items that already exist.
+- **Where:** Workspace settings -> Labels, Fields & Tabs -> select the label -> add a field.
+- **Who:** a workspace admin. If the person asking is not an admin, describe the route and suggest they ask an admin, rather than saying it is not possible.
+- **Naming:** the new field is namespaced by its label, e.g. \`tension.notes\`, and is read and written through \`fields\` on the nest tools like any built-in field.
+- **Per-circle overrides:** a circle can add, alter or hide a label's fields for itself, and a circle nested inside it can override again. The same label can carry different fields in different parts of the tree. The route is the circle's own settings, \`/n/{workspaceId}/{circleId}?s=1#labels\`, which lists the system labels under "Customize a system label" and the workspace's own labels under "Customize a workspace label". Renaming, recolouring, creating and deleting a workspace label stay at the workspace root; a circle only changes how one behaves there.
+- **Internally** this is stored as a tagAlong label on the label definition. That is implementation detail. Talk to users about "adding a field to the label".
+
+### Check before you answer
+
+Fetch any nest of that type with \`fieldsMetaData=true\` (see topic "labels") to read the live schema, including the options on a dropdown. A field you do not recognise may already exist in that workspace.
+
+### Common requests, and the label to change
+
+| Request | What to do |
+|---|---|
+| Notes on a meeting agenda item | Agenda items are tensions. Add a multiline or HTML text field to the \`tension\` label. |
+| A budget on projects | Currency field on \`project\`. |
+| A start date on roles | Date field on \`role\`. |
+| A renewal date on contracts | Create a workspace label for contracts, add a date field to it. |
+| A priority to group a board by | Drop down list on the label, then group with \`groupbycol:<label>-><field>\` (see topic "search"). |
+| Something Nestr has no concept of at all | Create a workspace label for it and give it fields. |
+
+### Field types available
+
+Text, multiline text, HTML text, number, currency, percentage, slider, range, formula, drop down list, multi-select drop down list, label drop down selector, checkbox, date, term selector, nest link, URL, user.
+
+Fields are first class: once added you can search, filter, sort and group by them.`,
+
   "search": `## Search Query Syntax
 
 The \`nestr_search\` tool supports powerful query operators. Combine multiple operators with spaces (AND logic) or use commas within an operator (OR logic).
@@ -507,6 +575,8 @@ The \`nestr_search\` tool supports powerful query operators. Combine multiple op
 | \`depth:\` | \`depth:1\` | Limit search depth (1 = direct children only) |
 | \`mindepth:\` | \`mindepth:2\` | Minimum depth from search context |
 | \`limit:\` | \`limit:10\` | Limit number of results |
+| \`groupby:\` | \`groupby:parent\` | Group results into sections (app + tabs; inert here) |
+| \`groupbycol:\` | \`groupbycol:project->status\` | Same grouping as board columns — see "Grouping and Layout" below |
 
 ### The \`has:\` Operator
 
@@ -649,6 +719,41 @@ label:project completed:this_month sort:completedAt sort-order:desc
   -> Recently completed projects
 \`\`\`
 
+### Grouping and Layout (\`groupby:\` / \`groupbycol:\`)
+
+\`groupby:\` and \`groupbycol:\` are supported operators that organise results rather than filter them. \`groupby:\` splits the list into sections; \`groupbycol:\` lays the same grouping out as columns, i.e. a kanban board. Both can appear in one query, giving sections inside each column.
+
+**Where they take effect:** the search bar in the Nestr app, and the search term saved on a tab (Workspace settings -> Labels, Fields & Tabs -> pick the label -> its tabs). They are accepted but inert for the \`nestr_search\` API tool, which always returns a flat list — so group the results yourself when answering. Do not tell a user these operators do not exist, and do not send them hunting for a menu instead: in the app and on tabs they work.
+
+**Values (the same set for both):**
+- \`label\` — the first groupable label on each result
+- \`parent\` — the item's parent nest
+- \`workspace\`
+- \`assignee\` — first assigned user, \`none\` when unassigned
+- \`completed\` — completed vs not (needs 'hide completed' turned off to show both)
+- \`due\` — Overdue / Today / This week / Next week / Later / Without due date
+- \`{labelId}->{fieldCode}\` — any dropdown field on a label, e.g. \`project->status\` or \`task->status\`. This general form is not in the app's autosuggest but is fully supported, for custom fields too.
+- \`ancestorlabel->{labelId,...}\` — the nearest ancestor carrying one of the listed labels, e.g. \`groupby:ancestorlabel->circleplus-role,circleplus-circle\` for a lane per role or circle. Built-in views such as My projects use exactly this.
+
+**Worked example — a board of tasks by status inside a project.** Tasks have no native status field (projects do: Future / Current / Waiting / Done), so add a dropdown field, e.g. \`status\`, to the task label first, then give the project label a search tab whose term includes \`groupbycol:task->status\`. Every project then shows its tasks as a board with one column per status value.
+
+**Examples:**
+\`\`\`
+label:project groupbycol:project->status
+  -> Projects as a board, one column per project status
+
+completed:false groupbycol:assignee
+  -> Open work as a board, one column per person
+
+label:project groupby:ancestorlabel->circleplus-role,circleplus-circle
+  -> Projects in sections, one per owning role or circle
+
+groupbycol:task->status groupby:parent
+  -> Tasks as status columns, sectioned by their parent inside each column
+\`\`\`
+
+Public help articles covering the same ground, each fetched by passing its slug as \`topic\`: \`nestr-search\` for the in-app search UI, \`customising-tabs\` for putting a search on a tab, and \`customising-views\` for the per-person list/columns switch.
+
 ### Scoping Search to a Specific Nest
 
 Use \`in:nestId\` to limit search results to only items within a specific nest (its descendants at any depth).
@@ -780,9 +885,59 @@ This works for viewing colleagues too - replace userId to see what roles they fi
 
 For workspace admins, link to settings with \`/n/{workspaceId}?s=1\` plus:
 - \`#users\` - Team members
-- \`#labels\` - Label configuration
+- \`#details\` - Workspace details
+- \`#plan\` - Subscription plan and billing
+- \`#settings\` - User permissions and domains
+- \`#labels\` - Labels, fields and tabs
 - \`#workspace-apps\` - Enabled apps/features
-- \`#plan\` - Subscription plan`,
+- \`#workspace-integrations\` - Integrations
+- \`#provider\` - Provider settings (service-provider workspaces only)
+
+The same \`?s=1#labels\` opens a CIRCLE's own settings when the id is a circle rather
+than the workspace. See \`nestr_help({ topic: "workspace-settings" })\` before answering
+any "where do I find..." question about settings.`,
+
+  "workspace-settings": `## Where workspace settings are
+
+**Answer this with a link, never with a menu path.** Do not describe a gear icon, a
+hamburger menu, a sidebar, or anything else on screen: you cannot see the user's screen,
+the app differs across desktop, mobile and window widths, and a wrong walkthrough sends
+someone hunting for a control that is not there. Give the URL.
+
+\`https://app.nestr.io/n/{workspaceId}?s=1#{tab}\`
+
+| Tab | What is on it |
+|---|---|
+| \`users\` | People, invites, removing someone |
+| \`details\` | Workspace name and details |
+| \`plan\` | Plan, trial and billing |
+| \`settings\` | User permissions and email domains |
+| \`labels\` | Labels, fields and tabs |
+| \`workspace-apps\` | Applications (Scrum, OKR, CRM, Agentic work, imports) |
+| \`workspace-integrations\` | Slack, Teams and the rest |
+| \`provider\` | Provider settings, on service-provider workspaces only |
+
+A tab the workspace does not offer bounces to its first tab, so a wrong guess degrades
+to \`#users\` rather than to an error.
+
+### Which workspace id
+
+If the run already told you the workspace, use it. If it did not, do not guess and do not
+say you cannot help: call \`nestr_list_workspaces\` (or \`nestr_get_me\` with
+\`fullWorkspaces: true\`) and give a link per workspace, naming each. People routinely own
+two workspaces with the same name, so lead with the name and let the link carry the id.
+
+### Who can open it
+
+Only a workspace admin. Check before you say it, because \`nestr_get_workspace\` reports
+who the admins are: telling an owner to go and find an administrator is worse than saying
+nothing. Someone who created their own workspace is its admin and its owner.
+
+### Circles have the same screen
+
+A circle has its own settings at \`/n/{workspaceId}/{circleId}?s=1#labels\`, which is where
+a label is customised for that circle and everything under it. See
+\`nestr_help({ topic: "fields" })\`.`,
 
   "inbox": `## Inbox (Quick Capture)
 

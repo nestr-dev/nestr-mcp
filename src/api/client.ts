@@ -98,6 +98,18 @@ export interface Nest {
   updatedAt?: string;
 }
 
+/**
+ * What GET .../posts actually returns. The envelope is kept rather than unwrapped to
+ * `data`, because the route carries an unread_posts hint beside it (when the caller is
+ * user-scoped) and `meta` for paging, and both are the point.
+ */
+export interface PostsEnvelope {
+  status?: string;
+  data?: Post[];
+  hints?: unknown[];
+  meta?: Record<string, unknown>;
+}
+
 export interface Post {
   _id: string;
   body: string;
@@ -113,10 +125,22 @@ export interface User {
   username: string;
   /** True when the authenticated user is a bot (agent acting as role filler) */
   bot?: boolean;
+  /**
+   * True when this agent may never fill a role, so it can only ever assist a
+   * person. The one to hand work to that needs a person's OWN credentials.
+   * Only present on agents, and only when a workspace was in context.
+   */
+  assistant?: boolean;
   profile?: {
     email?: string;
     fullName?: string;
     avatar?: string;
+    /** Set on agents: the workspace the agent was created in. */
+    agentWorkspaceId?: string;
+    /** Set on agents: what the agent is for. */
+    agentDescription?: string;
+    /** Set on agents: 'active' or otherwise. */
+    agentStatus?: string;
   };
 }
 
@@ -224,16 +248,19 @@ export interface Connector {
 
 /** The owner a connector binds to. */
 export interface ConnectionOwner {
-  type: "user" | "agent" | "workspace" | "role-domain";
-  /** user/agent: user id. workspace: workspace id. role-domain: domain nest id. */
+  type: "user" | "agent" | "workspace" | "role-domain" | "role";
+  /**
+   * user/agent: user id. workspace: workspace id. role-domain: domain nest id.
+   * role: role nest id — the connector's domain is found or created under it.
+   */
   id: string;
 }
 
 /**
  * A connection: a connector bound to an owner. Holds no secret; the secret
  * lives on an authorization captured out-of-band via the Connect button.
- * For a role-domain owner, `credentialsField` describes the credentials field
- * materialised on the domain nest so the role can use the connector.
+ * Binding with owner type 'role' returns the domain that now holds the access,
+ * and whether it had to be created.
  */
 export interface Connection {
   _id: string;
@@ -242,16 +269,62 @@ export interface Connection {
   owner: ConnectionOwner;
   metadata?: Record<string, unknown>;
   status?: "active" | "disabled";
-  /** Present only for a role-domain binding. */
-  credentialsField?: {
-    domainId: string;
-    fieldId?: string;
-    fieldCode?: string;
-    /** Set when the connection bound but the field could not be materialised. */
-    error?: string;
-  };
+  /** Present when binding with owner type 'role'. */
+  domainId?: string;
+  /** Whether that domain had to be created for this connector. */
+  domainCreated?: boolean;
   createdAt?: string;
   updatedAt?: string;
+}
+
+/** A binding as the workspace listing reports it, with who holds a credential. */
+export interface ConnectionListing {
+  connectionId: string;
+  connectorId: string | null;
+  connectorName: string;
+  owner: ConnectionOwner;
+  /** "Role (Circle) / Domain" for a role binding, the person or agent otherwise. */
+  ownerLabel: string | null;
+  ownerRoleId?: string | null;
+  ownerRoleTitle?: string | null;
+  ownerCircleTitle?: string | null;
+  ownerDomainTitle?: string | null;
+  status?: "active" | "disabled";
+  connectedCount: number;
+  authorizations: Array<{
+    _id: string;
+    principal: { type: "user" | "agent"; id: string };
+    principalName: string | null;
+    scope: "personal" | "shared";
+    status: string;
+    connected: boolean;
+    /** Set when an agent holds a credential a person consented to. */
+    delegated: boolean;
+    authorizedBy: string | null;
+    authorizedByName: string | null;
+  }>;
+}
+
+/** What an agent can and cannot use, and why. */
+export interface AgentConnectorReach {
+  connectionId: string;
+  connectorId: string | null;
+  connectorName: string;
+  /** Where the grant comes from: its own binding, the workspace, or a role. */
+  source: "own" | "workspace" | "role-domain" | null;
+  available: boolean;
+  /** Why it is unavailable: no-credential, catalog-disabled, no-capabilities, ... */
+  reason: string | null;
+  roleNestId: string | null;
+  roleTitle: string | null;
+  domainId: string | null;
+  domainTitle: string | null;
+  scope: "personal" | "shared" | null;
+  delegatedBy: string | null;
+  delegatedByName: string | null;
+  /** The person who consented can no longer authorise it here. */
+  delegatorLapsed: boolean;
+  canConnect: boolean;
 }
 
 /**
@@ -754,6 +827,8 @@ export class NestrClient {
     labels?: string[];
     fields?: Record<string, unknown>;
     users?: string[];
+    /** ISO 8601. The field the dated-work sweep reads; a title date is not it. */
+    due?: string;
   }): Promise<Nest> {
     return this.fetch<Nest>("/nests", {
       method: "POST",
@@ -976,15 +1051,22 @@ export class NestrClient {
 
   // ============ POSTS/COMMENTS ============
 
+
+  /**
+   * Wraps GET /nests/:id/posts. Deliberately NOT unwrapped to `data`: the route
+   * carries an unread_posts hint alongside it when the caller is user-scoped, and
+   * `meta` for paging. Unwrapping would throw both away.
+   */
   async getNestPosts(
     nestId: string,
-    options?: { depth?: number | "all" }
-  ): Promise<Post[]> {
+    options?: { depth?: number | "all"; unread?: boolean }
+  ): Promise<PostsEnvelope> {
     const params = new URLSearchParams();
     if (options?.depth !== undefined) params.set("depth", options.depth.toString());
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
 
     const query = params.toString();
-    return this.fetch<Post[]>(`/nests/${nestId}/posts${query ? `?${query}` : ""}`);
+    return this.fetch<PostsEnvelope>(`/nests/${nestId}/posts${query ? `?${query}` : ""}`);
   }
 
   async createPost(
@@ -1000,6 +1082,138 @@ export class NestrClient {
         ...(options?.labels !== undefined ? { labels: options.labels } : {}),
       }),
     });
+  }
+
+  // ============ DIRECT MESSAGES ============
+  //
+  // A thread is the unit and its id is the whole address. The space that holds a pair's
+  // threads is a storage detail the API does not expose, so nothing here carries one.
+  // Posts and read markers are the ordinary Nestr ones: the DM routes delegate to the
+  // shared posts handler server-side, so grants, depth and nesting behave the same here.
+
+  async listDMs(
+    options?: {
+      withUser?: string;
+      unread?: boolean;
+      includeCompleted?: boolean;
+      limit?: number;
+      page?: number;
+    }
+  ): Promise<Record<string, unknown>[]> {
+    const params = new URLSearchParams();
+    if (options?.withUser) params.set("user", options.withUser);
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    if (options?.includeCompleted) params.set("includeCompleted", "true");
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+    if (options?.page !== undefined) params.set("page", String(options.page));
+    const query = params.toString();
+    return this.fetch<Record<string, unknown>[]>(`/users/me/dm${query ? `?${query}` : ""}`);
+  }
+
+  async createDMThread(user: string, title?: string): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>("/users/me/dm", {
+      method: "POST",
+      body: JSON.stringify({ user, ...(title !== undefined ? { title } : {}) }),
+    });
+  }
+
+  // ============ SUPPORT QUEUES ============
+  //
+  // A queue is a label on threads across many DM spaces, not a space itself, so these are
+  // a sibling of the DM routes. They hand back thread ids, which is the whole address on
+  // the DM routes: read one with getDMThread or getDMPosts.
+
+  async listQueues(): Promise<Record<string, unknown>[]> {
+    return this.fetch<Record<string, unknown>[]>("/users/me/queues");
+  }
+
+  async listQueueThreads(
+    key: string,
+    options?: { unread?: boolean }
+  ): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    const query = params.toString();
+    return this.fetch<Record<string, unknown>>(
+      `/users/me/queues/${encodeURIComponent(key)}/threads${query ? `?${query}` : ""}`
+    );
+  }
+
+  async getDMThread(
+    threadId: string,
+    options?: { unread?: boolean }
+  ): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    const query = params.toString();
+    return this.fetch<Record<string, unknown>>(
+      `/users/me/dm/${threadId}${query ? `?${query}` : ""}`
+    );
+  }
+
+  // The body is a partial nest, the same shape PATCH /nests/{id} takes: the keys you send
+  // are the ones that change, and `users` is the participant list you want rather than a
+  // pair of add/remove lists. A DM thread is a nest, so it needs no second vocabulary.
+  async updateDMThread(
+    threadId: string,
+    body: {
+      title?: string;
+      // null reopens a closed conversation, true closes one. Absent leaves it alone,
+      // which is why the caller passes the key through rather than a boolean.
+      completed?: boolean | null;
+      users?: string[];
+    }
+  ): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>(`/users/me/dm/${threadId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** Same envelope as getNestPosts: the DM route delegates to the same handler. */
+  async getDMPosts(
+    threadId: string,
+    options?: { unread?: boolean; depth?: number | "all" }
+  ): Promise<PostsEnvelope> {
+    const params = new URLSearchParams();
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    if (options?.depth !== undefined) params.set("depth", options.depth.toString());
+    const query = params.toString();
+    return this.fetch<PostsEnvelope>(
+      `/users/me/dm/${threadId}/posts${query ? `?${query}` : ""}`
+    );
+  }
+
+  async createDMPost(threadId: string, body: string): Promise<Post> {
+    return this.fetch<Post>(`/users/me/dm/${threadId}/posts`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    });
+  }
+
+  // The read marker lives on the post's context nest and never moves backwards, so this
+  // is safe to call out of order and works for any post, not only a DM.
+  async markPostRead(postId: string): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>(`/posts/${postId}/read`, { method: "POST" });
+  }
+
+  // suppressStatusMessage always rides along: whoever called this tool is told to say a
+  // human is coming, so the canned confirmation on the thread would be the same news
+  // twice. It is a request, not an instruction. Nestr grants it only while an agent
+  // reply to that same thread is pending, so a client whose answer lands somewhere else
+  // (this server also runs outside the Nestradamus runtime) leaves the thread with the
+  // confirmation it needs. The response says which way it went.
+  // Unwrapped to `data`, unlike its DM siblings: the caller reads flags off this
+  // (alreadyQueued, statusMessagePosted) and reading them off the envelope silently
+  // yielded undefined every time, so the already-queued branch never fired.
+  async escalateDMThread(threadId: string, reason?: string): Promise<Record<string, unknown>> {
+    const body: Record<string, unknown> = { suppressStatusMessage: true };
+    if (reason) body.reason = reason;
+    const response = await this.fetch<{ data?: Record<string, unknown> }>(
+      `/users/me/dm/${threadId}/escalate`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+    return response?.data ?? {};
   }
 
   // ============ CIRCLES & ROLES ============
@@ -1087,10 +1301,17 @@ export class NestrClient {
 
   async listUsers(
     workspaceId: string,
-    options?: { search?: string; limit?: number; page?: number; includeSuspended?: boolean }
+    options?: {
+      search?: string;
+      agents?: "only" | "exclude";
+      limit?: number;
+      page?: number;
+      includeSuspended?: boolean;
+    }
   ): Promise<User[]> {
     const params = new URLSearchParams();
     if (options?.search) params.set("search", options.search);
+    if (options?.agents) params.set("agents", options.agents);
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.page) params.set("page", options.page.toString());
     if (options?.includeSuspended) params.set("includeSuspended", "true");
@@ -1867,6 +2088,59 @@ export class NestrClient {
   }
 
   /**
+   * The connector templates this deployment can offer: the one-click set, each
+   * carrying an endpoint, transport, auth strategy and OAuth client that nobody
+   * has to guess. Workspace-admin only, as the route enforces.
+   * Wraps GET /workspaces/:workspaceId/connector-templates.
+   */
+  async listConnectorTemplates(
+    workspaceId: string
+  ): Promise<{ templates: unknown[]; hints?: unknown[] }> {
+    // The envelope's hints are kept, not unwrapped away. Listing templates was
+    // not enough on its own: a caller that could see the Xero template still
+    // hand-built a connector from what the template told it. The hint on this
+    // response is what turns "here they are" into "register this one".
+    const response = await this.fetch<{
+      status: string;
+      data: unknown[];
+      hints?: unknown[];
+    }>(`/workspaces/${workspaceId}/connector-templates`);
+    return { templates: response.data, hints: response.hints };
+  }
+
+  /**
+   * Create an agent user in the workspace. Workspace-admin only: the REST route
+   * enforces it and returns 403 (mapped to AUTH_SCOPE_INSUFFICIENT) for a
+   * non-admin caller.
+   *
+   * agentConfig is runtime wiring (runtimeCallbackUrl, tokenTtlSeconds), not
+   * persona: what the agent should DO belongs in a skill nest under the role it
+   * fills, which is a separate nest with a name of its own.
+   *
+   * Wraps POST /workspaces/:workspaceId/agents. The route returns
+   * { status, data }; this unwraps to the created agent user.
+   */
+  async createAgent(
+    workspaceId: string,
+    body: {
+      name: string;
+      description?: string;
+      /** false creates an assistant: never assignable to a role. */
+      roleAssignable?: boolean;
+      agentConfig?: Record<string, unknown>;
+    }
+  ): Promise<User> {
+    const response = await this.fetch<{ status: string; data: User }>(
+      `/workspaces/${workspaceId}/agents`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      }
+    );
+    return response.data;
+  }
+
+  /**
    * Register a connector in the workspace catalog. Workspace-admin only: the
    * REST route enforces it and returns 403 (mapped to AUTH_SCOPE_INSUFFICIENT)
    * for a non-admin caller. Holds no secret.
@@ -1876,22 +2150,26 @@ export class NestrClient {
   async registerConnector(
     workspaceId: string,
     body: {
-      type: "mcp" | "cli" | "api";
-      name: string;
+      templateId?: string;
+      type?: "mcp" | "cli" | "api";
+      name?: string;
       config?: ConnectorConfig;
       capabilities?: ConnectorCapabilities;
       exposure?: ConnectorExposure;
       authStrategy?: "secret" | "oauth2";
     }
-  ): Promise<Connector> {
-    const response = await this.fetch<{ status: string; data: Connector }>(
+  ): Promise<{ connector: Connector; hints?: unknown[] }> {
+    // The envelope's hints are kept, not unwrapped away: POST /connectors raises
+    // one when a hand-written url points at a vendor this deployment ships a
+    // template for, and that is precisely the caller who needs to see it.
+    const response = await this.fetch<{ status: string; data: Connector; hints?: unknown[] }>(
       `/workspaces/${workspaceId}/connectors`,
       {
         method: "POST",
         body: JSON.stringify(body),
       }
     );
-    return response.data;
+    return { connector: response.data, hints: response.hints };
   }
 
   /**
@@ -1917,6 +2195,167 @@ export class NestrClient {
         body: JSON.stringify(body),
       }
     );
+    return response.data;
+  }
+
+  /**
+   * Update a connector in the workspace catalog. Workspace-admin only. Send
+   * `enabled` to switch it on or off.
+   *
+   * Wraps PATCH /workspaces/:workspaceId/connectors/:connectorId.
+   */
+  async updateConnector(
+    workspaceId: string,
+    connectorId: string,
+    updates: {
+      type?: string;
+      name?: string;
+      authStrategy?: string;
+      config?: Record<string, unknown>;
+      capabilities?: Record<string, unknown>;
+      exposure?: Record<string, unknown>;
+      enabled?: boolean;
+    }
+  ): Promise<Connector> {
+    const response = await this.fetch<{ status: string; data: Connector }>(
+      `/workspaces/${workspaceId}/connectors/${connectorId}`,
+      { method: "PATCH", body: JSON.stringify(updates) }
+    );
+    return response.data;
+  }
+
+  /**
+   * Remove a connector from the workspace catalog. Workspace-admin only.
+   *
+   * Wraps DELETE /workspaces/:workspaceId/connectors/:connectorId.
+   */
+  async removeConnector(workspaceId: string, connectorId: string): Promise<{ _id: string }> {
+    const response = await this.fetch<{ status: string; data: { _id: string } }>(
+      `/workspaces/${workspaceId}/connectors/${connectorId}`,
+      { method: "DELETE" }
+    );
+    return response.data;
+  }
+
+  /**
+   * List the workspace's bindings: which connector is bound to which owner, who
+   * holds a credential, and who consented. Never returns a secret.
+   *
+   * Wraps GET /workspaces/:workspaceId/connections/list.
+   */
+  async listConnections(
+    workspaceId: string,
+    options: { includeDisabled?: boolean } = {}
+  ): Promise<ConnectionListing[]> {
+    const query = options.includeDisabled ? "?includeDisabled=true" : "";
+    const response = await this.fetch<{ status: string; data: ConnectionListing[] }>(
+      `/workspaces/${workspaceId}/connections/list${query}`
+    );
+    return response.data;
+  }
+
+  /**
+   * Remove a binding: the connection is disabled and every credential on it is
+   * revoked. Workspace-admin only.
+   *
+   * Wraps DELETE /workspaces/:workspaceId/connections/:connectionId.
+   */
+  async removeConnection(
+    workspaceId: string,
+    connectionId: string
+  ): Promise<{ _id: string; revokedCount: number }> {
+    const response = await this.fetch<{
+      status: string;
+      data: { _id: string; revokedCount: number };
+    }>(`/workspaces/${workspaceId}/connections/${connectionId}`, { method: "DELETE" });
+    return response.data;
+  }
+
+  /**
+   * Get a link a human opens to complete the connect (an OAuth popup or a secure
+   * secret modal). The link carries no authority: whoever opens it is re-checked.
+   * This is how an agent hands the credential step to a person, since an agent
+   * must never handle a raw token.
+   *
+   * Wraps POST /workspaces/:workspaceId/connections/:connectionId/connect-link.
+   */
+  async getConnectLink(
+    workspaceId: string,
+    connectionId: string
+  ): Promise<{ connectionId: string; url: string }> {
+    const response = await this.fetch<{
+      status: string;
+      data: { connectionId: string; url: string };
+    }>(`/workspaces/${workspaceId}/connections/${connectionId}/connect-link`, {
+      method: "POST",
+    });
+    return response.data;
+  }
+
+  /**
+   * Revoke the acting user's credential on a connection.
+   *
+   * Wraps DELETE /workspaces/:workspaceId/connections/:connectionId/authorizations.
+   */
+  async revokeConnectionCredential(
+    workspaceId: string,
+    connectionId: string
+  ): Promise<{ _id: string }> {
+    const response = await this.fetch<{ status: string; data: { _id: string } }>(
+      `/workspaces/${workspaceId}/connections/${connectionId}/authorizations`,
+      { method: "DELETE" }
+    );
+    return response.data;
+  }
+
+  /**
+   * What an agent can and cannot use, grouped by where the grant comes from,
+   * with the reason a connector is unavailable.
+   *
+   * Wraps GET /workspaces/:workspaceId/agents/:userId/connectors.
+   */
+  async getAgentConnectorReach(
+    workspaceId: string,
+    agentUserId: string
+  ): Promise<AgentConnectorReach[]> {
+    const response = await this.fetch<{ status: string; data: AgentConnectorReach[] }>(
+      `/workspaces/${workspaceId}/agents/${agentUserId}/connectors`
+    );
+    return response.data;
+  }
+
+  /**
+   * Run an agent now on a nest, optionally saying what the run is for. The
+   * caller needs assign rights on the nest and the agent must fill or be
+   * assigned to it, so this cannot run an agent anywhere in the workspace.
+   *
+   * Wraps POST /workspaces/:workspaceId/agents/:userId/run.
+   */
+  async runAgent(
+    workspaceId: string,
+    agentUserId: string,
+    body: { nestId: string; message?: string }
+  ): Promise<{
+    agentUserId: string;
+    nestId: string;
+    dispatched: boolean;
+    watchUrl?: string;
+  }> {
+    const response = await this.fetch<{
+      status: string;
+      data: {
+        agentUserId: string;
+        nestId: string;
+        dispatched: boolean;
+        // The page the run reports back on, absolute. Built server-side: whether
+        // the nest has a feed tab is a label question and the host is the
+        // deployment's own, so neither is ours to assemble.
+        watchUrl?: string;
+      };
+    }>(`/workspaces/${workspaceId}/agents/${agentUserId}/run`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
     return response.data;
   }
 }

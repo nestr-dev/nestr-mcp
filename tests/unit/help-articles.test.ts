@@ -149,6 +149,55 @@ describe("help articles", () => {
       // "scu" is too short to rescue and isn't a substring of any haystack.
       expect(searchArticleIndex(entries, "scu")).toEqual([]);
     });
+
+  // Operator names live in article bodies, which the index never reads. Without
+  // curated keywords a user searching the exact operator got nothing back, and
+  // at least one agent read that emptiness as proof the operator did not exist.
+  describe("searchArticleIndex — operator and view vocabulary", () => {
+    const entries = [
+      { slug: "nestr-search", url: "https://nestr.io/help/articles/nestr-search" },
+      { slug: "customising-views", url: "https://nestr.io/help/articles/customising-views" },
+      { slug: "customising-tabs", url: "https://nestr.io/help/articles/customising-tabs" },
+      { slug: "custom-fields", url: "https://nestr.io/help/articles/custom-fields" },
+      { slug: "getting-started-with-nestr", url: "https://nestr.io/help/articles/getting-started-with-nestr" },
+    ];
+
+    it("finds the search article by operator name", () => {
+      for (const q of ["groupby", "groupbycol", "operator", "syntax"]) {
+        expect(searchArticleIndex(entries, q).map(h => h.slug)).toContain("nestr-search");
+      }
+    });
+
+    it("finds the view and tab articles for column and board vocabulary", () => {
+      const columns = searchArticleIndex(entries, "columns").map(h => h.slug);
+      expect(columns).toContain("customising-views");
+      const tabs = searchArticleIndex(entries, "tab").map(h => h.slug);
+      expect(tabs).toContain("customising-tabs");
+    });
+
+    it("finds the custom fields article for dropdown vocabulary", () => {
+      expect(searchArticleIndex(entries, "dropdown").map(h => h.slug)).toContain("custom-fields");
+    });
+
+    // A workspace admin asked the assistant to "extend our membership by one person" and
+    // was told to email support: the words she used reached no article at all, so there
+    // was nothing to answer from. Seats and membership are two articles' worth of answer
+    // (how to add someone, and what it costs), so both should surface.
+    it("finds the seat and membership articles from the words people use", () => {
+      const seatEntries = [
+        { slug: "pricing-plans-what-you-pay-for", url: "x/pricing-plans-what-you-pay-for" },
+        { slug: "managing-users-invitations-permissions", url: "x/managing-users-invitations-permissions" },
+        { slug: "getting-started-with-nestr", url: "x/getting-started-with-nestr" },
+      ];
+      for (const q of ["seat", "seats", "membership", "extend our membership by one person"]) {
+        const hits = searchArticleIndex(seatEntries, q).map(h => h.slug);
+        expect(hits, q).toContain("pricing-plans-what-you-pay-for");
+        expect(hits, q).toContain("managing-users-invitations-permissions");
+      }
+      expect(searchArticleIndex(seatEntries, "invoice").map(h => h.slug))
+        .toContain("pricing-plans-what-you-pay-for");
+    });
+  });
   });
 
   // ─── Article body extraction ──────────────────────────────────────────────
