@@ -116,7 +116,7 @@ describe("nestr_set_recurrence", () => {
 
   it("nestr_set_recurrence surfaces a malformed-RRULE server error as a clean message, no stack", async () => {
     mockFetch.mockResolvedValue(
-      mockResponse(400, { status: "error", message: "recurrence-invalid: Invalid RRULE string" })
+      mockResponse(422, { status: "error", message: "recurrence-invalid: Invalid RRULE string" })
     );
 
     const result = await handleToolCall(client, "nestr_set_recurrence", {
@@ -129,7 +129,7 @@ describe("nestr_set_recurrence", () => {
     expect(parsed.error).toBe(true);
     expect(parsed.code).toBe("VALIDATION");
     expect(parsed.message).toMatch(/recurrence-invalid/);
-    expect(parsed.status).toBe(400);
+    expect(parsed.status).toBe(422);
     // Clean structured error, not a raw thrown Error/stack leaking through.
     expect("stack" in parsed).toBe(false);
   });
