@@ -43,7 +43,7 @@ describe("nestr_set_recurrence", () => {
 
   it("nestr_set_recurrence PATCHes /nests/:id/recurrence with the rrule and unwraps data", async () => {
     mockFetch.mockResolvedValue(
-      mockResponse(200, { status: "success", data: { rrule: "FREQ=DAILY;COUNT=15", generated: 10 } })
+      mockResponse(200, { status: "success", data: { rrule: "FREQ=DAILY;COUNT=15" } })
     );
 
     const result = await handleToolCall(client, "nestr_set_recurrence", {
@@ -58,8 +58,12 @@ describe("nestr_set_recurrence", () => {
     expect(JSON.parse(opts.body)).toEqual({ rrule: "FREQ=DAILY;COUNT=15" });
 
     const parsed = parseResult(result.content[0].text);
-    expect(parsed.message).toMatch(/10 instance/);
-    expect(parsed.recurrence).toEqual({ rrule: "FREQ=DAILY;COUNT=15", generated: 10 });
+    // The server creates no occurrence nests, so the message must not claim a
+    // count. It said "10 instance(s) materialized" only because the mock invented
+    // a `generated` field the API never returns.
+    expect(parsed.message).toMatch(/Occurrences stay virtual/);
+    expect(parsed.message).not.toMatch(/instance\(s\) materialized/);
+    expect(parsed.recurrence).toEqual({ rrule: "FREQ=DAILY;COUNT=15" });
   });
 
   // ─── remove (rrule null) ────────────────────────────────────────
@@ -138,10 +142,10 @@ describe("nestr_set_recurrence", () => {
 
   it("client.setRecurrence unwraps { status, data } for both the set and remove shapes", async () => {
     mockFetch.mockResolvedValueOnce(
-      mockResponse(200, { status: "success", data: { rrule: "FREQ=WEEKLY;COUNT=3", generated: 3 } })
+      mockResponse(200, { status: "success", data: { rrule: "FREQ=WEEKLY;COUNT=3" } })
     );
     const setResult = await client.setRecurrence("nest-1", "FREQ=WEEKLY;COUNT=3");
-    expect(setResult).toEqual({ rrule: "FREQ=WEEKLY;COUNT=3", generated: 3 });
+    expect(setResult).toEqual({ rrule: "FREQ=WEEKLY;COUNT=3" });
 
     mockFetch.mockResolvedValueOnce(mockResponse(200, { status: "success", data: { removed: true } }));
     const removeResult = await client.setRecurrence("nest-1", null);

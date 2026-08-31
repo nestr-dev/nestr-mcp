@@ -1611,25 +1611,23 @@ export class NestrClient {
 
   /**
    * Set or remove a nest's recurrence rule, wrapping the `scheduleSetRecurrence`
-   * Meteor method. `rrule: null` removes recurrence (stops future generation;
-   * already-materialized instances are kept, just detached from the series).
-   * A set rrule is validated server-side and materializes a bounded horizon of
-   * upcoming instances (currently up to 10 within 90 days).
+   * Meteor method behind `PATCH nests/:id/recurrence`.
    *
-   * NOTE: there is no `PATCH /nests/:id/recurrence` route in slashme-online yet —
-   * `scheduleSetRecurrence` (slashme-online PR #1780) is wired for internal UI use
-   * only (Meteor.call from ScheduleEditor), not the public REST API. This method
-   * is written against the route slashme-online needs to add; until that lands,
-   * this call 404s. See the `nestr_set_recurrence` tool description for the full
-   * cross-repo dependency note.
+   * Setting a rule creates no nests. Occurrences are computed from the rule and
+   * stay virtual until something touches one, at which point that occurrence
+   * alone becomes a real nest carrying `recurrence.seriesId`. The response is the
+   * stored rule and nothing else; there is no count of generated instances.
+   *
+   * `rrule: null` removes recurrence: future occurrences stop, and anything that
+   * had already been materialized is kept, detached from the series.
    */
   async setRecurrence(
     nestId: string,
     rrule: string | null
-  ): Promise<{ rrule: string; generated: number } | { removed: true }> {
+  ): Promise<{ rrule: string } | { removed: true }> {
     const response = await this.fetch<{
       status: string;
-      data: { rrule: string; generated: number } | { removed: true };
+      data: { rrule: string } | { removed: true };
     }>(`/nests/${nestId}/recurrence`, {
       method: "PATCH",
       body: JSON.stringify({ rrule }),
