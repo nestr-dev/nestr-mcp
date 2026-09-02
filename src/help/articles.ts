@@ -87,6 +87,13 @@ export async function loadArticleIndex(): Promise<ArticleIndexEntry[]> {
  * slug; merged into the search haystack alongside the slug-as-words. This is
  * the synonym layer — keep it focused on real user vocabulary that the slug
  * itself omits.
+ *
+ * A few entries carry non-English terms. Support runs Spanish and Italian
+ * queues, and a question asked in Spanish otherwise matches nothing here: the
+ * slugs are English and so is every other keyword. This is a targeted synonym
+ * set for the vocabulary that has actually cost us a ticket, not a full
+ * localisation. Accents are folded on both sides (see `fold`), so writing
+ * "pestañas" also answers "pestanas".
  */
 const ARTICLE_KEYWORDS: Record<string, string[]> = {
   "scrum-agile-app": ["sprint", "sprints", "kanban", "backlog", "burndown", "epic", "epics", "milestone", "milestones", "iteration", "userstory", "story", "stories", "standup", "velocity", "board"],
@@ -102,9 +109,9 @@ const ARTICLE_KEYWORDS: Record<string, string[]> = {
   "pricing-plans-what-you-pay-for": ["pricing", "price", "plan", "plans", "billing", "subscription", "cost", "payment", "seat", "seats", "membership", "invoice", "upgrade", "downgrade", "renew", "renewal", "quantity", "licence", "license"],
   "nestr-search": ["operator", "operators", "syntax", "query", "queries", "search", "find", "filter", "filters", "groupby", "groupbycol", "grouping", "column", "columns", "board", "kanban", "sort", "sorting", "saved"],
   "customising-views": ["view", "views", "layout", "list", "lists", "column", "columns", "board", "kanban", "group", "groupby", "groupbycol", "grouping", "filter", "filters", "sort", "sorting", "display"],
-  "customising-tabs": ["tab", "tabs", "saved", "search", "section", "sections", "subtab", "board", "kanban", "column", "columns", "groupbycol", "customise", "customize"],
+  "customising-tabs": ["tab", "tabs", "saved", "search", "section", "sections", "subtab", "board", "kanban", "column", "columns", "groupbycol", "customise", "customize", "order", "reorder", "ordering", "sort", "position", "move", "arrange", "rearrange", "drag", "left", "right", "first", "last", "pestaña", "pestañas", "scheda", "schede", "orden", "ordenar", "reordenar", "ordine", "ordinare", "mover", "spostare", "izquierda", "sinistra"],
   "customising-your-nestr-workspace": ["customise", "customize", "customisation", "customization", "configure", "tailor", "adapt"],
-  "custom-fields": ["field", "fields", "custom field", "notes", "dropdown", "drop down", "status", "select", "options", "checkbox", "currency", "percentage", "formula", "slider", "range", "date field", "text field", "property", "properties", "attribute", "metadata", "schema", "tagalong", "capture", "record"],
+  "custom-fields": ["field", "fields", "custom field", "notes", "dropdown", "drop down", "status", "select", "options", "checkbox", "currency", "percentage", "formula", "slider", "range", "date field", "text field", "property", "properties", "attribute", "metadata", "schema", "tagalong", "capture", "record", "order", "reorder", "ordering", "sort", "position", "move", "arrange", "rearrange", "drag", "campo", "campos", "campi", "orden", "ordenar", "reordenar", "ordine", "ordinare"],
   "okrs-app": ["okr", "okrs", "objective", "objectives", "key result", "keyresult", "goal", "goals", "gauge", "target"],
   "rights-management": ["rights", "role rights", "restrict", "restriction", "view only", "viewonly", "read only", "edit rights"],
 };
@@ -136,6 +143,16 @@ function levenshtein(a: string, b: string): number {
 }
 
 /**
+ * Strip diacritics so an accented query token can match an unaccented keyword
+ * and the reverse. Without this the tokenizer's `[^a-z0-9]+` split treats every
+ * accent as a separator, shredding "pestañas" into "pesta" + "as" — and "as"
+ * then substring-matches half the corpus, which is worse than no match at all.
+ */
+function fold(value: string): string {
+  return value.toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+}
+
+/**
  * Token-overlap search against slug-as-words plus curated keywords. Slugs are
  * descriptive (e.g. `building-your-org-structure-roles-circles`), so
  * dash-to-space gives a usable signal without fetching every article's title.
@@ -147,16 +164,15 @@ export function searchArticleIndex(
   query: string,
   limit = 10,
 ): ArticleSearchHit[] {
-  const tokens = query
-    .toLowerCase()
+  const tokens = fold(query)
     .split(/[^a-z0-9]+/)
     .filter(t => t.length >= 2);
   if (tokens.length === 0) return [];
   const hits: ArticleSearchHit[] = [];
   for (const entry of entries) {
-    const slugWords = entry.slug.toLowerCase().replace(/-/g, " ");
+    const slugWords = fold(entry.slug).replace(/-/g, " ");
     const keywords = ARTICLE_KEYWORDS[entry.slug] ?? [];
-    const haystack = keywords.length ? `${slugWords} ${keywords.join(" ")}` : slugWords;
+    const haystack = fold(keywords.length ? `${slugWords} ${keywords.join(" ")}` : slugWords);
     const words = haystack.split(/\s+/).filter(Boolean);
     let score = 0;
     for (const token of tokens) {
