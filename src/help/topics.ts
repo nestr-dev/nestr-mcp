@@ -529,6 +529,19 @@ Use this when you need to know what values are valid for a field, especially bef
 - **Per-circle overrides:** a circle can add, alter or hide a label's fields for itself, and a circle nested inside it can override again. The same label can carry different fields in different parts of the tree. The route is the circle's own settings, \`/n/{workspaceId}/{circleId}?s=1#labels\`, which lists the system labels under "Customize a system label" and the workspace's own labels under "Customize a workspace label". Renaming, recolouring, creating and deleting a workspace label stay at the workspace root; a circle only changes how one behaves there.
 - **Internally** this is stored as a tagAlong label on the label definition. That is implementation detail. Talk to users about "adding a field to the label".
 
+### Order of fields and tabs
+
+**There is no order number anywhere in this screen. Do not invent one.** The order of a label's fields and tabs is their order in the settings list, and it is changed by moving a row, not by typing a value. Two controls do it, both on the row itself:
+
+- a drag grip at the far left of the row (two columns of dots), and
+- up and down arrows at the right of the row, next to the delete icon, which only **appear on hover**. They are invisible in a screenshot, so never conclude from one that a list cannot be reordered. The first row has no up arrow and the last has no down arrow.
+
+For tabs, the top of the settings list is the leftmost tab on the item, so moving a tab up moves it left. For fields, the list order is the order the fields appear on the item. A tab with a "Parent tab title" sits inside that parent, so moving it reorders it within the parent's menu rather than on the bar. The options inside a drop down field have their own order, dragged the same way, and that order carries into the columns when a view groups by that field. Changes need **Save**.
+
+### Whose label is that tab on?
+
+A tab bar belongs to the label of the item you are looking at, not to the label of whatever the tab lists. The tabs across the top of a circle are the \`circle\` label's tabs even when one of them lists items of some other type; editing that other label's tabs changes what one of those items shows on its own page, and moves nothing on the circle. The editor is headed "Edit tabs for: <label>", so when someone says a tab will not move, check which label they have open first. This is the most common cause of "I changed it and nothing happened".
+
 ### Check before you answer
 
 Fetch any nest of that type with \`fieldsMetaData=true\` (see topic "labels") to read the live schema, including the options on a dropdown. A field you do not recognise may already exist in that workspace.

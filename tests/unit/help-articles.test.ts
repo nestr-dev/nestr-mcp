@@ -197,6 +197,33 @@ describe("help articles", () => {
       expect(searchArticleIndex(seatEntries, "invoice").map(h => h.slug))
         .toContain("pricing-plans-what-you-pay-for");
     });
+
+    // Neither customisation article carried any ordering vocabulary, and an
+    // assistant asked how to move a tab described a numeric order field that
+    // does not exist rather than reading either one.
+    it("finds the tab and field articles from ordering vocabulary", () => {
+      for (const q of ["reorder", "order", "move tab to the left", "rearrange fields"]) {
+        const hits = searchArticleIndex(entries, q).map(h => h.slug);
+        expect(hits, q).toEqual(expect.arrayContaining([expect.stringMatching(/^custom(ising-tabs|-fields)$/)]));
+      }
+      expect(searchArticleIndex(entries, "drag a tab").map(h => h.slug)).toContain("customising-tabs");
+    });
+
+    // Support runs Spanish and Italian queues. Before folding, an accented
+    // question reached no customisation article at all.
+    it("answers a Spanish ordering question, accents and all", () => {
+      const hits = searchArticleIndex(entries, "como cambiar el orden de las pestañas").map(h => h.slug);
+      expect(hits[0]).toBe("customising-tabs");
+      // Folding is symmetric: the unaccented spelling reaches the accented keyword.
+      expect(searchArticleIndex(entries, "pestanas").map(h => h.slug)).toContain("customising-tabs");
+    });
+
+    it("does not shred an accented word into noise tokens", () => {
+      // Pre-fold, "pestañas" split on the tilde into "pesta" + "as", and "as"
+      // substring-matched unrelated slugs. Nothing unrelated may match now.
+      expect(searchArticleIndex(entries, "pestañas").map(h => h.slug))
+        .toEqual(["customising-tabs"]);
+    });
   });
   });
 
