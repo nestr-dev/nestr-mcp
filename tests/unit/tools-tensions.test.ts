@@ -48,6 +48,46 @@ describe("nestr_add_tension_part — removeNest routing", () => {
     expect(parsed.message).toMatch(/deletion proposal/i);
   });
 
+  // An operational output names both the person and the role it is asked of. The
+  // tool used to declare users but not role, so a work request raised over MCP
+  // arrived with an assignee and no role, and the only way through was writing
+  // data.role onto the output nest by hand.
+  it("operational output → POST /parts carrying users and role", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, { _id: "part-3", role: "role-sys" }));
+    const result = await handleToolCall(client, "nestr_add_tension_part", {
+      nestId: "circle-1",
+      tensionId: "ten-1",
+      title: "Do the thing",
+      description: "detail",
+      users: ["user-1"],
+      role: "role-sys",
+    });
+    expect(result.isError).toBeFalsy();
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/circle-1/tensions/ten-1/parts");
+    expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body)).toEqual({
+      title: "Do the thing",
+      description: "detail",
+      users: ["user-1"],
+      role: "role-sys",
+    });
+  });
+
+  it("modify → PATCH /parts/:partId carrying role", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, { _id: "part-3" }));
+    await handleToolCall(client, "nestr_modify_tension_part", {
+      nestId: "circle-1",
+      tensionId: "ten-1",
+      partId: "part-3",
+      role: "role-sys",
+    });
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/circle-1/tensions/ten-1/parts/part-3");
+    expect(JSON.parse(opts.body).role).toBe("role-sys");
+  });
+
   it("_id without removeNest → PATCH /parts with body (propose change)", async () => {
     mockFetch.mockResolvedValue(mockResponse(200, { _id: "part-2" }));
     await handleToolCall(client, "nestr_add_tension_part", {
