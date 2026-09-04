@@ -463,7 +463,9 @@ export class NestrApiError extends Error {
     if (status === 401) return "AUTH_TOKEN_REJECTED_BY_NESTR";
     if (status === 404) return "NOT_FOUND";
     if (status === 429) return "RATE_LIMITED";
-    if (status === 400) return "VALIDATION";
+    // The Nestr API answers input errors with 422 (constructIncorrectInput), not
+    // 400, so both have to map here or a rejected RRULE surfaces as UNKNOWN.
+    if (status === 400 || status === 422) return "VALIDATION";
     if (status >= 500) return "SERVER_ERROR";
 
     if (status === 403) {
@@ -1602,6 +1604,34 @@ export class NestrClient {
         body: JSON.stringify(nestIds),
       }
     );
+    return response.data;
+  }
+
+  // ============ SCHEDULE / RECURRENCE ============
+
+  /**
+   * Set or remove a nest's recurrence rule, wrapping the `scheduleSetRecurrence`
+   * Meteor method behind `PATCH nests/:id/recurrence`.
+   *
+   * Setting a rule creates no nests. Occurrences are computed from the rule and
+   * stay virtual until something touches one, at which point that occurrence
+   * alone becomes a real nest carrying `recurrence.seriesId`. The response is the
+   * stored rule and nothing else; there is no count of generated instances.
+   *
+   * `rrule: null` removes recurrence: future occurrences stop, and anything that
+   * had already been materialized is kept, detached from the series.
+   */
+  async setRecurrence(
+    nestId: string,
+    rrule: string | null
+  ): Promise<{ rrule: string } | { removed: true }> {
+    const response = await this.fetch<{
+      status: string;
+      data: { rrule: string } | { removed: true };
+    }>(`/nests/${nestId}/recurrence`, {
+      method: "PATCH",
+      body: JSON.stringify({ rrule }),
+    });
     return response.data;
   }
 

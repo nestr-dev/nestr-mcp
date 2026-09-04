@@ -1123,6 +1123,12 @@ export const schemas = {
     nestIds: coerceFromJson(z.array(z.string())).describe("Array of nest IDs in the desired order"),
   }),
 
+  // Schedule / recurrence
+  setRecurrence: z.object({
+    nestId: z.string().describe("Nest ID to set or remove recurrence on"),
+    rrule: z.string().nullable().describe("RFC-5545 RRULE string (e.g. 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=10') to set recurrence, or null to remove it. Required — pass null explicitly to remove rather than omitting the field."),
+  }),
+
   // Daily plan (requires OAuth token)
   getDailyPlan: z.object({}),
 
@@ -2306,6 +2312,22 @@ export const toolDefinitions = [
         },
       },
       required: ["workspaceId", "nestIds"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_set_recurrence",
+    description: "Set or remove a task/project/meeting's recurrence rule. Pass an RFC-5545 RRULE string (e.g. 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=10') to set it, or rrule: null to remove it. Setting a rule creates NO nests: occurrences are computed from the rule and stay virtual until something touches one (completing it, moving its dates, opening it), at which point that occurrence alone becomes a real nest. Do not tell the user their occurrences have been created. The rule expands from the nest's start, or its due when it has no start, and is refused when it has neither, so set a date first. An invalid RRULE is rejected before anything is written. Removing the rule stops future occurrences and keeps anything already materialized, detached from the series.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest ID to set or remove recurrence on" },
+        rrule: {
+          type: ["string", "null"],
+          description: "RFC-5545 RRULE string to set recurrence, or null to remove it. Required — pass null explicitly rather than omitting the field.",
+        },
+      },
+      required: ["nestId", "rrule"],
     },
     ...mutating,
   },
@@ -3992,6 +4014,18 @@ async function _handleToolCall(
         const parsed = schemas.bulkReorder.parse(args);
         const result = await client.bulkReorder(parsed.workspaceId, parsed.nestIds);
         return formatResult({ message: "Nests reordered successfully", nests: result });
+      }
+
+      case "nestr_set_recurrence": {
+        const parsed = schemas.setRecurrence.parse(args);
+        const result = await client.setRecurrence(parsed.nestId, parsed.rrule);
+        // The server returns the stored rule and nothing else. It does not
+        // create occurrence nests, so there is no count to report: saying one
+        // would tell the user work exists that does not.
+        const message = "removed" in result
+          ? "Recurrence removed. Future occurrences stop; anything already materialized is kept, detached from the series."
+          : `Recurrence set to ${result.rrule}. Occurrences stay virtual until one is touched.`;
+        return formatResult({ message, recurrence: result });
       }
 
       // Label management

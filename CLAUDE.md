@@ -308,6 +308,7 @@ The server exposes these tools to AI assistants:
 | `nestr_mark_notifications_read` | `POST /users/me/notifications/mark-all-read` (OAuth only) |
 | `nestr_reorder_nest` | `POST /nests/{id}/reorder/{position}/{relatedId}` |
 | `nestr_bulk_reorder` | `PATCH /workspaces/{id}/reorder` |
+| `nestr_set_recurrence` | `PATCH /nests/{id}/recurrence` (route not live yet — see note below) |
 | `nestr_create_tension` | `POST /nests/{id}/tensions` |
 | `nestr_get_tension` | `GET /nests/{id}/tensions/{tid}` |
 | `nestr_list_tensions` | `GET /nests/{id}/tensions` |
@@ -330,6 +331,8 @@ The server exposes these tools to AI assistants:
 | `nestr_list_connectors` | `GET /workspaces/{id}/connectors` |
 | `nestr_register_connector` | `POST /workspaces/{id}/connectors` (workspace-admin only) |
 | `nestr_bind_connector` | `POST /workspaces/{id}/connections` (workspace-admin only) |
+
+**`nestr_set_recurrence` cross-repo note:** the slashme-online Meteor method `scheduleSetRecurrence(nestId, { rrule })` (PR #1780) is currently wired for internal UI use only (`Meteor.call` from `ScheduleEditor`) — there is no `PATCH /nests/:id/recurrence` REST route exposing it yet. `client.setRecurrence` is written against that route so the tool is ready the moment slashme-online adds it, but until then the call 404s. This is not a generic method-name allowlist (this server has no passthrough `Meteor.call`-by-name endpoint — every tool here maps to a hand-written REST route); it's simply that the route hasn't been added.
 
 ## Adding a New Tool
 
