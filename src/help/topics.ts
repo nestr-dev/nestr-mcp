@@ -693,8 +693,19 @@ Both support \`!\` prefix for negation.
 
 ### Additional Operators
 
-- \`deleted:true\` - Include deleted items (hidden by default)
 - \`linkeditems:true\` - Items linked to the current context
+
+### Deleted Items
+
+Deleted items are soft-deleted and stay in the workspace, so they remain findable. Searches exclude them unless one of these operators is present.
+
+- \`deleted:true\` - ONLY deleted items, no date limit. This does not mean "live plus deleted"
+- \`deleted:today\`, \`deleted:past_7_days\`, \`deleted:past_30_days\`, \`deleted:past_12_months\` - ONLY items deleted in that window
+- \`include-deleted:<range>\` - live items AND those deleted in the range, in one result set. Same ranges as above, plus \`include-deleted:all\` for no date limit
+
+Use \`include-deleted:\` when the user asks "did this ever exist" or "find X, including anything deleted". Use \`deleted:\` when they want the deleted set on its own, for example "what was removed last week".
+
+Deleted results come back read-only. **There is no restore tool: restoring is done in the Nestr app.** Point the user at the item's page, where a banner carries a Restore link, and note that restoring requires the delete right on that item. An item deleted as part of its parent is restored by restoring that parent, which brings back everything removed in the same deletion event. See the \`recovering-deleted-items-undo-activity-stream\` help article.
 
 ### Sorting Results
 

@@ -104,6 +104,16 @@ const ARTICLE_KEYWORDS: Record<string, string[]> = {
   // deleted-items or user-management articles. Hence the role/circle/policy nouns
   // alongside the remove/convert/restructure verbs.
   "tensions-and-governance-proposals": ["proposal", "proposals", "holacracy", "sociocracy", "amend", "amendment", "objection", "consent", "role", "roles", "circle", "circles", "policy", "policies", "remove", "removing", "removal", "delete", "deleting", "restructure", "restructuring", "reorganise", "reorganize", "convert", "conversion", "dissolve", "disband", "advanced options", "electable"],
+  // The slug already carries "recovering", "deleted" and "undo", so those verbs
+  // score on their own. What scored zero was every other way people ask: restore,
+  // undelete, and the nouns for where they think things go (trash, bin, recycle
+  // bin). Deleted items are now findable and restorable from search, so those
+  // questions have a real answer and must reach this article. Deliberately NOT
+  // listed: "delete" and "remove". Deleting a role, circle or policy is a
+  // governance proposal, and tensions-and-governance-proposals owns that
+  // vocabulary; adding it here would steal those queries on the alphabetical
+  // tiebreak.
+  "recovering-deleted-items-undo-activity-stream": ["restore", "restoring", "restored", "recovery", "undelete", "trash", "bin", "recycle bin", "lost", "missing", "gone", "disappeared", "bring back", "get back", "accidentally", "mistake", "deleted filter", "include-deleted", "restaurar", "recuperar", "papelera", "eliminado", "ripristinare", "recuperare", "cestino", "eliminato"],
   "nestr-the-power-of-labels": ["tag", "tags", "tagging"],
   "building-your-org-structure-roles-circles": ["hierarchy", "department", "team", "org", "orgchart", "chart", "accountability", "accountabilities"],
   "giving-or-requesting-feedback-in-nestr": ["review", "praise", "kudos", "appraisal"],

@@ -218,6 +218,38 @@ describe("help articles", () => {
       expect(searchArticleIndex(entries, "pestanas").map(h => h.slug)).toContain("customising-tabs");
     });
 
+    // Deleted items are findable and restorable from search, but the slug only
+    // says "recovering", "deleted" and "undo". Every other word for the same
+    // thing scored zero, and an empty result reads to an agent as "Nestr cannot
+    // do this" — which is now flatly wrong.
+    it("finds the deleted-items article from restore and trash vocabulary", () => {
+      const deletedEntries = [
+        { slug: "recovering-deleted-items-undo-activity-stream", url: "x/recovering-deleted-items-undo-activity-stream" },
+        { slug: "tensions-and-governance-proposals", url: "x/tensions-and-governance-proposals" },
+        { slug: "managing-users-invitations-permissions", url: "x/managing-users-invitations-permissions" },
+        { slug: "getting-started-with-nestr", url: "x/getting-started-with-nestr" },
+      ];
+      for (const q of ["restore", "undelete", "where is the trash", "recycle bin", "how do I restore a deleted item", "restaurar un elemento eliminado"]) {
+        expect(searchArticleIndex(deletedEntries, q)[0]?.slug, q)
+          .toBe("recovering-deleted-items-undo-activity-stream");
+      }
+    });
+
+    // The recovery keywords must not swallow the governance vocabulary: removing
+    // a role or circle is a proposal, not a delete button, and that distinction
+    // is the whole point of the tensions-and-governance-proposals keywords.
+    it("leaves role and circle removal questions with the governance article", () => {
+      const removalEntries = [
+        { slug: "recovering-deleted-items-undo-activity-stream", url: "x/recovering-deleted-items-undo-activity-stream" },
+        { slug: "tensions-and-governance-proposals", url: "x/tensions-and-governance-proposals" },
+        { slug: "building-your-org-structure-roles-circles", url: "x/building-your-org-structure-roles-circles" },
+      ];
+      for (const q of ["remove a circle", "convert a role to a circle", "dissolve a circle"]) {
+        expect(searchArticleIndex(removalEntries, q)[0]?.slug, q)
+          .toBe("tensions-and-governance-proposals");
+      }
+    });
+
     it("does not shred an accented word into noise tokens", () => {
       // Pre-fold, "pestañas" split on the tilde into "pesta" + "as", and "as"
       // substring-matched unrelated slugs. Nothing unrelated may match now.
