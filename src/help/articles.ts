@@ -98,7 +98,12 @@ export async function loadArticleIndex(): Promise<ArticleIndexEntry[]> {
 const ARTICLE_KEYWORDS: Record<string, string[]> = {
   "scrum-agile-app": ["sprint", "sprints", "kanban", "backlog", "burndown", "epic", "epics", "milestone", "milestones", "iteration", "userstory", "story", "stories", "standup", "velocity", "board"],
   "running-meetings-in-nestr": ["tactical", "governance", "standup", "retro", "retrospective", "facilitation", "facilitator", "agenda", "minutes", "notes", "pdf", "download", "export", "report", "outcome", "outcomes", "checkin", "check-in", "election", "elections"],
-  "tensions-and-governance-proposals": ["proposal", "proposals", "holacracy", "sociocracy", "amend", "amendment", "objection"],
+  // Removing or converting a role, circle or policy is not a delete button anywhere
+  // in the app: it is a toggle under "Advanced options" on a governance proposal
+  // part, so "how do I delete a role" has to land here rather than on the
+  // deleted-items or user-management articles. Hence the role/circle/policy nouns
+  // alongside the remove/convert/restructure verbs.
+  "tensions-and-governance-proposals": ["proposal", "proposals", "holacracy", "sociocracy", "amend", "amendment", "objection", "consent", "role", "roles", "circle", "circles", "policy", "policies", "remove", "removing", "removal", "delete", "deleting", "restructure", "restructuring", "reorganise", "reorganize", "convert", "conversion", "dissolve", "disband", "advanced options", "electable"],
   "nestr-the-power-of-labels": ["tag", "tags", "tagging"],
   "building-your-org-structure-roles-circles": ["hierarchy", "department", "team", "org", "orgchart", "chart", "accountability", "accountabilities"],
   "giving-or-requesting-feedback-in-nestr": ["review", "praise", "kudos", "appraisal"],
