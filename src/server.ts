@@ -87,7 +87,8 @@ Nestr supports any self-organization approach. When the flavour is clear (check 
 
 - **title**: keep it plain text (markup is not stripped, it just renders as noise in every listing)
 - **purpose, description, comments**: HTML and Markdown both render (\`<b>bold</b>\` and \`**bold**\` both work). Structure anything long with headings and lists rather than one unbroken block
-- **Linking to nests**: every returned nest includes a precomputed \`url\` field — use it directly. Canonical pattern is \`https://app.nestr.io/n/{nestId}\` (path is \`/n/\`, NOT \`/nest/\` or \`/nests/\`). See \`nestr_help({ topic: "linking" })\`.
+- **Linking to an item**: every returned nest includes a precomputed \`url\` field — use it directly, never assemble one from ids. Canonical pattern is \`https://app.nestr.io/n/{nestId}\` (path is \`/n/\`, NOT \`/nest/\` or \`/nests/\`).
+- **Linking to a view** (a board, a list of projects, roles, meetings): that is a TAB on the container, and a tab is a hash. Call \`nestr_get_nest\` on the circle or role and take the URL from its \`tabs\` hint, e.g. \`/n/{circleId}#projects\`. A nest link with no \`#\` lands on whichever tab that person last opened, which for a new user is Structure > About. See \`nestr_help({ topic: "linking" })\`.
 
 ## Role Assignments
 

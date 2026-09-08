@@ -688,9 +688,77 @@ export function enrichHints<T>(data: T): T {
   return subject as T;
 }
 
-function buildNestUrl(id: string, parentId: string | undefined): string {
+// Which of the PARENT's tabs holds a child carrying this label, keyed by the
+// API-facing label name (the API strips `circleplus-` and renames
+// prepared-tension to tension, so these are the names that actually arrive).
+//
+// This is the reverse of the `labels: [...]` declarations the tab definitions
+// already carry in slashme-online `packages/nestr_circleplus/lib/tabs.js`: the
+// Projects tab declares it holds project / individual-action / sprint / epic,
+// the Roles tab declares role / circle, and so on. A few tabs (Goals, Todos,
+// Metrics on a circle) express the same containment as a `searchTerm` rather
+// than a labels array, so those entries are read off the search and written
+// here by hand.
+//
+// Why a static map rather than asking the server which tab contains this nest:
+// the precise answer needs the PARENT's resolved tab set, and getTabs() on the
+// server evaluates the circleplus tab callback (a walk through getWorkspace,
+// getData and TAPi18n). translateNest runs per row on every search and children
+// response, so that is a per-row cost on the hot path for a link most rows never
+// need. A wrong guess costs nothing: listview_lists falls back to the nest's
+// default tab when the hash names no available tab, which is exactly the
+// hashless behaviour we have today.
+const LABEL_CONTAINING_TAB: Readonly<Record<string, string>> = {
+  project: "projects",
+  "individual-action": "projects",
+  sprint: "projects",
+  epic: "projects",
+  task: "tasks",
+  role: "roles",
+  circle: "roles",
+  "anchor-circle": "roles",
+  domain: "policies",
+  policy: "policies",
+  meeting: "meetings",
+  governance: "meetings",
+  tactical: "meetings",
+  tension: "meetings",
+  metric: "metrics",
+  checklist: "checklists",
+  goal: "goals",
+  result: "goals",
+  skill: "skills",
+  feedback: "feedback",
+  note: "notes",
+};
+
+// The tab on the parent that a person opens to SEE this nest in its list.
+// First label wins, so a scrum story labelled ["project", "userstory"] resolves
+// through `project` and lands on Projects.
+export function containingTabHash(labels: unknown): string | undefined {
+  if (!Array.isArray(labels)) return undefined;
+  for (const label of labels) {
+    if (typeof label !== "string") continue;
+    const tab = LABEL_CONTAINING_TAB[label];
+    if (tab) return tab;
+  }
+  return undefined;
+}
+
+// A nest URL without a `#` is NOT a stable link. listview_lists reads the tab
+// from localStorage `<nestId>_preferred_header`, so the same link opens whichever
+// tab that particular person last used on that particular nest, and a first-time
+// visitor gets the container's first tab — which for a circle is Structure >
+// About, not the work they were sent to look at. Carrying the hash is what makes
+// the link mean the same thing to everyone.
+//
+// The hash belongs to the LEFT pane, which in the two-id form is the parent, so
+// it is only appended there. On the bare `/n/{id}` form the hash would select a
+// tab on the nest ITSELF, and `#projects` on a project means nothing.
+function buildNestUrl(id: string, parentId: string | undefined, labels?: unknown): string {
   if (parentId && parentId.toLowerCase() !== "inbox") {
-    return `${NESTR_WEB_BASE}/n/${parentId}/${id}`;
+    const tab = containingTabHash(labels);
+    return `${NESTR_WEB_BASE}/n/${parentId}/${id}${tab ? `#${tab}` : ""}`;
   }
   return `${NESTR_WEB_BASE}/n/${id}`;
 }
@@ -721,7 +789,11 @@ export function addNestUrls<T>(data: T): T {
   const out: Record<string, unknown> = { ...record };
 
   if (looksLikeNest(record) && typeof out.url !== "string") {
-    out.url = buildNestUrl(record._id as string, record.parentId as string | undefined);
+    out.url = buildNestUrl(
+      record._id as string,
+      record.parentId as string | undefined,
+      record.labels,
+    );
   }
 
   for (const [key, value] of Object.entries(out)) {

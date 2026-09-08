@@ -6,6 +6,7 @@ import {
   completableResponse,
   unescapeRichTextFields,
   addNestUrls,
+  containingTabHash,
   extractSearchDirectives,
   schemas,
   toolDefinitions,
@@ -457,6 +458,58 @@ describe("addNestUrls", () => {
     expect(addNestUrls(null)).toBeNull();
     expect(addNestUrls("hello")).toBe("hello");
     expect(addNestUrls(42)).toBe(42);
+  });
+
+  it("carries the containing tab hash so the link opens the same tab for everyone", () => {
+    const data = { _id: "proj1", title: "API auth", parentId: "circle1", labels: ["project"] };
+    const result = addNestUrls(data) as any;
+    expect(result.url).toBe("https://app.nestr.io/n/circle1/proj1#projects");
+  });
+
+  it("resolves a scrum story through its first mapped label", () => {
+    const data = { _id: "s1", title: "Story", parentId: "circle1", labels: ["project", "userstory"] };
+    expect((addNestUrls(data) as any).url).toBe("https://app.nestr.io/n/circle1/s1#projects");
+  });
+
+  it("maps the other containers a person gets sent to", () => {
+    const cases: [string, string][] = [
+      ["role", "roles"],
+      ["circle", "roles"],
+      ["task", "tasks"],
+      ["meeting", "meetings"],
+      ["tension", "meetings"],
+      ["metric", "metrics"],
+      ["checklist", "checklists"],
+      ["goal", "goals"],
+      ["policy", "policies"],
+      ["skill", "skills"],
+      ["note", "notes"],
+    ];
+    for (const [label, tab] of cases) {
+      const url = (addNestUrls({ _id: "n1", parentId: "p1", labels: [label] }) as any).url;
+      expect(url).toBe(`https://app.nestr.io/n/p1/n1#${tab}`);
+    }
+  });
+
+  it("omits the hash for an unmapped label rather than guessing", () => {
+    const data = { _id: "n1", title: "T", parentId: "p1", labels: ["contact"] };
+    expect((addNestUrls(data) as any).url).toBe("https://app.nestr.io/n/p1/n1");
+  });
+
+  it("never puts a hash on the bare /n/{id} form — that hash would select a tab on the nest itself", () => {
+    // Inbox item: parent is dropped, so there is no left pane to select a tab on.
+    const inboxItem = { _id: "i1", title: "Item", parentId: "inbox", labels: ["task"] };
+    expect((addNestUrls(inboxItem) as any).url).toBe("https://app.nestr.io/n/i1");
+    // Workspace root: no parent at all.
+    const ws = { _id: "ws1", title: "Workspace", labels: ["anchor-circle"] };
+    expect((addNestUrls(ws) as any).url).toBe("https://app.nestr.io/n/ws1");
+  });
+
+  it("containingTabHash tolerates missing, empty and non-array labels", () => {
+    expect(containingTabHash(undefined)).toBeUndefined();
+    expect(containingTabHash([])).toBeUndefined();
+    expect(containingTabHash("project")).toBeUndefined();
+    expect(containingTabHash([null, 42, "project"])).toBe("projects");
   });
 
   it("composes with compactResponse — URL survives after compaction-then-url ordering", () => {
