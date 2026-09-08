@@ -72,6 +72,14 @@ export interface NestrClientConfig {
   onRefreshAttempt?: (result: { at: number; success: boolean; error?: string }) => void;
 }
 
+/** Shape of GET /tokens/self: what the calling key is scoped to and may do. */
+export interface TokenSelf {
+  scope: string[];
+  readOnly: boolean;
+  workspaceIds: string[];
+  userIds: string[];
+}
+
 export interface Nest {
   _id: string;
   title: string;
@@ -690,6 +698,14 @@ export class NestrClient {
   }
 
   // ============ WORKSPACES ============
+
+  /**
+   * Describe the calling key. Available to every bearer, including a workspace
+   * key with no user scope, which /users/me refuses.
+   */
+  async getTokenSelf(): Promise<TokenSelf> {
+    return this.fetch<TokenSelf>("/tokens/self");
+  }
 
   async listWorkspaces(options?: {
     search?: string;

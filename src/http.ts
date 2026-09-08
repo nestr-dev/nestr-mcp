@@ -36,6 +36,7 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createServer } from "./server.js";
 import { toolDefinitions, PUBLIC_TOOL_NAMES, READONLY_TOOL_NAMES } from "./tools/index.js";
 import { NestrClient, NestrApiError, tokenFingerprint } from "./api/client.js";
+import { bearerIsReadOnly } from "./api/readonly-bearer.js";
 import {
   getProtectedResourceMetadata,
   getAuthorizationServerMetadata,
@@ -2028,10 +2029,16 @@ async function handleMcpPost(req: Request, res: Response, routeOpts: { isReadOnl
     // Standard MCP OAuth clients manage tokens client-side and won't have a stored session.
     const hasStoredSession = !isApiKey && !!(await getStore().getSession(authToken));
 
+    // A read-only key gets the read-only tool surface on the ordinary /mcp
+    // endpoint, so a consumer does not have to point at a second URL.
+    const readOnlyBearer = await bearerIsReadOnly(
+      new NestrClient({ apiKey: authToken, baseUrl: process.env.NESTR_API_BASE }),
+    );
+
     const session = buildMcpSession({
       authToken,
       isApiKey,
-      isReadOnly,
+      isReadOnly: isReadOnly || readOnlyBearer,
       mcpClient: mcpClientName,
       mcpClientVersion,
       userId,
