@@ -2031,7 +2031,8 @@ async function handleMcpPost(req: Request, res: Response, routeOpts: { isReadOnl
 
     // A read-only key gets the read-only tool surface on the ordinary /mcp
     // endpoint, so a consumer does not have to point at a second URL.
-    const readOnlyBearer = await bearerIsReadOnly(
+    // Skipped on /mcp/readonly, where the route already decided.
+    const readOnlyBearer = !isReadOnly && await bearerIsReadOnly(
       new NestrClient({ apiKey: authToken, baseUrl: process.env.NESTR_API_BASE }),
     );
 
