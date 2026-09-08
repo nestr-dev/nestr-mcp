@@ -17,14 +17,14 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 - topics: This list
 - operating-modes: Detailed assistant/role-filler/workspace mode behaviors
 - matching-work-to-roles: How to determine which role owns work
-- linking: URL format for linking to nests in Nestr
+- linking: Linking to an item vs. linking to a view (tab hashes); read before handing anyone a link
 - workspace-types: Holacracy, Sociocracy, and Custom workspace configurations
 - core-concepts: Workspace, nest, circle, role, label basics and content format
 - nest-model: Nest fields, hierarchy, hints, and fieldsMetaData
 - labels: Important labels, label architecture, and field schema customization
 - search: Full search query syntax with all operators and examples
 - fields: Adding custom fields to labels when Nestr has no field for something yet
-- web-app-links: URL formats for linking to the Nestr web app
+- web-app-links: Every web-app URL shape, the content tab hashes, and the two-pane hash form
 - workspace-settings: Where workspace settings are, every tab, and the link to hand over
 - inbox: Inbox quick capture, processing workflow, and reordering
 - daily-plan: Daily plan usage, scope, and planning workflows
@@ -114,26 +114,94 @@ When determining work assignments, consider:
 
   "linking": `## Linking to Nests
 
-**When generating clickable links to nests in chat output, comments, or descriptions, always use the canonical pattern:** \`https://app.nestr.io/n/{nestId}\` (NOT \`/nests/{nestId}\`, \`/nest/\`, or any other variation — only \`/n/\`).
+**Two different questions, two different answers.** Sending someone to an ITEM is not the
+same as sending them to a VIEW, and the link that answers one does not answer the other.
 
-Every nest returned by this MCP server includes a precomputed \`url\` field — **prefer that field over constructing the URL yourself**. The server already applies the context rules below.
+| You want them to see | Use |
+|---|---|
+| One item (a project, a role, a todo) | the nest's own \`url\` field |
+| A list or board (the circle's projects, its roles, its meetings) | the CONTAINER's \`tabs\` hint |
 
-### URL construction rules (when you must build a URL yourself)
+### Linking to an item
 
-1. If you know the nest's parent (circle, project, role, etc.), include it as the context prefix:
-   \`https://app.nestr.io/n/{parentId}/{nestId}\`
-2. If the nest has no parent, or its parent is \`inbox\`, fall back to the bare form:
-   \`https://app.nestr.io/n/{nestId}\`
+Every nest returned by this MCP server carries a precomputed \`url\`. **Use that field. Do not
+assemble one from ids.** It already applies the parent context and the tab hash (below), and
+assembling one by analogy is how a link ends up pointing at the workspace root instead of the
+circle the item actually lives in.
 
-The parent context (when present) opens the nest in its detail pane on desktop. The bare form always works.
+The canonical path is \`/n/{nestId}\` — never \`/nests/{nestId}\`, \`/nest/\`, or anything else.
 
-### Examples
+### Linking to a view
 
-- Role in a circle: \`[Developer](https://app.nestr.io/n/circleId/roleId)\`
-- Task in a project: \`[Fix bug](https://app.nestr.io/n/projectId/taskId)\`
-- Top-level workspace: \`[My Workspace](https://app.nestr.io/n/workspaceId)\`
-- Inbox item: \`[Quick capture](https://app.nestr.io/n/itemId)\` (parent is 'inbox' — drop the context)
-- Nest of unknown context: \`[Fix bug](https://app.nestr.io/n/taskId)\``,
+A view is a TAB on a container, and a tab is a hash. Call \`nestr_get_nest\` on the circle or
+role and take the URL from its \`tabs\` hint:
+
+\`\`\`json
+{ "type": "tabs", "tabs": [
+  { "id": "projects", "title": "Projects", "parentTab": "Work",
+    "url": "https://app.nestr.io/n/circleId#projects" } ] }
+\`\`\`
+
+Say "Work > Projects" to the person (\`parentTab\` is the on-screen grouping) and give them
+\`/n/{circleId}#projects\`. The hash is always the leaf \`id\`; \`parentTab\` is never in the URL.
+
+Do not read the tab list off \`nestr_help\` or off memory. A workspace can rename Projects,
+hide a tab, or not have one, and only the hint on that nest knows.
+
+**Circle board or role board.** Both a circle and a role have a Projects tab, and they answer
+different questions. Pick from what the person actually asked for rather than defaulting to
+the circle.
+
+| They asked | Give them |
+|---|---|
+| "what is the team working on", an overview, a status view | \`/n/{circleId}#projects\` — everything in flight across the circle |
+| "my work", "what should I do next", focused work | \`/n/{roleId}#projects\` — only the work that role holds |
+
+The circle board is the shared picture and the one to open in a tactical meeting. The role
+board is where a person works: it is already filtered to their accountabilities, so nothing
+on it belongs to someone else. Someone who fills several roles has several boards, one per
+role, which is the point rather than a limitation. Find their roles with
+\`assignee:me label:role\`.
+
+### Why the hash is not optional
+
+**A nest URL with no \`#\` is not a stable link.** The web app remembers the last tab each
+person opened on each nest, in that person's own browser, and a link with no hash lands on
+whatever that happens to be. A first-time visitor gets the container's first tab, which on a
+circle is Structure > About. This is a real failure, not a theoretical one: a new user was
+sent three links to their new project, landed on the anchor circle's governance view every
+time, and concluded Nestr had no boards.
+
+### Two panes, two hashes
+
+On a wide screen \`/n/{leftId}/{rightId}\` shows the left nest with the right one open beside
+it. The hash follows the same shape: \`#{leftTab}/{rightTab}\`.
+
+- \`/n/{circleId}/{projectId}#projects\` — circle on its Projects tab, project open beside it.
+  This is what the \`url\` field gives you, and it is almost always what you want.
+- \`/n/{circleId}/{roleId}#roles/projects\` — circle on Roles, and the role beside it opened
+  on ITS Projects tab. Rarely needed, but this is how you steer both panes at once.
+- \`/n/{circleId}/{roleId}#_/projects\` — \`_\` in the left slot leaves the left pane's tab
+  alone and sets only the right pane's.
+
+A hash naming a tab the nest does not have is ignored and the nest opens on its default tab,
+so a stale or wrong hash degrades to the hashless behaviour rather than erroring.
+
+### Other shapes
+
+| Format | Example | Use case |
+|---|---|---|
+| \`/n/{nestId}\` | \`/n/abc123\` | Any nest, no context (always works) |
+| \`/n/{parentId}/{nestId}\` | \`/n/circleId/roleId\` | Item in context (detail pane on desktop) |
+| \`/n/{nestId}#{tab}\` | \`/n/circleId#projects\` | A view on that nest |
+| \`/n/{nestId}?s=1#{tab}\` | \`/n/wsId?s=1#users\` | Settings (see the \`settings\` hint) |
+
+Cross-workspace pages for the current user: \`/roles\`, \`/projects\`.
+A user's roles in one workspace: \`/profile/{userId}?cId={workspaceId}\`.
+
+Inbox items have no parent context — link them bare as \`/n/{itemId}\`.
+
+See \`nestr_help({ topic: "web-app-links" })\` for the full tab and settings hash tables.`,
 
   "workspace-types": `## Workspace Types
 
@@ -329,6 +397,7 @@ Each hint object has:
 - \`toolCall\` — pre-mapped tool call to drill into the hint: \`{ tool: "nestr_search", params: { workspaceId: "...", query: "..." } }\`. Call the specified tool with the given params to investigate.
 - \`lastPost\` — (comments hints only) ISO timestamp of the most recent comment
 - \`readAt\` — (comments hints only, user-scoped auth only) ISO timestamp of when the user last read comments. Compare \`lastPost > readAt\` to detect unread comments.
+- \`tabs\` — (on the \`tabs\` and \`settings\` hints only) the pages a PERSON can be sent to, each with \`id\`, \`title\` and a ready-made absolute \`url\`. These carry no \`toolCall\` and should not: the answer is a link to hand over, not a call to make.
 
 **Available hint types:**
 
@@ -359,6 +428,8 @@ Each hint object has:
 | \`project_overdue\` | warning | project | Past due date |
 | \`no_proposed_output\` | suggestion | tension | Tension has no proposed output yet |
 | \`inline_images\` | info | all | Count of images pasted into the text (see below) |
+| \`tabs\` | info | all (single-nest reads) | The nest's own content tabs, each with the URL that opens it |
+| \`settings\` | info | all (single-nest reads) | The settings tabs THIS viewer may open, each with its URL |
 
 Example response with hints:
 \`\`\`json
@@ -390,6 +461,24 @@ to the attachment list, and the \`files\` hint does not count them either. The
 the reference in the content and call \`nestr_read_file({ nestId, fileId })\` — that works for
 inline images even though they are not listed. The hint carries no \`toolCall\`: the id belongs
 to a specific reference, so there is no single call to pre-map.
+
+**The \`tabs\` hint is the only correct source for an in-app view link.** It is computed per
+nest and per viewer: a workspace can rename Projects to "Stories Board", hide a tab, or not
+have one at all, and the hint already reflects that. It is returned on single-nest reads
+(\`nestr_get_nest\`), not on listings, so when you need to send someone to a VIEW, read the
+CONTAINER — the circle or the role — and take the URL from its \`tabs\` hint.
+
+\`\`\`json
+{ "type": "tabs", "count": 15, "tabs": [
+  { "id": "projects", "title": "Projects", "parentTab": "Work",
+    "url": "https://app.nestr.io/n/circleId#projects" },
+  { "id": "roles", "title": "Roles", "parentTab": "Structure",
+    "url": "https://app.nestr.io/n/circleId#roles" } ] }
+\`\`\`
+
+\`parentTab\` ("Work", "Structure", "Communicate") is how the tab bar groups tabs on screen, so
+say "Work > Projects" to a person. It is never part of the URL: the hash is always the leaf
+\`id\`. See \`nestr_help({ topic: "linking" })\`.
 
 Use hints to proactively surface issues to the user — for example, when reviewing a circle's roles, hints can reveal which roles need attention without separate queries. Use the \`toolCall\` to drill into any hint directly.`,
 
@@ -883,7 +972,58 @@ When sharing results with users, provide clickable links to the Nestr web app.
 |--------|---------|----------|
 | \`/n/{nestId}\` | \`/n/abc123\` | Direct link to any nest |
 | \`/n/{nestId}/{childId}\` | \`/n/circleId/roleId\` | Show child in context (opens detail pane on desktop) |
+| \`/n/{nestId}#{tab}\` | \`/n/circleId#projects\` | A specific tab (view) on that nest |
+| \`/n/{leftId}/{rightId}#{left}/{right}\` | \`/n/circleId/roleId#roles/projects\` | A tab on each pane |
 | \`/n/{workspaceId}?s=1#hash\` | \`/n/wsId?s=1#users\` | Workspace admin settings |
+
+### Content Tab Hashes
+
+A tab on a nest is a hash on that nest's own URL. **Read the real list off the nest's
+\`tabs\` hint (\`nestr_get_nest\`), because a workspace can rename or hide any of them.** These
+are the defaults a circle or role ships with:
+
+| Hash | Tab | Group |
+|---|---|---|
+| \`#about\` | About | Structure |
+| \`#roles\` | Roles | Structure |
+| \`#policies\` | Domains & Policies | Structure |
+| \`#skills\` | Skills | Structure |
+| \`#goals\` | Goals | Work |
+| \`#projects\` | Projects | Work |
+| \`#tasks\` | Todos | Work |
+| \`#meetings\` | Meetings | Work |
+| \`#metrics\` | Metrics | Work |
+| \`#checklists\` | Checklist | Work |
+| \`#feedback\` | Feedback | Work |
+| \`#feed\` | Feed | Communicate |
+| \`#notes\` | Notes | Communicate |
+
+The Group column is the \`parentTab\` the tab bar shows on screen, so say "Work > Projects"
+to a person. It is NEVER part of the hash: the hash is always the leaf id.
+
+**\`#projects\` already IS the board.** The Projects tab defaults to columns grouped by project
+status (Future / Current / In Review / Waiting / Done) on desktop, and to a flat list on
+mobile. So a person asking for "a board" needs the link and nothing else — do not send them
+hunting for a board icon or a view toggle. (Elsewhere in Nestr a list does start flat and
+Group by is a per-browser setting; the Projects tab is the exception because its tab
+definition sets the column view as its default.)
+
+**Circles and roles both have one, and they are for different things.**
+\`/n/{circleId}#projects\` is the team's board: everything in flight across the circle, the
+shared picture, the one to open in a tactical meeting. \`/n/{roleId}#projects\` is one role's
+board: already filtered to that role's accountabilities, which makes it the place to do
+focused work. Someone who fills three roles has three boards. Neither is the "real" one —
+choose by what was asked for.
+
+### Two Panes, Two Hashes
+
+\`/n/{leftId}/{rightId}\` shows the left nest with the right one open beside it, and the hash
+splits the same way: \`#{leftTab}/{rightTab}\`. Most links only need the left half, because
+the right pane is usually an item rather than a view. \`_\` in the left slot (\`#_/projects\`)
+means "leave the left pane's tab alone and set only the right".
+
+A hash naming a tab the nest does not have is ignored, and the nest opens on its default
+tab — the same thing a hashless link does.
 
 ### Context Links (Detail Pane)
 
@@ -919,7 +1059,8 @@ For workspace admins, link to settings with \`/n/{workspaceId}?s=1\` plus:
 
 The same \`?s=1#labels\` opens a CIRCLE's own settings when the id is a circle rather
 than the workspace. See \`nestr_help({ topic: "workspace-settings" })\` before answering
-any "where do I find..." question about settings.`,
+any "where do I find..." question about settings, and \`nestr_help({ topic: "linking" })\`
+for when to link an item and when to link a view.`,
 
   "workspace-settings": `## Where workspace settings are
 
