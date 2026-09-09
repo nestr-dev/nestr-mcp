@@ -2,6 +2,16 @@
 
 This file provides guidance to Claude Code when working with the Nestr MCP Server.
 
+## Hard rule: no PII in commits, PRs or code
+
+**Treat every commit message, PR title and description, code comment, test fixture, and issue or review comment as public and permanent.** Never put a real person's or customer's identity in one: no names, no company names, no email addresses, no phone numbers, no account, workspace or thread ids belonging to a real user.
+
+**This repo is public, so anything pushed here is world-readable the moment it lands.** The rule holds in a private repo too. Repos get opened, forks and mirrors keep what you pushed, and a force-push does not reach anyone's existing clone. A private repo is a delay, not a boundary.
+
+Refer to people by role instead: "a customer", "a workspace admin", "the PR author", "a teammate". The specifics belong in the Nestr project, the support thread, or the ticket, which is where the people who need them already look. Link to that rather than restating it.
+
+The same rule covers the work you cite as motivation. "A customer asked for read-only API access" is the right amount of detail for a PR description; naming the customer and their company is not, and it is the most common way this leaks.
+
 ## Project Overview
 
 This is an MCP (Model Context Protocol) server that connects AI assistants (Claude, Cursor, etc.) to Nestr workspaces. It wraps the Nestr REST API and exposes it as MCP tools.

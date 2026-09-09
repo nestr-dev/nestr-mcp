@@ -34,6 +34,7 @@ export const TOPIC_TO_ARTICLES: Record<string, string[]> = {
   "web-app-links": ["navigating-nestr"],
   "workspace-setup": ["setting-up-a-new-collaborative-workspace"],
   "best-practices": ["getting-started-with-nestr"],
+  "pricing": ["pricing-plans-what-you-pay-for", "managing-users-invitations-permissions"],
 };
 
 export const ARTICLE_TO_TOPIC: Record<string, string> = {
@@ -55,6 +56,7 @@ export const ARTICLE_TO_TOPIC: Record<string, string> = {
   "navigating-nestr": "web-app-links",
   "setting-up-a-new-collaborative-workspace": "workspace-setup",
   "getting-started-with-nestr": "best-practices",
+  "pricing-plans-what-you-pay-for": "pricing",
 };
 
 /** Public help articles that go deeper on a curated internal topic. */
