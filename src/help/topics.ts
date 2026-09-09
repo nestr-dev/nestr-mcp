@@ -38,7 +38,30 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 - tension-processing: Listening for, creating, and processing tensions
 - workspace-setup: Guided setup wizard for new workspaces and circles
 - scrum: Scrum/Agile workspace app — user stories, sprints, epics, burndown
-- okr: Objectives & Key Results workspace app — goals, key results, contributions`,
+- okr: Objectives & Key Results workspace app — goals, key results, contributions
+- pricing: What Nestr costs, and the one rule about answering that from memory`,
+
+  "pricing": `### Pricing
+
+**Never state a Nestr price, plan limit or included allowance from memory. Not once, not hedged, not "roughly".**
+
+This is the single topic where a wrong answer is immediately expensive, immediately checkable, and lands on someone deciding whether to buy. It has already happened: a prospect asked what Nestr costs and was told "starter: environ 99 €/mois, jusqu'à 10 utilisateurs" and "pro: environ 199 €/mois, utilisateurs illimités". Nestr does not sell flat monthly tiers and has no such user caps; the real figures are per seat and roughly a seventh of that. Nothing in the answer was retrieved. Nothing corrected it.
+
+**Where the answer actually lives, in order:**
+
+1. \`nestr_help({ search: "pricing" })\` → the **pricing-plans-what-you-pay-for** article, which carries the current plan names and per-seat figures. Quote it, and link it.
+2. **https://nestr.io/pricing** — the live price table. Give this link to the person in every pricing answer, whatever else you say. Prices change and the page is the thing that changes with them.
+
+**What is stable enough to say in your own words** (the numbers never are):
+
+- Billing is **per user, per month**, with a cheaper annual rate. It is not a flat fee per company, and there is no seat cap that forces a plan change.
+- There is a **free tier for a single user**, and paid tiers above it.
+- **A user is someone with login access.** Agents are not seats: putting an agent in five roles adds no cost, because it is one login. See the managing-users article for who counts.
+- **AI work is metered separately as AI credit**, and that is not the same thing as the subscription. Product support questions — how does Nestr work, where is this setting — are free. Work inside a workspace draws credit. A workspace admin manages the balance, auto top-up and the monthly spend limit under Workspace settings → Workspace plan & billing.
+
+**If the search returns nothing**, say you would rather not guess at prices, give the https://nestr.io/pricing link, and offer to bring in a human. An unanswered pricing question costs one link. An invented one costs the deal and the trust.
+
+**Not a pricing question**: "how do I add a colleague", "extend our plan by one person", "we need another seat". Those are user management — see the managing-users-invitations-permissions article — and answering them with a price list sends someone to buy something they already have.`,
 
   "operating-modes": `### Mode-Specific Behavior Summary
 
