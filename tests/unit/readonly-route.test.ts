@@ -1,6 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { toolDefinitions, READONLY_TOOL_NAMES } from "../../src/tools/index.js";
 import { bearerIsReadOnly } from "../../src/api/readonly-bearer.js";
+import { NestrClient } from "../../src/api/client.js";
 
 describe("/mcp/readonly advertised tools", () => {
   // The route filters tools/list with this expression; pin it so the route and
@@ -38,5 +39,37 @@ describe("read-only bearer detection", () => {
   it("fails open against an older API that has no tokens/self payload", async () => {
     const client = { getTokenSelf: async () => undefined as never };
     expect(await bearerIsReadOnly(client)).toBe(false);
+  });
+});
+
+// The route answers { status, data }. The first version of getTokenSelf returned
+// that envelope untouched, so readOnly was always undefined and the whole feature
+// was a no-op. These drive the real client against a stubbed response so the wire
+// shape is what is asserted, not an assumed one.
+describe("getTokenSelf unwrapping", () => {
+  const respondWith = (payload: unknown) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(payload),
+      json: async () => payload,
+    }));
+  };
+
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("reads readOnly out of the { status, data } envelope the API sends", async () => {
+    respondWith({ status: "success", data: { scope: ["nest:abc", "access:read"], readOnly: true, workspaceIds: ["abc"], userIds: [] } });
+    const client = new NestrClient({ apiKey: "k", baseUrl: "https://example.test/api" });
+    const token = await client.getTokenSelf();
+    expect(token.readOnly).toBe(true);
+    expect(token.workspaceIds).toEqual(["abc"]);
+    expect(await bearerIsReadOnly(client)).toBe(true);
+  });
+
+  it("still reads a bare payload", async () => {
+    respondWith({ scope: ["nest:abc"], readOnly: false, workspaceIds: ["abc"], userIds: [] });
+    const client = new NestrClient({ apiKey: "k", baseUrl: "https://example.test/api" });
+    expect((await client.getTokenSelf()).readOnly).toBe(false);
   });
 });

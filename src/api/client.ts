@@ -702,9 +702,15 @@ export class NestrClient {
   /**
    * Describe the calling key. Available to every bearer, including a workspace
    * key with no user scope, which /users/me refuses.
+   *
+   * The route answers `{ status, data }` and `fetch` hands back the raw body,
+   * so unwrap here. Tolerates a bare payload too, the way the listWorkspaces
+   * callers do.
    */
   async getTokenSelf(): Promise<TokenSelf> {
-    return this.fetch<TokenSelf>("/tokens/self");
+    const body = await this.fetch<TokenSelf | { data: TokenSelf }>("/tokens/self");
+    const unwrapped = (body as { data?: TokenSelf })?.data;
+    return (unwrapped ?? body) as TokenSelf;
   }
 
   async listWorkspaces(options?: {

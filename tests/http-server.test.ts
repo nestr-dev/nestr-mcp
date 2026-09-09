@@ -1100,6 +1100,91 @@ describe("HTTP Server", () => {
   // handleToolCall. Sessions live in the normal `sessions` map (not an
   // isolated one) and are persisted for rehydration like any authed session.
 
+  // A read-only key must get the read-only surface on plain /mcp too, without the
+  // consumer pointing at a second URL. This drives a real session so the session
+  // flag is asserted, not the helper that feeds it.
+  describe("POST /mcp with a read-only key", () => {
+    async function initSession(token: string, tokenSelf: unknown): Promise<string> {
+      // One stub for the whole init: identity probes get a user, /tokens/self gets
+      // the envelope the API actually sends.
+      const user = { _id: "user-1", username: "alice", profile: { fullName: "Alice" } };
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((url: unknown) => {
+        const payload = String(url).includes("/tokens/self") ? tokenSelf : user;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(payload),
+          json: async () => payload,
+        });
+      }));
+
+      const res = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", `Bearer ${token}`)
+        .send({
+          jsonrpc: "2.0",
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "readonly-key-test", version: "1.0" },
+          },
+          id: 1,
+        });
+
+      vi.unstubAllGlobals();
+      expect(res.status).toBe(200);
+      return res.headers["mcp-session-id"];
+    }
+
+    it("tags the session isReadOnly when the key says so", async () => {
+      const sid = await initSession("ro-key-a", {
+        status: "success",
+        data: { scope: ["nest:abc", "access:read"], readOnly: true, workspaceIds: ["abc"], userIds: [] },
+      });
+      expect(sessions[sid].isReadOnly).toBe(true);
+    });
+
+    it("leaves an ordinary key's session writable", async () => {
+      const sid = await initSession("rw-key-a", {
+        status: "success",
+        data: { scope: ["nest:abc"], readOnly: false, workspaceIds: ["abc"], userIds: [] },
+      });
+      expect(sessions[sid].isReadOnly).toBeFalsy();
+    });
+
+    it("fails open when the lookup errors, rather than stripping a working key's tools", async () => {
+      const user = { _id: "user-1", username: "alice", profile: { fullName: "Alice" } };
+      vi.stubGlobal("fetch", vi.fn().mockImplementation((url: unknown) => {
+        if (String(url).includes("/tokens/self")) return Promise.reject(new Error("boom"));
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(user),
+          json: async () => user,
+        });
+      }));
+
+      const res = await request(app)
+        .post("/mcp")
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json, text/event-stream")
+        .set("Authorization", "Bearer failing-lookup-key")
+        .send({
+          jsonrpc: "2.0",
+          method: "initialize",
+          params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "x", version: "1" } },
+          id: 1,
+        });
+      vi.unstubAllGlobals();
+
+      expect(res.status).toBe(200);
+      expect(sessions[res.headers["mcp-session-id"]].isReadOnly).toBeFalsy();
+    });
+  });
+
   describe("POST /mcp/readonly", () => {
     /** Parse a JSON-mode MCP response (transport returns SSE-framed text even in JSON mode for tool calls). */
     function parseBody(res: { text: string; body: any }): any {
