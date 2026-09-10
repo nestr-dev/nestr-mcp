@@ -94,7 +94,7 @@ Then identify the **next physical action** — the very next concrete step.
 4. **Request action/task** — "I need you to do X."
 5. **Set expectation/governance** — "We need ongoing clarity about X." → Proposes structural change.
 
-**Directing output:** For pathways 1-4, include the target userId in the tension part's \`users\` field.
+**Directing output:** For pathways 1-4, put the target userId in the tension part's \`users\` field and the role you are asking it of in \`role\`. Both, not one: \`users\` is the person, \`role\` is the role the request is made to, and the work request mail and the agenda row both render "<user> as <role>".
 
 **Bias towards minimal output.** 1-2 outputs per tension. More likely means blended tensions — separate them.
 
@@ -112,7 +112,8 @@ Then identify the **next physical action** — the very next concrete step.
 
 1. **Create** on the sensing role or circle: \`nestr_create_tension\` with title, optional \`feeling\` and \`needs\`. For personal tensions, add \`individual-action\` label.
 
-2. **Add proposal parts** via \`nestr_add_tension_part\`:
+2. **Add parts** via \`nestr_add_tension_part\`. A part is either the work the tension asks for or a governance change it proposes:
+   - **Operational output** (pathways 1-4, the common case): title + description + \`users\` + \`role\`, and NO governance label. \`users\` is who does it; \`role\` is the role it is asked of, and the work request names both ("Ada as Systems: ..."). Omitting \`role\` is what produces an output with an assignee and no role on it.
    - **New governance item**: title + labels (e.g., \`["role"]\`). For roles, include accountabilities/domains as bulk shorthand.
    - **Change existing item**: \`_id\` of existing item + fields to change. Existing children auto-copied if accountabilities/domains not provided.
    - **Remove existing item**: Use \`nestr_remove_tension_part\`.

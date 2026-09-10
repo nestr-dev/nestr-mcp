@@ -465,6 +465,7 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     bodyParams: new Set([
       "_id", "title", "labels", "description", "purpose",
       "parentId", "users", "due", "accountabilities", "domains",
+      "role", // operational output: the role the work is asked of
       "roleId", // election mode
     ]),
   },
@@ -478,6 +479,7 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     bodyParams: new Set([
       "_id", "title", "labels", "description", "purpose",
       "parentId", "users", "due", "accountabilities", "domains",
+      "role",
     ]),
   },
   // DELETE /parts (body has _id) — propose deletion of an existing item.
@@ -686,9 +688,77 @@ export function enrichHints<T>(data: T): T {
   return subject as T;
 }
 
-function buildNestUrl(id: string, parentId: string | undefined): string {
+// Which of the PARENT's tabs holds a child carrying this label, keyed by the
+// API-facing label name (the API strips `circleplus-` and renames
+// prepared-tension to tension, so these are the names that actually arrive).
+//
+// This is the reverse of the `labels: [...]` declarations the tab definitions
+// already carry in slashme-online `packages/nestr_circleplus/lib/tabs.js`: the
+// Projects tab declares it holds project / individual-action / sprint / epic,
+// the Roles tab declares role / circle, and so on. A few tabs (Goals, Todos,
+// Metrics on a circle) express the same containment as a `searchTerm` rather
+// than a labels array, so those entries are read off the search and written
+// here by hand.
+//
+// Why a static map rather than asking the server which tab contains this nest:
+// the precise answer needs the PARENT's resolved tab set, and getTabs() on the
+// server evaluates the circleplus tab callback (a walk through getWorkspace,
+// getData and TAPi18n). translateNest runs per row on every search and children
+// response, so that is a per-row cost on the hot path for a link most rows never
+// need. A wrong guess costs nothing: listview_lists falls back to the nest's
+// default tab when the hash names no available tab, which is exactly the
+// hashless behaviour we have today.
+const LABEL_CONTAINING_TAB: Readonly<Record<string, string>> = {
+  project: "projects",
+  "individual-action": "projects",
+  sprint: "projects",
+  epic: "projects",
+  task: "tasks",
+  role: "roles",
+  circle: "roles",
+  "anchor-circle": "roles",
+  domain: "policies",
+  policy: "policies",
+  meeting: "meetings",
+  governance: "meetings",
+  tactical: "meetings",
+  tension: "meetings",
+  metric: "metrics",
+  checklist: "checklists",
+  goal: "goals",
+  result: "goals",
+  skill: "skills",
+  feedback: "feedback",
+  note: "notes",
+};
+
+// The tab on the parent that a person opens to SEE this nest in its list.
+// First label wins, so a scrum story labelled ["project", "userstory"] resolves
+// through `project` and lands on Projects.
+export function containingTabHash(labels: unknown): string | undefined {
+  if (!Array.isArray(labels)) return undefined;
+  for (const label of labels) {
+    if (typeof label !== "string") continue;
+    const tab = LABEL_CONTAINING_TAB[label];
+    if (tab) return tab;
+  }
+  return undefined;
+}
+
+// A nest URL without a `#` is NOT a stable link. listview_lists reads the tab
+// from localStorage `<nestId>_preferred_header`, so the same link opens whichever
+// tab that particular person last used on that particular nest, and a first-time
+// visitor gets the container's first tab — which for a circle is Structure >
+// About, not the work they were sent to look at. Carrying the hash is what makes
+// the link mean the same thing to everyone.
+//
+// The hash belongs to the LEFT pane, which in the two-id form is the parent, so
+// it is only appended there. On the bare `/n/{id}` form the hash would select a
+// tab on the nest ITSELF, and `#projects` on a project means nothing.
+function buildNestUrl(id: string, parentId: string | undefined, labels?: unknown): string {
   if (parentId && parentId.toLowerCase() !== "inbox") {
-    return `${NESTR_WEB_BASE}/n/${parentId}/${id}`;
+    const tab = containingTabHash(labels);
+    return `${NESTR_WEB_BASE}/n/${parentId}/${id}${tab ? `#${tab}` : ""}`;
   }
   return `${NESTR_WEB_BASE}/n/${id}`;
 }
@@ -719,7 +789,11 @@ export function addNestUrls<T>(data: T): T {
   const out: Record<string, unknown> = { ...record };
 
   if (looksLikeNest(record) && typeof out.url !== "string") {
-    out.url = buildNestUrl(record._id as string, record.parentId as string | undefined);
+    out.url = buildNestUrl(
+      record._id as string,
+      record.parentId as string | undefined,
+      record.labels,
+    );
   }
 
   for (const [key, value] of Object.entries(out)) {
@@ -1222,6 +1296,7 @@ export const schemas = {
     due: z.string().optional().describe("Due or re-election date, ISO. For an election, the term end; omit for no term."),
     accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles on a role (replaces all; children tools for individual edits)"),
     domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles on a role (replaces all; children tools for individual edits)"),
+    role: z.string().optional().describe("The role this output belongs to, for an operational output (pathway 3/4). Pair with users: users is WHO does it, role is the role it is asked of, and the work request names both (\"Ada as Systems: ...\"). A role id, not a title. Distinct from roleId, which is election mode."),
     roleId: z.string().optional().describe("Hold an ELECTION: the electable role to fill (Facilitator/Secretary/Rep Link or any electable role). Assigns or reconfirms the role's filler for a term WITHOUT changing its accountabilities/domains — provide users:[userId] (one person) and optional due (term). Do not combine with _id."),
     removeNest: z.boolean().optional().describe("Set true with _id to propose deletion of the referenced governance item (when the proposal is accepted, the item is removed). Distinct from nestr_remove_tension_part, which undoes a proposal part you already added. Requires _id; other body fields are ignored."),
   }).refine(
@@ -1248,6 +1323,7 @@ export const schemas = {
     due: z.string().optional().describe("Updated due date (ISO format)"),
     accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Updated accountabilities (replaces all; children tools for individual edits)"),
     domains: coerceFromJson(z.array(z.string())).optional().describe("Updated domains (replaces all; children tools for individual edits)"),
+    role: z.string().optional().describe("Updated role for an operational output. A role id; pass an empty string to clear it."),
   }),
 
   removeTensionPart: z.object({
@@ -1455,7 +1531,7 @@ const destructive = { annotations: { readOnlyHint: false, destructiveHint: true 
 export const toolDefinitions = [
   {
     name: "nestr_help",
-    description: "Nestr documentation, three modes. (1) Internal topic: `topic` with a curated key (search, labels, nest-model, inbox, daily-plan, notifications, insights, tension-processing, skills, mcp-apps, authentication, scrum, okr, ...); 'topics' lists them all. (2) Help article: `topic` with a slug from nestr.io/help/articles/<slug>; returns markdown plus a numbered list of its images. Images are never attached by default: includeImages:true takes the first maxImages screenshots, imageIndexes:[..] takes chosen ones. Attach when the user wants to see how something looks. (3) Search: `search` with free text; returns ranked matches, each a title and one-line summary, tolerant of typos and synonyms (kanban/sprint to scrum). A topic is tried internally first, then as an article. Every response opens with 'Resolved as:' naming the mode, and topics and articles cross-link. Call before unfamiliar operations. No auth.",
+    description: "Nestr documentation, three modes. (1) Internal topic: `topic` with a curated key (search, labels, nest-model, inbox, daily-plan, notifications, insights, tension-processing, skills, mcp-apps, authentication, scrum, okr, ...); 'topics' lists them all. (2) Help article: `topic` with a slug from nestr.io/help/articles/<slug>; returns markdown plus a numbered list of its images. Images are never attached by default: includeImages:true takes the first maxImages screenshots, imageIndexes:[..] takes chosen ones. Attach when the user wants to see how something looks. (3) Search: `search` with free text, **in English whatever language the conversation is in** — the corpus is English and the index scores slugs and keywords, so a query in another language usually returns nothing; returns ranked matches, each a title and one-line summary, tolerant of typos and synonyms (kanban/sprint to scrum). A topic is tried internally first, then as an article. Every response opens with 'Resolved as:' naming the mode, and topics and articles cross-link. Call before unfamiliar operations. No auth.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1621,7 +1697,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_nest",
-    description: `Create a nest under a parent. Labels define the type, e.g. ['project'], ['role']. ${PRIME_LABEL_RULE} Sprint/epic/milestone never pair; stories link to those via graph relations. In established workspaces prefer the tension flow for governance. See nestr_help('labels').`,
+    description: `Create a nest under a parent. Labels define the type, e.g. ['project'], ['role']. ${PRIME_LABEL_RULE} Sprint/epic/milestone never pair; stories link to those via graph relations. In established workspaces prefer the tension flow for governance. Meetings attach to a circle that ALREADY exists — the workspace anchor circle counts, and is the right parent when no sub-circle fits. Never create a circle to hold a meeting. Use \`['meeting','circle-meeting']\` for a tactical meeting, \`['meeting','governance']\` for a governance meeting, and set \`due\` to the start time. See nestr_help('labels') and nestr_help('meetings').`,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2158,7 +2234,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_workspace_apps",
-    description: "List enabled apps/features in a workspace. Check before using features that require specific apps (e.g., Insights).",
+    description: "List a workspace's apps/features. Returns the FULL catalogue, each entry `{ _id, title, enabled }` — a disabled app is present with `enabled: false`, never absent, so test `enabled` and not presence. Note the field is `_id`, not `id`. Check before using features that require specific apps (e.g., Insights, Scrum, Meetings).",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2580,7 +2656,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_tension_part",
-    description: "Add a governance proposal part to a tension. Modes: new item (omit _id, give title/labels); change one (_id plus the changed fields; editing a role copies its accountabilities/domains in, so it reads as a full role edit); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities/domains untouched). See nestr_help('tension-processing').",
+    description: "Add a part to a tension. A part is either the operational work the tension asks for or a governance change it proposes. Modes: OPERATIONAL OUTPUT (title, description, users, role, and no governance label) is what a work request is made of, and is the common case; new governance item (omit _id, give title plus a governance label such as ['role'] or ['policy']); change one (_id plus the changed fields; editing a role copies its accountabilities/domains in, so it reads as a full role edit); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities/domains untouched). The part you get back has its own _id and a sourceId, the output nest underneath it; nestr_modify_tension_part takes the part _id, not the sourceId. See nestr_help('tension-processing').",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2596,6 +2672,7 @@ export const toolDefinitions = [
         due: { type: "string", description: "Due or re-election date, ISO. For an election, the term end; omit for no term." },
         accountabilities: { type: "array", items: { type: "string" }, description: "Accountability titles on a role (replaces all; children tools for individual edits)" },
         domains: { type: "array", items: { type: "string" }, description: "Domain titles on a role (replaces all; children tools for individual edits)" },
+        role: { type: "string", description: "The role this output belongs to, for an operational output (pathway 3/4). Pair with users: users is WHO does it, role is the role it is asked of, and the work request names both (\"Ada as Systems: ...\"). A role id, not a title. Distinct from roleId, which is election mode." },
         roleId: { type: "string", description: "ELECTION mode: the electable role to fill (Facilitator, Secretary, Rep Link or any electable role). Pair with users:[oneUserId] and optional due. Never with _id." },
         removeNest: { type: "boolean", description: "With _id, propose deleting that governance item; it goes when the proposal is accepted. Not nestr_remove_tension_part, which undoes a part you already added." },
       },
@@ -2619,6 +2696,7 @@ export const toolDefinitions = [
         parentId: { type: "string", description: "Updated parent ID" },
         users: { type: "array", items: { type: "string" }, description: "Updated user assignments" },
         due: { type: "string", description: "Updated due date (ISO format)" },
+        role: { type: "string", description: "Updated role for an operational output. A role id; pass an empty string to clear it." },
         accountabilities: { type: "array", items: { type: "string" }, description: "Updated accountabilities (replaces all; children tools for individual edits)" },
         domains: { type: "array", items: { type: "string" }, description: "Updated domains (replaces all; children tools for individual edits)" },
       },
@@ -3281,7 +3359,7 @@ async function _handleToolCall(
             const entries = await loadArticleIndex();
             const hits = searchArticleIndex(entries, parsed.search, 8);
             if (hits.length === 0) {
-              return { content: [{ type: "text", text: `_Resolved as: help-article search._\n\nNo help articles matched "${parsed.search}". The index scores article slugs and curated keywords, not article bodies, so an exact feature, operator or field name often misses even when the docs cover it. Try broader terms or a synonym, or call nestr_help({ topic: "topics" }) for internal MCP topics. An empty result is not evidence the thing does not exist: say you could not find it documented, never that it is unsupported.` }] };
+              return { content: [{ type: "text", text: `_Resolved as: help-article search._\n\nNo help articles matched "${parsed.search}". **The corpus and the index are English. If you searched in another language, translate the query and search again before concluding anything** — that is the single most common reason for an empty result, and one retry usually fixes it. Beyond that: the index scores article slugs and curated keywords, not article bodies, so an exact feature, operator or field name often misses even when the docs cover it. Try broader terms or a synonym, or call nestr_help({ topic: "topics" }) for internal MCP topics. An empty result is not evidence the thing does not exist: say you could not find it documented, never that it is unsupported. Never fill the gap from memory on anything a customer could check — prices, limits and plan names above all.` }] };
             }
             // Enrich the top hits with a title + one-line summary so the caller
             // can pick the right article without a blind fetch. Best-effort:

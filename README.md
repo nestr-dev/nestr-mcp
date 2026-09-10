@@ -292,10 +292,32 @@ npm run inspect
 
 ## Security
 
+[SECURITY.md](SECURITY.md) is the full policy: how to report a vulnerability, what
+the three authorisation surfaces reach, and what this server does and does not
+store. The essentials:
+
 - Never commit your API key or OAuth token to version control
 - OAuth tokens respect user permissions and are recommended
 - API keys provide full workspace access - use OAuth for granular permissions
-- Rotate credentials if you suspect they've been compromised
+- Use `/mcp/readonly` for any integration that only needs to read
+
+### Credential lifetime and rotation
+
+**OAuth tokens** expire and are refreshed for you. The server holds the refresh
+token with the session and renews the access token as it nears expiry, so a
+long-lived client keeps working without re-authorising. Revoke a session from
+Nestr and the next refresh fails - access stops there. Nothing to rotate by hand.
+
+**API keys do not expire.** A workspace API key stays valid until a workspace
+admin revokes it in Nestr under Settings > Integrations > Workspace API access.
+That makes rotation your job rather than the server's:
+
+- Rotate when anyone with access to a key leaves, and on a schedule you set
+- Revoke dormant keys rather than leaving them in place - an unused key is still
+  a live workspace-wide credential
+- Rotate immediately if a key may have been exposed
+- Issue a read-only key, and point it at `/mcp/readonly`, whenever the
+  integration only reads
 
 ## Resources
 

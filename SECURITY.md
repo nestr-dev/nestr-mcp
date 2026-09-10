@@ -66,9 +66,14 @@ downgraded, so a client cannot obtain write access by addressing the wrong mount
 
 Production dependencies are audited on every release. `npm audit --omit=dev`
 should report zero vulnerabilities before a version is published; if it does not,
-the release waits. The published package contains `build` and `web` only, so a
+the release waits. The published package ships no lockfile, so a
 consumer resolves dependency versions fresh against the ranges in
 `package.json` rather than inheriting a pinned tree from this repository.
+
+Because those ranges are what a consumer actually resolves against, a range's
+**lower bound is held above any known advisory**, not just its resolved version.
+A transitive advisory with no fixed release upstream is raised with the upstream
+project; where one exists we lift the floor of the declaring dependency.
 
 ## Data handling
 
