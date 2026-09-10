@@ -1691,7 +1691,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_nest",
-    description: `Create a nest under a parent. Labels define the type, e.g. ['project'], ['role']. ${PRIME_LABEL_RULE} Sprint/epic/milestone never pair; stories link to those via graph relations. In established workspaces prefer the tension flow for governance. See nestr_help('labels').`,
+    description: `Create a nest under a parent. Labels define the type, e.g. ['project'], ['role']. ${PRIME_LABEL_RULE} Sprint/epic/milestone never pair; stories link to those via graph relations. In established workspaces prefer the tension flow for governance. Meetings attach to a circle that ALREADY exists — the workspace anchor circle counts, and is the right parent when no sub-circle fits. Never create a circle to hold a meeting. Use \`['meeting','circle-meeting']\` for a tactical meeting, \`['meeting','governance']\` for a governance meeting, and set \`due\` to the start time. See nestr_help('labels') and nestr_help('meetings').`,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2228,7 +2228,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_workspace_apps",
-    description: "List enabled apps/features in a workspace. Check before using features that require specific apps (e.g., Insights).",
+    description: "List a workspace's apps/features. Returns the FULL catalogue, each entry `{ _id, title, enabled }` — a disabled app is present with `enabled: false`, never absent, so test `enabled` and not presence. Note the field is `_id`, not `id`. Check before using features that require specific apps (e.g., Insights, Scrum, Meetings).",
     inputSchema: {
       type: "object" as const,
       properties: {

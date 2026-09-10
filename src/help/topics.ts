@@ -37,6 +37,7 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 - doing-work: How work flows from purpose through strategy to execution
 - tension-processing: Listening for, creating, and processing tensions
 - workspace-setup: Guided setup wizard for new workspaces and circles
+- meetings: Creating and scheduling circle, governance and role meetings, and where a meeting nest belongs
 - scrum: Scrum/Agile workspace app — user stories, sprints, epics, burndown
 - okr: Objectives & Key Results workspace app — goals, key results, contributions
 - pricing: What Nestr costs, and the one rule about answering that from memory`,
@@ -525,7 +526,7 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 - \`governance\` - Combined with \`meeting\` label to create a governance meeting (processes governance tensions/proposals)
 - \`circle-meeting\` - Combined with \`meeting\` label to create a circle/tactical meeting (processes operational tensions — projects, todos, inter-role requests)
 
-**Creating meetings:** A meeting is a nest with \`labels: ["meeting", "governance"]\` or \`labels: ["meeting", "circle-meeting"]\`. Set \`due\` to the meeting start time. Assign all role fillers in the circle to the meeting's \`users\` array — this includes people/agents energizing roles in the circle, plus rep-link and circle-lead roles from sub-circles. Use graph tools (\`nestr_add_graph_link\` with relation \`meeting\`) to link tensions as agenda items. Agenda items that don't originate from a specific role can be created as child nests of the meeting directly.
+**Creating meetings:** See \`nestr_help({ topic: "meetings" })\` for where a meeting nest belongs (an existing circle — the anchor circle counts) and why you must not create a circle to hold one. A meeting is a nest with \`labels: ["meeting", "governance"]\` or \`labels: ["meeting", "circle-meeting"]\`. Set \`due\` to the meeting start time. Assign all role fillers in the circle to the meeting's \`users\` array — this includes people/agents energizing roles in the circle, plus rep-link and circle-lead roles from sub-circles. Use graph tools (\`nestr_add_graph_link\` with relation \`meeting\`) to link tensions as agenda items. Agenda items that don't originate from a specific role can be created as child nests of the meeting directly.
 
 **OKRs & Goals:**
 - \`goal\` - An Objective (the O in OKR)
@@ -1606,7 +1607,7 @@ The Scrum app adds four label types (\`userstory\`, \`sprint\`, \`epic\`, \`mile
 
 ### Detect whether Scrum is enabled
 
-Call \`nestr_get_workspace_apps({ workspaceId })\` and look for \`id: 'scrum'\`. If it's absent, the labels won't exist in the workspace and any \`label:userstory\` / \`label:sprint\` / \`label:epic\` / \`label:milestone\` queries will return empty.
+Call \`nestr_get_workspace_apps({ workspaceId })\` and look for \`_id: 'scrum'\` with \`enabled: true\`. The field is \`_id\`, not \`id\`, and the endpoint returns every app rather than only the enabled ones, so a disabled Scrum app comes back as \`enabled: false\` rather than going missing — testing for absence reports it as on. When it is disabled the labels won't exist in the workspace and any \`label:userstory\` / \`label:sprint\` / \`label:epic\` / \`label:milestone\` queries will return empty.
 
 Sprints, epics, and milestones can each be individually disabled at the workspace level even when the app is on — check \`workspace.data['appfield-scrum-sprints-enabled']\` (and the \`-epics-\` / \`-milestones-\` variants). When a sub-feature is set to \`false\`, the corresponding graph-field on user stories is hidden in the UI; the labels still resolve, so search and graph-link tools keep working.
 
@@ -1861,6 +1862,51 @@ The parent Objective's \`goal_complete\` updates from the average of its KRs.
 **Role-filler mode** — If your role owns an Objective or contributes \`resultwork\` to a Key Result, update your contribution as part of your operational rhythm. Reading the parent goal's \`term\` tells you the window you're working in. Capture repeatable measurement patterns as skill nests.
 
 **Workspace mode** — Use for cross-circle reporting and period-level rollups. Pair \`goal.term=this_quarter\` queries with insights tools to build dashboards.`,
+
+  "meetings": `## Meetings (creating and scheduling)
+
+For how a meeting is *run* once it exists — the facilitator flow, check-in, processing agenda items into outcomes, closing, the emailed report and the PDF minutes — read the end-user article: \`nestr_help({ topic: "running-meetings-in-nestr" })\`. This topic covers the part that article does not: where a meeting nest belongs in the tree, and how to create one with tool calls.
+
+### A meeting attaches to a circle that already exists
+
+A meeting nest's parent must be one of:
+
+| Parent label | What it is |
+|---|---|
+| \`anchor-circle\` | The workspace itself |
+| \`circle\` | A sub-circle |
+| \`role\` | A role (role meetings — off by default; a workspace admin enables them under Workspace settings > Applications) |
+
+**The anchor circle is a circle.** Every workspace has one from the moment it is created, it already holds the Circle lead, Facilitator and Secretary roles, and it hosts tactical and governance meetings exactly like any sub-circle does. In a young workspace that has no sub-circles yet, the anchor circle is the right parent — not a missing prerequisite.
+
+This matters because the end-user article opens with "navigate to the circle where you want to hold the meeting", which reads like a blocker when \`nestr_list_circles\` returns only the anchor circle. It is not one. The web app's own **+ Create > Meeting** dialog offers the anchor circle in its circle picker.
+
+### Never create a circle in order to hold a meeting
+
+A circle is a durable domain of work with a purpose, roles and accountabilities: "Marketing", "Customer Support", "Platform". A meeting is an event that a circle holds. "Weekly team sync", "Monday standup" and "Quarterly review" are meeting names, never circle names.
+
+Creating a circle to house a meeting is close to pure cost. It arrives with no purpose, nobody filling its roles, and four core roles (Circle lead, Rep link, Facilitator, Secretary) generated alongside it, and it widens the governance tree permanently in exchange for a calendar entry. It also splits the workspace's work across a boundary the organisation never asked for.
+
+If a meeting genuinely seems to want a circle of its own, that is a claim about the **organisation**, not about the meeting: a distinct domain of work needs a home. That is a governance decision, so ask the user before creating anything, and name the circle after the domain rather than the meeting.
+
+### Creating one
+
+\`nestr_create_nest\`:
+
+- \`parentId\` — the circle (or role) that holds it, per the table above
+- \`labels\` — \`["meeting", "circle-meeting"]\` for a tactical meeting, \`["meeting", "governance"]\` for a governance meeting
+- \`title\` — what the meeting is, e.g. "Weekly team sync"
+- \`due\` — the meeting start time as an ISO datetime. A future \`due\` schedules it (the web app shows a countdown and a "Start meeting now" link); omit it to mean now.
+- \`users\` — everyone who should attend: the people and agents energizing roles in the circle, plus circle-lead and rep-link fillers from its sub-circles.
+
+Agenda items are tensions. Link them with \`nestr_add_graph_link\` (relation \`meeting\`); an agenda item with no originating role can be a plain child nest of the meeting instead.
+
+### Before you create one
+
+1. Call \`nestr_list_circles({ workspaceId })\`. A workspace always has at least the anchor circle, so an answer of "there are no circles" is always wrong.
+2. If more than one circle exists and the user has not said which, **ask**. Putting a meeting in the wrong circle puts it in front of the wrong people.
+3. Check the app is on with \`nestr_get_workspace_apps({ workspaceId })\` and look for \`_id: "meetings"\` (titled "Circle Meetings") with \`enabled: true\`. Note the field is \`_id\`, not \`id\`, and the app id is the short \`meetings\` — not the \`circleplus-meetings\` data key the workspace stores internally. Whether tactical and governance meetings are individually enabled is NOT exposed by this endpoint; if you need that distinction, ask the admin. If meetings are off, say so and point the admin at Workspace settings > Applications rather than creating a nest nobody can open.
+4. Report back with a link to the meeting. See \`nestr_help({ topic: "web-app-links" })\` — meetings live on the \`#meetings\` tab of their circle.`,
 
   "doing-work": DOING_WORK_INSTRUCTIONS,
 
