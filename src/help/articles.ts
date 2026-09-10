@@ -97,7 +97,7 @@ export async function loadArticleIndex(): Promise<ArticleIndexEntry[]> {
  */
 const ARTICLE_KEYWORDS: Record<string, string[]> = {
   "scrum-agile-app": ["sprint", "sprints", "kanban", "backlog", "burndown", "epic", "epics", "milestone", "milestones", "iteration", "userstory", "story", "stories", "standup", "velocity", "board"],
-  "running-meetings-in-nestr": ["tactical", "governance", "standup", "retro", "retrospective", "facilitation", "facilitator", "agenda", "minutes", "notes", "pdf", "download", "export", "report", "outcome", "outcomes", "checkin", "check-in", "election", "elections"],
+  "running-meetings-in-nestr": ["meeting", "meetings", "schedule", "scheduling", "recurring", "tactical", "governance", "standup", "retro", "retrospective", "facilitation", "facilitator", "agenda", "minutes", "notes", "pdf", "download", "export", "report", "outcome", "outcomes", "checkin", "check-in", "election", "elections"],
   // Removing or converting a role, circle or policy is not a delete button anywhere
   // in the app: it is a toggle under "Advanced options" on a governance proposal
   // part, so "how do I delete a role" has to land here rather than on the

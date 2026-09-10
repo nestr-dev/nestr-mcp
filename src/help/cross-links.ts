@@ -33,6 +33,7 @@ export const TOPIC_TO_ARTICLES: Record<string, string[]> = {
   "linking": ["navigating-nestr"],
   "web-app-links": ["navigating-nestr"],
   "workspace-setup": ["setting-up-a-new-collaborative-workspace"],
+  "meetings": ["running-meetings-in-nestr"],
   "best-practices": ["getting-started-with-nestr"],
   "pricing": ["pricing-plans-what-you-pay-for", "managing-users-invitations-permissions"],
 };
@@ -47,7 +48,7 @@ export const ARTICLE_TO_TOPIC: Record<string, string> = {
   "nestr-search": "search",
   "building-your-org-structure-roles-circles": "matching-work-to-roles",
   "tensions-and-governance-proposals": "tension-processing",
-  "running-meetings-in-nestr": "tension-processing",
+  "running-meetings-in-nestr": "meetings",
   "scrum-agile-app": "scrum",
   "projects-and-todos-creating-tracking-managing-work": "doing-work",
   "chat-channels-and-communication-in-nestr": "notifications",
