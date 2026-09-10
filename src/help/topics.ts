@@ -1607,7 +1607,7 @@ The Scrum app adds four label types (\`userstory\`, \`sprint\`, \`epic\`, \`mile
 
 ### Detect whether Scrum is enabled
 
-Call \`nestr_get_workspace_apps({ workspaceId })\` and look for \`id: 'scrum'\`. If it's absent, the labels won't exist in the workspace and any \`label:userstory\` / \`label:sprint\` / \`label:epic\` / \`label:milestone\` queries will return empty.
+Call \`nestr_get_workspace_apps({ workspaceId })\` and look for \`_id: 'scrum'\` with \`enabled: true\`. The field is \`_id\`, not \`id\`, and the endpoint returns every app rather than only the enabled ones, so a disabled Scrum app comes back as \`enabled: false\` rather than going missing — testing for absence reports it as on. When it is disabled the labels won't exist in the workspace and any \`label:userstory\` / \`label:sprint\` / \`label:epic\` / \`label:milestone\` queries will return empty.
 
 Sprints, epics, and milestones can each be individually disabled at the workspace level even when the app is on — check \`workspace.data['appfield-scrum-sprints-enabled']\` (and the \`-epics-\` / \`-milestones-\` variants). When a sub-feature is set to \`false\`, the corresponding graph-field on user stories is hidden in the UI; the labels still resolve, so search and graph-link tools keep working.
 

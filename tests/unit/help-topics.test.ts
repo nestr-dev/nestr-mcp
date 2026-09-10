@@ -80,6 +80,15 @@ describe("HELP_TOPICS", () => {
     expect(content).toContain("There is no \`userstory_type\` field");
   });
 
+  it("scrum topic checks the apps endpoint by _id and enabled, not presence", () => {
+    const content = HELP_TOPICS["scrum"];
+    expect(content).toContain("`_id: 'scrum'`");
+    expect(content).toContain("enabled: true");
+    // The endpoint returns every app, so absence is never the disabled signal.
+    expect(content).toContain("testing for absence reports it as on");
+    expect(content).not.toContain("look for `id: 'scrum'`");
+  });
+
   it("okr topic documents goal/result/resultwork and term queries", () => {
     const content = HELP_TOPICS["okr"];
     expect(content).toBeDefined();
