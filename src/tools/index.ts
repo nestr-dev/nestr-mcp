@@ -609,6 +609,99 @@ export function nestrWebBase(apiBase?: string): string {
 
 const NESTR_WEB_BASE = nestrWebBase(process.env.NESTR_API_BASE);
 
+/**
+ * Turn the tool-level `hints` argument into what the API should be sent.
+ *
+ * `false` means none. A level passes through. `undefined` and `true` both take the
+ * caller-appropriate default, which differs by call shape on purpose: a single read
+ * wants the teaching prose, a listing wants it once from nestr_help rather than once
+ * per row.
+ */
+export function resolveHintLevel(
+  value: boolean | "full" | "summary" | undefined,
+  fallback: "full" | "summary",
+): "full" | "summary" | false {
+  if (value === false) return false;
+  if (value === "full" || value === "summary") return value;
+  return fallback;
+}
+
+/**
+ * Append `strict:true` unless the caller already asked for it.
+ *
+ * Without it an unrecognised operator, label or field filter is silently dropped and the
+ * search returns a broader result that looks like a real answer. That is fine for
+ * browsing and wrong for counting, so the tool exposes it as a flag rather than making
+ * every caller remember the operator.
+ */
+export function withStrict(query: string, strict?: boolean): string {
+  if (!strict) return query;
+  if (/(^|\s)strict:true(\s|$)/i.test(query)) return query;
+  return `${query} strict:true`;
+}
+
+interface ApiSpecFilter {
+  search?: string;
+  path?: string;
+}
+
+/**
+ * Reduce an OpenAPI document to something a model can read.
+ *
+ * The whole document is far too large to return, and returning nothing useful is how a
+ * caller ends up guessing whether an endpoint exists. So: an operation index by default,
+ * one operation in full when asked for by path, and a keyword filter in between. The
+ * counts matter as much as the rows — "0 of 94 operations match 'duration'" is the
+ * answer to "does the API store meeting duration", and it is a real negative rather than
+ * a failed search.
+ */
+export function summariseApiSpec(spec: Record<string, unknown>, filter: ApiSpecFilter = {}): unknown {
+  const paths = (spec?.paths || {}) as Record<string, Record<string, { summary?: string; description?: string }>>;
+  const allPaths = Object.keys(paths);
+
+  if (filter.path) {
+    const match = allPaths.find((p) => { return p === filter.path; })
+      || allPaths.find((p) => { return p.toLowerCase() === filter.path!.toLowerCase(); });
+    if (!match) {
+      return {
+        found: false,
+        requested: filter.path,
+        totalPaths: allPaths.length,
+        note: "No such path in this deployment's spec. This is a definitive negative, not a failed lookup.",
+        didYouMean: allPaths.filter((p) => { return p.includes(filter.path!.split("/")[1] || ""); }).slice(0, 10),
+      };
+    }
+    return { found: true, path: match, operations: paths[match] };
+  }
+
+  const rows: { method: string; path: string; summary: string }[] = [];
+  for (const p of allPaths) {
+    for (const [method, op] of Object.entries(paths[p] || {})) {
+      if (typeof op !== "object" || op === null) continue;
+      const summary = (op.summary || op.description || "").split("\n")[0].slice(0, 160);
+      rows.push({ method: method.toUpperCase(), path: p, summary });
+    }
+  }
+
+  const needle = filter.search?.toLowerCase();
+  const matched = needle
+    ? rows.filter((r) => {
+      return r.path.toLowerCase().includes(needle) || r.summary.toLowerCase().includes(needle);
+    })
+    : rows;
+
+  return {
+    totalOperations: rows.length,
+    matchedOperations: matched.length,
+    ...(needle ? { query: filter.search } : {}),
+    ...(needle && matched.length === 0
+      ? { note: `No operation mentions "${filter.search}". This deployment does not serve one, which is a definitive answer rather than a failed search.` }
+      : {}),
+    operations: matched.slice(0, 200),
+    ...(matched.length > 200 ? { truncated: true } : {}),
+  };
+}
+
 export function enrichHints<T>(data: T): T {
   if (!data || typeof data !== "object") return data;
 
@@ -852,6 +945,11 @@ const PURPOSE_DESC =
 const CONTENT_DESC =
   "The primary content field: details, context, acceptance criteria. Structured data goes in fields, progress in comments. Supports Markdown and HTML.";
 
+const HINTS_DESC =
+  "Contextual hints. 'summary' keeps the per-nest signal (type, severity, count, url, and the "
+  + "`query` that finds every other nest with the same problem) and drops the fixed teaching prose "
+  + "and endpoint list. 'full' is the whole payload. false for none.";
+
 const STRIP_DESCRIPTION =
   "Strip description fields to shrink the response. Use for bulk or index reads.";
 
@@ -859,6 +957,24 @@ const SORT_DESCRIPTION =
   "Sort field: title, createdAt, updatedAt, due, activityAt, order. Prefix '-' to reverse. For 'recently active' use '-activityAt' (includes children), not '-updatedAt' (own edits only).";
 
 // Tool input schemas using Zod
+/**
+ * `hints` is a level, not a flag. `summary` keeps what varies per nest and drops the
+ * teaching prose and endpoint list, which are identical for every nest of a type; `full`
+ * is the whole payload. Booleans still work: the API reads a bare `true` on a listing as
+ * `summary`, which is the difference between one paragraph and fifty copies of it.
+ */
+const hintLevelSchema = z.union([z.boolean(), z.enum(["full", "summary"])]).optional();
+
+const hintFilterSchemas = {
+  hintTypes: coerceFromJson(z.array(z.string())).optional()
+    .describe("Keep only these hint types, e.g. ['project_waiting_no_reason','unassigned_role']."),
+  minSeverity: z.enum(["info", "suggestion", "warning", "alert"]).optional()
+    .describe("Drop hints below this severity. 'warning' is the useful floor when sweeping."),
+};
+
+const linkedUsersSchema = z.boolean().optional()
+  .describe("Resolve every user id in the results to a full user, returned once in linked.users.");
+
 export const schemas = {
   listWorkspaces: z.object({
     search: z.string().optional().describe("Search query to filter workspaces"),
@@ -938,6 +1054,8 @@ export const schemas = {
   search: z.object({
     workspaceId: z.string().describe("Workspace ID to search in"),
     query: z.string().describe("Search query"),
+    strict: z.boolean().optional().describe("Reject the search if any operator, label or field filter in it was not recognised, instead of silently returning a broader result. Use it whenever you are counting rather than browsing: without it a typo'd filter reads as a real, larger answer."),
+    linkedUsers: linkedUsersSchema,
     sort: z.string().optional().describe(`${SORT_DESCRIPTION} Takes precedence over sort:/sort-order: operators in the query.`),
     limit: z.number().optional().describe("Max results per page. Omit on first call to see meta.total count."),
     page: z.number().optional().describe("Page number (1-indexed) for pagination"),
@@ -947,7 +1065,8 @@ export const schemas = {
   getNest: z.object({
     nestId: z.string().describe("Nest ID. Supports comma-separated IDs to fetch multiple nests in one call (e.g., 'id1,id2,id3') — returns an array instead of a single object. Keep total URL under 2000 chars to avoid HTTP limits."),
     fieldsMetaData: z.boolean().optional().describe("Set to true to include field schema metadata (e.g., available options for project.status)"),
-    hints: z.boolean().optional().describe("Include contextual hints on each nest (default: true). Hints surface actionable signals like unassigned roles, stale projects, or unread comments. Set to false for bulk lookups where you only need structural data, not contextual guidance."),
+    hints: hintLevelSchema.describe("Contextual hints: 'full' (default on a single read), 'summary', or false. 'summary' keeps type, severity, count, url and the sibling query, and drops the teaching prose and endpoints. Hints surface signals like unassigned roles, stale projects or unread comments."),
+    ...hintFilterSchemas,
     provenance: z.boolean().optional().describe("Single-nest only. Include field/property provenance: which label (and circle context) defines each field and property."),
     rights: z.boolean().optional().describe("Single-nest only. Include the caller's composed rights on the nest plus a deny trace naming the profiles that block each op."),
     forUser: z.string().optional().describe("Single nest, with rights=true. Rights for this user id instead of the caller. Caller must be a nest admin."),
@@ -961,11 +1080,26 @@ export const schemas = {
 
   getNestChildren: z.object({
     nestId: z.string().describe("Parent nest ID"),
+    search: z.string().optional().describe("Search scoped to this nest, full operator syntax. Ask for the subset you want rather than fetching every child and filtering: 'label:role' for a circle's roles, 'label:project fields.project.status:Waiting' for its waiting projects. depth:1 is applied when you set no depth, and the response says so in appliedDefaults."),
     sort: z.string().optional().describe(SORT_DESCRIPTION),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
-    hints: z.boolean().optional().describe("Include contextual hints on each child nest (default: true). Set to false for large result sets or bulk operations where contextual signals aren't needed."),
+    hints: hintLevelSchema.describe("Contextual hints: 'summary' (default on a listing), 'full', or false. A listing at 'full' repeats the same teaching prose once per row."),
+    ...hintFilterSchemas,
+    linkedUsers: linkedUsersSchema,
     _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Tasks for Website Redesign\"). Omit for default."),
+  }),
+
+  hintsRollup: z.object({
+    nestId: z.string().describe("Nest to roll up. A circle or workspace root is the useful scope."),
+    hintTypes: coerceFromJson(z.array(z.string())).optional().describe("Count only these hint types."),
+    minSeverity: z.enum(["info", "suggestion", "warning", "alert"]).optional().describe("Drop rules below this severity."),
+    sampleSize: z.number().optional().describe("Example nests per type. Default 10, max 100, 0 for counts only."),
+  }),
+
+  apiSpec: z.object({
+    search: z.string().optional().describe("Filter operations by keyword against path and summary, e.g. 'meeting' or 'tension'."),
+    path: z.string().optional().describe("Return the full schema for one path, e.g. '/nests/{id}/children'."),
   }),
 
   createNest: z.object({
@@ -1039,6 +1173,7 @@ export const schemas = {
     sort: z.string().optional().describe(SORT_DESCRIPTION),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
+    linkedUsers: linkedUsersSchema,
   }),
 
   listUserRoles: z.object({
@@ -1079,6 +1214,7 @@ export const schemas = {
     sort: z.string().optional().describe(SORT_DESCRIPTION),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
+    linkedUsers: linkedUsersSchema,
     _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Engineering projects\"). Omit for default."),
   }),
 
@@ -1618,12 +1754,14 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_search",
-    description: "Search nests in a workspace. Supports operators like label:, assignee:, createdby:, completed:, in:, sort:. createdby: accepts me, an email address, or a user id. Always use completed:false for active work. See nestr_help('search') for full syntax. Results carry user ids; when presenting to a person, show names and/or emails, resolving ids via nestr_get_user or nestr_list_users.",
+    description: "Search nests in a workspace. Supports operators like label:, assignee:, createdby:, completed:, in:, sort:. createdby: accepts me, an email address, or a user id. Always use completed:false for active work. See nestr_help('search') for full syntax. Results carry user ids; when presenting to a person, show names and/or emails. Pass `linkedUsers: true` to get them all resolved in the same request rather than calling nestr_get_user per id.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID to search in" },
         query: { type: "string", description: "Search query with optional operators (e.g., 'label:role', 'assignee:me completed:false')" },
+        strict: { type: "boolean", description: "Reject the search when any operator, label or field filter in it was not recognised, rather than silently returning a broader result. Use it whenever you are counting rather than browsing: without it, a mistyped filter comes back as a real and larger answer with nothing to say the filter was dropped." },
+        linkedUsers: { type: "boolean", description: "Resolve every user id in the results to a full user, returned once in `linked.users`. Prefer this over calling nestr_get_user per id." },
         sort: { type: "string", description: `${SORT_DESCRIPTION} Takes precedence over sort:/sort-order: operators in the query.` },
         limit: { type: "number", description: "Max results per page. Omit on the first call so meta.total shows the match count." },
         page: { type: "number", description: "Page number (1-indexed) for fetching additional pages" },
@@ -1644,7 +1782,9 @@ export const toolDefinitions = [
       properties: {
         nestId: { type: "string", description: "Nest ID, or comma-separated IDs for a batch (e.g. 'id1,id2'). Keep the URL under 2000 chars." },
         fieldsMetaData: { type: "boolean", description: "Set to true to include field schema metadata (available options, field types)" },
-        hints: { type: "boolean", description: "Contextual hints, default true. False for bulk lookups needing only structure." },
+        hints: { type: ["string", "boolean"], enum: ["summary", "full", true, false], description: `${HINTS_DESC} Defaults to 'full' on a single read, which is what you want when you asked about one nest.` },
+        hintTypes: { type: "array", items: { type: "string" }, description: "Keep only these hint types." },
+        minSeverity: { type: "string", enum: ["info", "suggestion", "warning", "alert"], description: "Drop hints below this severity." },
         stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
         provenance: { type: "boolean", description: "Single nest. Which label and circle context defines each field and property, e.g. why a role has a given icon." },
         rights: { type: "boolean", description: "Single nest. The caller's composed rights (self read/update/delete) plus a deny trace naming what blocks each op, and why." },
@@ -1671,15 +1811,19 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_nest_children",
-    description: "Get children of a nest. Paginated. Add hints=true for contextual signals.",
+    description: "Get children of a nest, or just the ones you want. Pass `search` with the full operator syntax to ask for a subset rather than fetching everything and filtering: `search: 'label:role'` returns a circle's roles in one call. Paginated at 50 per page; read meta.total for the match count.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Parent nest ID" },
+        search: { type: "string", description: "Search scoped to this nest, full operator syntax. Ask for the subset you want instead of fetching every child and filtering: `label:role` for a circle's roles, `label:project fields.project.status:Waiting` for its waiting projects. `depth:1` is applied when you set no depth and the response says so in `appliedDefaults`; pass `depth:2` or higher to reach further down." },
         sort: { type: "string", description: SORT_DESCRIPTION },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
-        hints: { type: "boolean", description: "Include contextual hints (default: true). Set to false for large result sets or bulk operations." },
+        hints: { type: ["string", "boolean"], enum: ["summary", "full", true, false], description: `${HINTS_DESC} Defaults to 'summary' here: a listing at 'full' repeats the same paragraph once per row.` },
+        hintTypes: { type: "array", items: { type: "string" }, description: "Keep only these hint types." },
+        minSeverity: { type: "string", enum: ["info", "suggestion", "warning", "alert"], description: "Drop hints below this severity." },
+        linkedUsers: { type: "boolean", description: "Resolve every user id in the results to a full user, returned once in `linked.users`. One request instead of one per id." },
         stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
         _listTitle: { type: "string", description: "Short descriptive title for the list UI header (e.g., \"Tasks for Website Redesign\", \"API project sub-tasks\"). Include the parent name for context." },
       },
@@ -1687,6 +1831,33 @@ export const toolDefinitions = [
     },
     // No _meta: completableListUi — children can be any type (roles, accountabilities, etc.).
     // The completable list app should only be used when results are confirmed to be completable items.
+    ...readOnly,
+  },
+  {
+    name: "nestr_hints_rollup",
+    description: "Count hints across a whole circle or workspace in one call. A hint on a single nest says \"this one has this problem\"; this says how many have it, which is the question you actually ask of a circle. Answers \"how healthy is this circle\", \"how many projects are waiting with no reason\", \"how many roles have nobody in them\" without reading every nest. Each result carries type, severity, count and a small sample to open. Read `notComputed`: it names every hint type this cannot count in one query, so a type listed there is unknown rather than zero. Do not sum counts across types, one nest can carry several; ask for a single hintTypes when you want a number that adds up.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest to roll up. A circle or the workspace root is the useful scope." },
+        hintTypes: { type: "array", items: { type: "string" }, description: "Count only these hint types. Omit for every type this can compute." },
+        minSeverity: { type: "string", enum: ["info", "suggestion", "warning", "alert"], description: "Drop rules below this severity. 'warning' is the useful floor for \"what needs attention\"." },
+        sampleSize: { type: "number", description: "Example nests per type. Default 10, max 100, 0 for counts only." },
+      },
+      required: ["nestId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_api_spec",
+    description: "The deployment's own OpenAPI document, so you can check whether the API has something rather than concluding \"I did not find it\" and guessing. Call with no arguments for the operation index (method, path, one-line summary). `search` filters by keyword against path and summary. `path` returns the full schema for one operation, including its parameters. Use this to answer \"is there an endpoint for X\" with certainty, and note that a negative here is a real negative: if it is not in the spec, this deployment does not serve it. For the search query language rather than the HTTP surface, use nestr_help('search'); for a filter you are unsure of, `strict: true` on nestr_search tells you whether it applied.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        search: { type: "string", description: "Filter operations by keyword against path and summary, e.g. 'meeting', 'tension', 'duration'." },
+        path: { type: "string", description: "Return the full schema for one path, e.g. '/nests/{id}/children'." },
+      },
+    },
     ...readOnly,
   },
   {
@@ -1908,6 +2079,7 @@ export const toolDefinitions = [
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
         stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
+        linkedUsers: { type: "boolean", description: "Resolve every user id in the results to a full user, returned once in `linked.users`. One request instead of one per id." },
       },
       required: ["workspaceId"],
     },
@@ -2123,6 +2295,7 @@ export const toolDefinitions = [
         page: { type: "number", description: "Page number (1-indexed)" },
         stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
         _listTitle: { type: "string", description: "Short descriptive title for the list UI header (e.g., \"Engineering projects\", \"All projects\"). Omit for default." },
+        linkedUsers: { type: "boolean", description: "Resolve every user id in the results to a full user, returned once in `linked.users`. One request instead of one per id." },
       },
       required: ["workspaceId"],
     },
@@ -2140,6 +2313,7 @@ export const toolDefinitions = [
           oneOf: [{ type: "number" }, { type: "string", enum: ["all"] }],
           description: "How deep below the context nest to look for comments. 0 (default) returns only comments directly on this nest; N includes comments on descendants up to N levels deep; 'all' includes comments on this nest and every descendant.",
         },
+        unread: { type: "boolean", description: "true for comments you have not read, false for the ones you have. Omit for all. Combine with depth to sweep a circle for what you have missed." },
       },
       required: ["nestId"],
     },
@@ -3537,12 +3711,13 @@ async function _handleToolCall(
         const directives = extractSearchDirectives(parsed.query);
         const results = await client.searchWorkspace(
           parsed.workspaceId,
-          parsed.query,
+          withStrict(parsed.query, parsed.strict),
           {
             sort: parsed.sort ?? directives.sort,
             limit: parsed.limit ?? directives.limit,
             page: parsed.page,
             cleanText: true,
+            linkedUsers: parsed.linkedUsers,
           }
         );
         return formatResult(completableResponse(compactResponse(results), "search", parsed._listTitle || `Search: ${parsed.query}`));
@@ -3553,7 +3728,9 @@ async function _handleToolCall(
         const nest = await client.getNest(parsed.nestId, {
           cleanText: true,
           fieldsMetaData: parsed.fieldsMetaData,
-          hints: parsed.hints !== false,
+          hints: resolveHintLevel(parsed.hints, "full"),
+          hintTypes: parsed.hintTypes,
+          minSeverity: parsed.minSeverity,
           provenance: parsed.provenance,
           rights: parsed.rights,
           forUser: parsed.forUser,
@@ -3579,13 +3756,33 @@ async function _handleToolCall(
       case "nestr_get_nest_children": {
         const parsed = schemas.getNestChildren.parse(args);
         const children = await client.getNestChildren(parsed.nestId, {
+          search: parsed.search,
           sort: parsed.sort,
           limit: parsed.limit,
           page: parsed.page,
           cleanText: true,
-          hints: parsed.hints !== false,
+          hints: resolveHintLevel(parsed.hints, "summary"),
+          hintTypes: parsed.hintTypes,
+          minSeverity: parsed.minSeverity,
+          linkedUsers: parsed.linkedUsers,
         });
         return formatResult(completableResponse(compactResponse(enrichHints(children)), "children", parsed._listTitle || "Sub-items"));
+      }
+
+      case "nestr_hints_rollup": {
+        const parsed = schemas.hintsRollup.parse(args);
+        const rollup = await client.getHintsRollup(parsed.nestId, {
+          hintTypes: parsed.hintTypes,
+          minSeverity: parsed.minSeverity,
+          sampleSize: parsed.sampleSize,
+        });
+        return formatResult(rollup);
+      }
+
+      case "nestr_api_spec": {
+        const parsed = schemas.apiSpec.parse(args);
+        const spec = await client.getApiSpec();
+        return formatResult(summariseApiSpec(spec, parsed));
       }
 
       case "nestr_create_nest": {
@@ -3750,6 +3947,7 @@ async function _handleToolCall(
           limit: parsed.limit,
           page: parsed.page,
           cleanText: true,
+          linkedUsers: parsed.linkedUsers,
         });
         return formatResult(compactResponse(roles, "role"));
       }
@@ -3814,6 +4012,7 @@ async function _handleToolCall(
           limit: parsed.limit,
           page: parsed.page,
           cleanText: true,
+          linkedUsers: parsed.linkedUsers,
         });
         return formatResult(completableResponse(compactResponse(projects), "projects", parsed._listTitle || "Projects"));
       }

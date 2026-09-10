@@ -44,6 +44,33 @@ function logBearerFingerprintOn401(
 /** Which auth flow the request is in. Used by the error envelope so an LLM client knows whose responsibility refresh is. */
 export type AuthFlow = "A" | "B" | "unknown";
 
+/**
+ * How much of a hint to ask for. `summary` keeps what varies per nest (type,
+ * severity, count, url, and the sibling `query`) and drops what does not: the
+ * teaching prose, which is identical for every nest of that type, and the
+ * endpoints list. A page of fifty nests at `full` carries fifty copies of the
+ * same paragraph; `nestr_help` carries it once.
+ */
+export type HintLevel = "full" | "summary";
+
+export type HintSeverity = "info" | "suggestion" | "warning" | "alert";
+
+/** Options every read route understands. */
+export interface NestrReadOptions {
+  sort?: string;
+  limit?: number;
+  page?: number;
+  cleanText?: boolean;
+  /** A level, or the historical boolean. A listing reads a bare `true` as `summary`. */
+  hints?: HintLevel | boolean;
+  /** Keep only these hint types, e.g. ['project_waiting_no_reason']. */
+  hintTypes?: string[];
+  /** Drop hints below this severity. */
+  minSeverity?: HintSeverity;
+  /** Resolve every user id in the results to a full user in one extra lookup. */
+  linkedUsers?: boolean;
+}
+
 export interface NestrClientConfig {
   apiKey: string;
   baseUrl?: string;
@@ -767,26 +794,20 @@ export class NestrClient {
   async searchWorkspace(
     workspaceId: string,
     search: string,
-    options?: { sort?: string; limit?: number; page?: number; cleanText?: boolean }
+    options?: NestrReadOptions
   ): Promise<Nest[]> {
     const params = new URLSearchParams({ search });
-    if (options?.sort) params.set("sort", options.sort);
-    if (options?.limit) params.set("limit", options.limit.toString());
-    if (options?.page) params.set("page", options.page.toString());
-    if (options?.cleanText) params.set("cleanText", "true");
+    NestrClient.appendReadParams(params, options);
 
     return this.fetch<Nest[]>(`/workspaces/${workspaceId}/search?${params}`);
   }
 
   async getWorkspaceProjects(
     workspaceId: string,
-    options?: { sort?: string; limit?: number; page?: number; cleanText?: boolean }
+    options?: NestrReadOptions
   ): Promise<Nest[]> {
     const params = new URLSearchParams();
-    if (options?.sort) params.set("sort", options.sort);
-    if (options?.limit) params.set("limit", options.limit.toString());
-    if (options?.page) params.set("page", options.page.toString());
-    if (options?.cleanText) params.set("cleanText", "true");
+    NestrClient.appendReadParams(params, options);
 
     const query = params.toString();
     return this.fetch<Nest[]>(
@@ -801,7 +822,9 @@ export class NestrClient {
     options?: {
       cleanText?: boolean;
       fieldsMetaData?: boolean;
-      hints?: boolean;
+      hints?: HintLevel | boolean;
+      hintTypes?: string[];
+      minSeverity?: HintSeverity;
       provenance?: boolean;
       rights?: boolean;
       forUser?: string;
@@ -811,7 +834,11 @@ export class NestrClient {
     const params = new URLSearchParams();
     if (options?.cleanText) params.set("cleanText", "true");
     if (options?.fieldsMetaData) params.set("fieldsMetaData", "true");
-    if (options?.hints) params.set("hints", "true");
+    if (options?.hints) {
+      params.set("hints", typeof options.hints === "boolean" ? String(options.hints) : options.hints);
+    }
+    if (options?.hintTypes?.length) params.set("hintTypes", options.hintTypes.join(","));
+    if (options?.minSeverity) params.set("minSeverity", options.minSeverity);
     // Nest-diagnosis flags (single-nest reads): field/property provenance, the
     // composed-rights block (optionally for another user), and the whoCan query.
     if (options?.provenance) params.set("provenance", "true");
@@ -826,19 +853,76 @@ export class NestrClient {
     );
   }
 
-  async getNestChildren(
-    nestId: string,
-    options?: { sort?: string; limit?: number; page?: number; cleanText?: boolean; hints?: boolean }
-  ): Promise<Nest[]> {
-    const params = new URLSearchParams();
+  /**
+   * Options every read route understands. `hints` is a level rather than a flag:
+   * 'summary' keeps the per-nest signal and drops the fixed teaching prose and the
+   * endpoints list, which is what makes a listing affordable. The API accepts the
+   * historical booleans too, and reads a bare `true` on a listing as 'summary'.
+   */
+  private static appendReadParams(
+    params: URLSearchParams,
+    options?: NestrReadOptions,
+  ): URLSearchParams {
     if (options?.sort) params.set("sort", options.sort);
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
-    if (options?.hints) params.set("hints", "true");
+    if (options?.hints !== undefined && options.hints !== null) {
+      params.set("hints", typeof options.hints === "boolean" ? String(options.hints) : options.hints);
+    }
+    if (options?.hintTypes?.length) params.set("hintTypes", options.hintTypes.join(","));
+    if (options?.minSeverity) params.set("minSeverity", options.minSeverity);
+    // One request instead of one per id. Without it the caller gets bare user ids and
+    // has to resolve each one separately, which is what our tool descriptions used to
+    // tell an agent to do.
+    if (options?.linkedUsers) params.set("linkedUsers", "true");
+    return params;
+  }
+
+  /**
+   * Children of a nest, optionally filtered by a search scoped to that nest.
+   *
+   * `search` has always worked on this route and was documented nowhere, so callers
+   * fetched every child and filtered client-side. The route adds `depth:1` when the
+   * query sets no depth, and says so in `appliedDefaults` on the response.
+   */
+  async getNestChildren(
+    nestId: string,
+    options?: NestrReadOptions & { search?: string }
+  ): Promise<Nest[]> {
+    const params = new URLSearchParams();
+    if (options?.search) params.set("search", options.search);
+    NestrClient.appendReadParams(params, options);
 
     const query = params.toString();
     return this.fetch<Nest[]>(`/nests/${nestId}/children${query ? `?${query}` : ""}`);
+  }
+
+  /**
+   * Hint counts across everything under a nest, without the per-nest payload.
+   * Reading this by fetching every descendant with hints costs several queries per
+   * nest; this is one indexed query per hint type.
+   */
+  async getHintsRollup(
+    nestId: string,
+    options?: { hintTypes?: string[]; minSeverity?: string; sampleSize?: number }
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (options?.hintTypes?.length) params.set("hintTypes", options.hintTypes.join(","));
+    if (options?.minSeverity) params.set("minSeverity", options.minSeverity);
+    // Deliberately not `|| ` — 0 is a meaningful value here and means counts only.
+    if (options?.sampleSize !== undefined) params.set("sampleSize", String(options.sampleSize));
+
+    const query = params.toString();
+    return this.fetch<unknown>(`/nests/${nestId}/hints${query ? `?${query}` : ""}`);
+  }
+
+  /**
+   * The deployment's own OpenAPI document. Lets a caller check whether the API has
+   * something at all rather than concluding "I did not find it" and guessing.
+   */
+  async getApiSpec(): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>("/openapi.json");
   }
 
   async createNest(data: {
@@ -1005,14 +1089,17 @@ export class NestrClient {
     });
   }
 
+  /**
+   * Search within one nest's subtree. This is where a hint's `query.url` points, so a
+   * caller following a sibling query lands here.
+   */
   async searchNest(
     nestId: string,
     search: string,
-    options?: { limit?: number; cleanText?: boolean }
+    options?: NestrReadOptions
   ): Promise<Nest[]> {
     const params = new URLSearchParams({ search });
-    if (options?.limit) params.set("limit", options.limit.toString());
-    if (options?.cleanText) params.set("cleanText", "true");
+    NestrClient.appendReadParams(params, options);
 
     return this.fetch<Nest[]>(`/nests/${nestId}/search?${params}`);
   }
@@ -1286,13 +1373,10 @@ export class NestrClient {
 
   async listRoles(
     workspaceId: string,
-    options?: { sort?: string; limit?: number; page?: number; cleanText?: boolean }
+    options?: NestrReadOptions
   ): Promise<Role[]> {
     const params = new URLSearchParams();
-    if (options?.sort) params.set("sort", options.sort);
-    if (options?.limit) params.set("limit", options.limit.toString());
-    if (options?.page) params.set("page", options.page.toString());
-    if (options?.cleanText) params.set("cleanText", "true");
+    NestrClient.appendReadParams(params, options);
 
     const query = params.toString();
     return this.fetch<Role[]>(
