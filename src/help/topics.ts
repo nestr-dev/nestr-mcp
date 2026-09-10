@@ -22,7 +22,8 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 - core-concepts: Workspace, nest, circle, role, label basics and content format
 - nest-model: Nest fields, hierarchy, hints, and fieldsMetaData
 - labels: Important labels, label architecture, and field schema customization
-- search: Full search query syntax with all operators and examples
+- search: Full search query syntax with all operators and examples, including strict:true
+- api-surface: nestr_api_spec, for checking whether an endpoint exists at all
 - fields: Adding custom fields to labels when Nestr has no field for something yet
 - web-app-links: Every web-app URL shape, the content tab hashes, and the two-pane hash form
 - workspace-settings: Where workspace settings are, every tab, and the link to hand over
@@ -477,6 +478,37 @@ Example response with hints:
 }
 \`\`\`
 
+**Hints have a level, and a listing should not ask for the expensive one.** \`hints\` takes
+\`'full'\`, \`'summary'\` or \`false\`. \`summary\` keeps everything that varies per nest — type,
+severity, count, url, and the \`query\` below — and drops the two things identical for every
+nest of that type: \`detail\`, the teaching paragraph, and \`endpoints\`. A page of fifty nests
+at \`full\` carries fifty copies of one paragraph; \`nestr_help\` carries it once, and
+\`helpTopic\` on the hint names which topic. Single reads default to \`full\`, listings to
+\`summary\`. Narrow further with \`hintTypes\` and \`minSeverity\`.
+
+**A hint can tell you how to find every other nest with the same problem.** Where the
+predicate is expressible as a search, the hint carries a \`query\`:
+
+\`\`\`json
+{ "type": "project_waiting_no_reason", "severity": "warning",
+  "query": {
+    "search": "label:project fields.project.status:Waiting fields.project.waiting_reason:!exists",
+    "scope": "<circleId>", "url": "https://.../api/nests/<circleId>/search?search=...",
+    "exact": false,
+    "caveat": "A reason saved as empty markup triggers the hint but is not matched by !exists." } }
+\`\`\`
+
+Read \`exact\` before you trust a count from it. \`true\` means the search reproduces the hint's
+predicate; \`false\` means it gets close and \`caveat\` says which way it is wrong. Where the
+predicate cannot be expressed at all there is no \`query\` — deliberately, because a search
+that quietly disagrees with its hint is worse than none.
+
+**To count rather than to list, use \`nestr_hints_rollup\`.** It returns how many nests under
+a circle or workspace carry each hint type, with a small sample, in one call instead of one
+per nest. Read its \`notComputed\`: it names the types it cannot count in a single query, so a
+type listed there is unknown, not zero. Do not sum counts across types — one nest can carry
+several.
+
 **Inline images.** An image pasted into a nest's text is stored as a file and left in the
 content as a markdown reference: \`![name](/file/download?id=FILE_ID&name=NAME)\`. These are
 deliberately absent from \`nestr_get_nest_files\`, because they belong to the text rather than
@@ -704,6 +736,26 @@ The \`nestr_search\` tool supports powerful query operators. Combine multiple op
 | \`groupby:\` | \`groupby:parent\` | Group results into sections (app + tabs; inert here) |
 | \`groupbycol:\` | \`groupbycol:project->status\` | Same grouping as board columns — see "Grouping and Layout" below |
 
+### Knowing your filter applied: \`strict:true\`
+
+An operator this parser does not recognise, an unknown label, or a field filter naming a
+field that does not exist are all **dropped silently**. The search still runs, returns a
+broader result, and nothing says a filter went missing. Fine when browsing, wrong when
+counting: a mistyped filter reads as a real, larger answer.
+
+Add \`strict:true\` and any dropped term becomes an error instead:
+
+\`\`\`
+label:project fields.project.stauts:Waiting strict:true
+  -> rejected, naming the unknown field, instead of returning every project
+\`\`\`
+
+\`nestr_search\` also takes \`strict: true\` as a parameter, which appends the operator for you.
+Use it whenever the number matters: counting, reporting, or deciding something on the result.
+
+For "does this deployment have X at all", \`strict:true\` answers it for the search language
+and \`nestr_api_spec\` answers it for the HTTP surface.
+
 ### The \`has:\` Operator
 
 The \`has:\` operator checks for property existence. Supports \`!\` prefix for negation (e.g., \`has:!due\`).
@@ -718,6 +770,10 @@ The \`has:\` operator checks for property existence. Supports \`!\` prefix for n
 - \`has:icon\` - Items with an icon set
 - \`has:tabs\` - Items with tabs configured
 - \`has:header\` - Items with a header
+
+An unlisted value is not an error: \`has:<x>\` falls through to the nest property \`_p.<x>\`,
+so \`has:completable\` (items that can be completed) and \`has:eventable\` both work. The names
+above are the ones with special handling, not the whole set.
 
 ### Field Value Search
 
@@ -922,6 +978,24 @@ in:roleId label:project project->status:Current
 - Roles in a circle only (not sub-circles): \`in:circleId label:role depth:1\`
 - All work in a circle: \`in:circleId completed:false\` (includes all nested items)
 - Direct tasks under a project: \`in:projectId depth:1 completed:false\`
+
+**Two ways to scope, and when to use which.** \`in:nestId\` scopes a workspace-wide
+\`nestr_search\`. \`nestr_get_nest_children\` takes a \`search\` that is already scoped to that
+nest, so the same question is shorter:
+
+\`\`\`
+nestr_search({ query: "in:circleId label:role depth:1" })
+nestr_get_nest_children({ nestId: circleId, search: "label:role" })
+  -> the same roles
+\`\`\`
+
+The children route applies \`depth:1\` when your query sets no depth, and says so in
+\`appliedDefaults\` on the response, which also names how to widen it. Reach for it when you
+already hold the nest id; reach for \`in:\` when you are composing one query across several
+scopes.
+
+Either way, ask for the subset you want rather than fetching a mixed set and sorting it
+out afterwards. "What type is this nest" is a question you can avoid asking.
 
 ### Filtering by Completion Status
 
@@ -1342,6 +1416,48 @@ When a user asks about trends or patterns (e.g., "Are we getting better at gover
 - **All plans**: Workspace-level insights (aggregated across the whole organization)
 - **Pro plan only**: Circle-level insights (\`nestId\` parameter) and user-level insights (\`userId\` parameter). If the workspace is not on a Pro plan, these filters will return a 402 error.
 - \`userId\` and \`nestId\` cannot be combined — user metrics are always workspace-level.`,
+
+  "api-surface": `## Checking whether the API has something
+
+There is a difference between "I did not find it" and "it is not there", and only the
+second is safe to act on. \`nestr_api_spec\` is how you get the second.
+
+It returns this deployment's own OpenAPI document, reduced to something readable:
+
+- **No arguments**: the operation index. Method, path, and a one-line summary for every
+  operation the deployment serves, plus \`totalOperations\`.
+- **\`search\`**: filter that index by keyword against path and summary. The counts are the
+  answer as much as the rows are. \`matchedOperations: 0\` out of \`totalOperations: 94\` for
+  "duration" means this API has nothing about duration, full stop.
+- **\`path\`**: the full schema for one operation, including every parameter it accepts and
+  what each does. Use this before assuming a parameter exists.
+
+### When to reach for it
+
+- A user asks whether Nestr can do X through the API and you are about to say "I do not
+  think so". Check first, then say it with certainty.
+- You are about to pass a parameter you have not seen documented. \`path\` tells you whether
+  it exists rather than having it silently ignored.
+- Something is missing and you need to say whether it is unsupported or merely not exposed
+  through a tool. Those are different answers with different next steps.
+
+### The neighbouring questions
+
+\`nestr_api_spec\` answers "does the HTTP surface have this". Two others answer nearby
+questions, and mixing them up wastes a call:
+
+- **Does my search filter apply?** \`strict: true\` on \`nestr_search\`. An unrecognised
+  operator or field is otherwise dropped silently and the search returns a broader result.
+  See \`nestr_help('search')\`.
+- **Does this label have this field?** \`nestr_get_label\` returns a label's fields with their
+  codes, types and options. That is the data model rather than the HTTP surface, so a field
+  can exist here and have no dedicated endpoint.
+
+### What it does not tell you
+
+The spec describes routes, not permissions. An operation being listed does not mean this
+caller may call it: read-only keys, key profiles and per-nest rights all still apply. For
+"why can I not do this", use \`nestr_explain_nest\`; for auth failures, \`nestr_diagnose\`.`,
 
   "mcp-apps": `## MCP Apps (Interactive UI)
 
