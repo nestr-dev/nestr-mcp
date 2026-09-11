@@ -16,9 +16,12 @@ const camel = (name: string) =>
 
 // Parameters deliberately absent from the advertised schema. Each needs a reason, so
 // adding one is a decision rather than a way to silence the sweep.
-const INTENTIONALLY_UNADVERTISED: Record<string, string> = {
-  "nestr_list_tensions.order": "Deprecated alias of sort, kept so old callers keep working but not offered to new ones. The handler routes it to sort because the API never read `order`.",
-};
+// Empty, and worth keeping that way. The one entry this started with —
+// nestr_list_tensions.order, a deprecated sort alias — was removed rather than excused
+// once the API side confirmed `order` had never been read on any route. An unreachable
+// parameter aliasing a name that never worked is not backward compatibility, it is two
+// dead things propping each other up.
+const INTENTIONALLY_UNADVERTISED: Record<string, string> = {};
 
 describe("every zod parameter is advertised", () => {
   const pairs = toolDefinitions

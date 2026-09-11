@@ -667,17 +667,21 @@ describe("extractSearchDirectives", () => {
   });
 });
 
-// ─── list_tensions legacy `order` alias ─────────────────────────────
-// `order` predates `sort` and was never honored by the API. It stays
-// parseable for existing callers but is no longer advertised to clients.
+// ─── list_tensions takes sort and nothing else ──────────────────────
+// `order` predates `sort` and was kept parseable as a back-compat alias while being
+// hidden from clients. It is gone now: it was unadvertised, so no client could send it,
+// and the API side has since confirmed `order` was declared on thirteen routes and read
+// by none of them. An unreachable alias for a name that never worked is not backward
+// compatibility.
 
-describe("nestr_list_tensions order alias", () => {
-  it("Zod still accepts the legacy order field", () => {
-    const parsed = schemas.listTensions.parse({ nestId: "n1", order: "-createdAt" });
-    expect(parsed.order).toBe("-createdAt");
+describe("nestr_list_tensions sorting", () => {
+  it("has no order field left to parse", () => {
+    const parsed = schemas.listTensions.parse({ nestId: "n1", sort: "-createdAt" });
+    expect(parsed.sort).toBe("-createdAt");
+    expect("order" in parsed).toBe(false);
   });
 
-  it("the advertised inputSchema exposes sort but not order", () => {
+  it("advertises sort and not order", () => {
     const tool = toolDefinitions.find((t) => t.name === "nestr_list_tensions")!;
     const properties = (tool.inputSchema as { properties: Record<string, unknown> }).properties;
     expect(properties.sort).toBeDefined();

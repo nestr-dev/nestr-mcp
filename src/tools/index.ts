@@ -1395,7 +1395,6 @@ export const schemas = {
     sort: z.string().optional().describe(SORT_DESCRIPTION),
     limit: z.number().optional().describe("Max results to return"),
     page: z.number().optional().describe("Page number for pagination"),
-    order: z.string().optional().describe("Deprecated alias of sort"),
   }),
 
   updateTension: z.object({
@@ -2759,9 +2758,6 @@ export const toolDefinitions = [
         sort: { type: "string", description: SORT_DESCRIPTION },
         limit: { type: "number", description: "Max results to return" },
         page: { type: "number", description: "Page number (1-indexed)" },
-        // The legacy `order` alias is deliberately not advertised — the Zod
-        // schema still accepts it so existing callers keep working, but new
-        // clients should only learn the canonical `sort` param.
       },
       required: ["nestId"],
     },
@@ -4466,9 +4462,7 @@ async function _handleToolCall(
           parsed.nestId,
           parsed.search,
           {
-            // `order` is the legacy name for this option — it was never honored
-            // by the API (which reads `sort`), so route both through sort.
-            sort: parsed.sort ?? parsed.order,
+            sort: parsed.sort,
             limit: parsed.limit,
             page: parsed.page,
             cleanText: true,
