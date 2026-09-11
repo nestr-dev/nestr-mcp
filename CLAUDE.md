@@ -318,6 +318,7 @@ The server exposes these tools to AI assistants:
 | `nestr_mark_notifications_read` | `POST /users/me/notifications/mark-all-read` (OAuth only) |
 | `nestr_reorder_nest` | `POST /nests/{id}/reorder/{position}/{relatedId}` |
 | `nestr_bulk_reorder` | `PATCH /workspaces/{id}/reorder` |
+| `nestr_set_recurrence` | `PATCH /nests/{id}/recurrence` |
 | `nestr_create_tension` | `POST /nests/{id}/tensions` |
 | `nestr_get_tension` | `GET /nests/{id}/tensions/{tid}` |
 | `nestr_list_tensions` | `GET /nests/{id}/tensions` |
