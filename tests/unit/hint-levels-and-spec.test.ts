@@ -163,3 +163,25 @@ describe("client read parameters", () => {
     expect(calledUrl()).toBe("https://api.test.io/api/openapi.json");
   });
 });
+
+describe("hints=false on a single read", () => {
+  let mockFetch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockFetch = vi.fn().mockResolvedValue({
+      ok: true, status: 200, json: async () => ({}), text: async () => "{}",
+    });
+    vi.stubGlobal("fetch", mockFetch);
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  // getNest and the shared list-param builder used to disagree about what `false` means on
+  // the wire: one omitted the parameter, the other sent hints=false. The API reads both as
+  // "no hints" today, so nothing was broken — but two paths sending different things for
+  // the same argument is a bug waiting for the server default to change.
+  it("sends hints=false explicitly, the same as every list route does", async () => {
+    const client = new NestrClient({ apiKey: "k", baseUrl: "https://api.test.io/api" });
+    await client.getNest("nest1", { hints: false });
+    expect(String(mockFetch.mock.calls[0][0])).toContain("hints=false");
+  });
+});

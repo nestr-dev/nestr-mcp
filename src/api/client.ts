@@ -834,7 +834,12 @@ export class NestrClient {
     const params = new URLSearchParams();
     if (options?.cleanText) params.set("cleanText", "true");
     if (options?.fieldsMetaData) params.set("fieldsMetaData", "true");
-    if (options?.hints) {
+    // Same condition as appendReadParams, deliberately. Today the API reads an absent
+    // `hints` and `hints=false` identically (parseHintLevel returns null for both), so a
+    // falsy guard here is not a live bug — but it made the two code paths send different
+    // things for the same argument, which is the kind of divergence that becomes a bug the
+    // day the server-side default changes.
+    if (options?.hints !== undefined && options.hints !== null) {
       params.set("hints", typeof options.hints === "boolean" ? String(options.hints) : options.hints);
     }
     if (options?.hintTypes?.length) params.set("hintTypes", options.hintTypes.join(","));

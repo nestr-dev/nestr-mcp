@@ -668,6 +668,10 @@ export function summariseApiSpec(spec: Record<string, unknown>, filter: ApiSpecF
         requested: filter.path,
         totalPaths: allPaths.length,
         note: "No such path in this deployment's spec. This is a definitive negative, not a failed lookup.",
+        // Intentionally broad rather than precise: the first path segment, so
+        // `/nests/{id}/nonsense` suggests everything under `/nests/`. A caller who got the
+        // path wrong usually has the resource right, and a wide list they can scan beats a
+        // narrow one that misses the route they meant. Capped so it stays readable.
         didYouMean: allPaths.filter((p) => { return p.includes(filter.path!.split("/")[1] || ""); }).slice(0, 10),
       };
     }
