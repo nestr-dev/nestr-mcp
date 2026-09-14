@@ -429,6 +429,9 @@ describe("occurrence writes: nestr_skip_occurrence, nestr_update_occurrence, nes
     expect(tool("nestr_update_occurrence").description).toMatch(/also changes occurrences not created yet/);
     expect(tool("nestr_update_occurrence").description).toMatch(/skipped occurrence is refused/);
     expect(tool("nestr_skip_occurrence").description).toMatch(/first occurrence is the series item itself/);
+    expect(tool("nestr_skip_occurrence").description).toMatch(/delete rights on the series item\./);
+    expect(tool("nestr_skip_occurrence").description).toMatch(/refused for workspaces and for governance items unless the caller is a governance admin/);
+    expect(tool("nestr_skip_occurrence").description).toMatch(/A skip needs update rights on the series, plus delete rights on the occurrence if it already exists as a nest\./);
     expect(tool("nestr_delete_series").description).toMatch(/rrule: null/);
     expect(tool("nestr_delete_series").description).toMatch(/restored separately/);
     expect(tool("nestr_delete_series").description).not.toMatch(/undoes/);
