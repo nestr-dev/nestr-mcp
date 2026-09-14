@@ -186,6 +186,48 @@ export interface Label {
   userId?: string;
 }
 
+/**
+ * One occurrence of a recurring series, materialized or not.
+ *
+ * Occurrences beyond the next are VIRTUAL: the rule produces the instant and no
+ * nest exists for it, so nothing finds them by search. `virtual` says which kind
+ * this is; a virtual occurrence has no `nestId` and cannot be fetched from the
+ * nest endpoints until something promotes it.
+ */
+export interface Occurrence {
+  /** Epoch milliseconds. The key this occurrence is addressed by. */
+  instant: number;
+  /** The same instant as an ISO-8601 date. */
+  occurrenceStart: string;
+  /** The date the occurrence prints, which differs when it has been moved off its rule instant. */
+  start: string;
+  allDay: boolean;
+  title: string;
+  completed: boolean;
+  virtual: boolean;
+  /** The real nest, when this occurrence has been materialized. */
+  nestId: string | null;
+  /** The id a virtual occurrence will take when it is promoted. Not a nest: nothing answers for it yet. */
+  virtualId: string | null;
+  /** An exdate covers this instant: the series skips it. */
+  excluded: boolean;
+  /** Materialized and since changed from what its series says. */
+  altered: boolean;
+}
+
+/** One cursor-paged page of a series' occurrences. */
+export interface OccurrencePage {
+  seriesId: string | null;
+  series: Record<string, unknown> | null;
+  allDay: boolean;
+  occurrences: Occurrence[];
+  hasMore: boolean;
+  /** ISO-8601. Feed back as `cursor` while `hasMore` is true. */
+  nextCursor: string | null;
+  /** The same cursor in epoch milliseconds. */
+  nextCursorMs: number | null;
+}
+
 /** Metadata for a nest's file attachment (no contents). */
 export interface NestFileMeta {
   id: string;
@@ -1743,6 +1785,58 @@ export class NestrClient {
       method: "PATCH",
       body: JSON.stringify({ rrule }),
     });
+    return response.data;
+  }
+
+  /**
+   * One page of a series' occurrences, wrapping `GET nests/:id/recurrence`.
+   *
+   * The list is a union of materialized occurrences and virtual ones. The virtual
+   * ones exist only as instants of the rule, so no search or children listing can
+   * find them; this is the only way to see them at all.
+   *
+   * Cursor-paged, not page-paged: a rule with no COUNT and no UNTIL produces
+   * occurrences forever, so there is no total and the route reports none. Feed
+   * `nextCursor` back as `cursor` while `hasMore` is true.
+   *
+   * `nestId` may be the series or any occurrence of it; both resolve to the same
+   * series.
+   */
+  async listOccurrences(
+    nestId: string,
+    options?: { direction?: "future" | "past"; cursor?: string | number; limit?: number }
+  ): Promise<OccurrencePage> {
+    const params = new URLSearchParams();
+    if (options?.direction !== undefined) params.set("direction", options.direction);
+    if (options?.cursor !== undefined) params.set("cursor", String(options.cursor));
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+
+    const query = params.toString();
+    const response = await this.fetch<{ status: string; data: OccurrencePage }>(
+      `/nests/${nestId}/recurrence${query ? `?${query}` : ""}`
+    );
+    return response.data;
+  }
+
+  /**
+   * Skip one occurrence of a series, wrapping `DELETE nests/:id/recurrence/:instant`.
+   *
+   * Excludes that one instant and soft-deletes the occurrence if it had already
+   * been materialized. The series itself is untouched: no other occurrence moves,
+   * the rule is unchanged, and the skipped instant stays listed, marked excluded.
+   *
+   * `instant` is epoch milliseconds and must be an instant the series actually has
+   * an occurrence at. One that is off by a second or by a timezone is refused
+   * rather than silently excluding nothing.
+   */
+  async skipOccurrence(
+    nestId: string,
+    instant: number
+  ): Promise<{ excluded: true; seriesId: string; instant: number }> {
+    const response = await this.fetch<{
+      status: string;
+      data: { excluded: true; seriesId: string; instant: number };
+    }>(`/nests/${nestId}/recurrence/${instant}`, { method: "DELETE" });
     return response.data;
   }
 

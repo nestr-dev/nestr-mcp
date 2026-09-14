@@ -912,6 +912,23 @@ const coerceFromJson = <T extends z.ZodTypeAny>(schema: T) =>
     return val;
   }, schema) as z.ZodEffects<T, z.output<T>, unknown>;
 
+// The instant an occurrence keys on, as epoch milliseconds. An ISO-8601 date is
+// accepted and converted, because a model asked to skip "the 3rd occurrence" will
+// reach for a date rather than a number — but it has to be the EXACT instant the
+// rule produces, and the server refuses one that is off by a second or by an
+// offset rather than excluding nothing. Copy `instant` from the listing.
+const occurrenceInstant = z.union([z.number(), z.string()]).transform((val, ctx) => {
+  const at = typeof val === "number" ? val : (/^-?\d+$/.test(val.trim()) ? Number(val) : Date.parse(val));
+  if (!Number.isFinite(at)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `not an instant: "${val}". Use the \`instant\` value from nestr_list_occurrences (epoch milliseconds), or an ISO-8601 date.`,
+    });
+    return z.NEVER;
+  }
+  return at;
+});
+
 // Coerce an integer-array param to number[] even when a client serialises it as
 // a string — e.g. a stale/cached tool schema that doesn't know the array type
 // sends "[4,5,6]", "4,5,6", or a bare 4. Non-numeric tokens are dropped and the
@@ -1339,6 +1356,18 @@ export const schemas = {
   setRecurrence: z.object({
     nestId: z.string().describe("Nest ID to set or remove recurrence on"),
     rrule: z.string().nullable().describe("RFC-5545 RRULE string (e.g. 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=10') to set recurrence, or null to remove it. Required — pass null explicitly to remove rather than omitting the field."),
+  }),
+
+  listOccurrences: z.object({
+    nestId: z.string().describe("The series, or any occurrence of it. Both resolve to the same series."),
+    direction: z.enum(["future", "past"]).optional().describe("'future' (default) lists upcoming occurrences, soonest first. 'past' lists history, most recent first."),
+    cursor: z.union([z.number(), z.string()]).optional().describe("Walk outward from this instant, exclusive. Pass back the nextCursor from the previous page. Defaults to now."),
+    limit: z.number().optional().describe("Occurrences per page. Default 10, capped at 50."),
+  }),
+
+  skipOccurrence: z.object({
+    nestId: z.string().describe("The series, or any occurrence of it."),
+    instant: occurrenceInstant.describe("Which occurrence to skip. Use the `instant` value from nestr_list_occurrences verbatim."),
   }),
 
   // Daily plan (requires OAuth token)
@@ -2579,6 +2608,44 @@ export const toolDefinitions = [
       required: ["nestId", "rrule"],
     },
     ...mutating,
+  },
+  {
+    name: "nestr_list_occurrences",
+    description: "List the occurrences of a recurring task, project or meeting, so you can name the one you want to act on. This is the ONLY way to see them: occurrences beyond the next one are virtual, meaning the rule produces the instant and no nest exists for it, so nestr_search and nestr_get_nest_children find nothing and asking them is not evidence the occurrences are missing. Returns one page mixing both kinds in date order, each entry carrying `instant` (epoch milliseconds, the key nestr_skip_occurrence takes), `virtual` (false means a real nest exists and `nestId` names it), `excluded` (this instant has already been skipped) and `completed`. Cursor-paged, not page-paged: a rule with no end produces occurrences forever, so there is no total. Pass `nextCursor` back as `cursor` while `hasMore` is true, and `direction: 'past'` to read history.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The series, or any occurrence of it. Both resolve to the same series." },
+        direction: {
+          type: "string",
+          enum: ["future", "past"],
+          description: "'future' (default) lists upcoming occurrences, soonest first. 'past' lists history, most recent first.",
+        },
+        cursor: {
+          type: ["number", "string"],
+          description: "Walk outward from this instant, exclusive. Pass back nextCursor from the previous page. Defaults to now.",
+        },
+        limit: { type: "number", description: "Occurrences per page. Default 10, capped at 50." },
+      },
+      required: ["nestId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_skip_occurrence",
+    description: "Skip ONE occurrence of a recurring series: the person is away that week, the meeting is cancelled once, the task does not apply this time. It excludes that single instant and nothing else. It does NOT end the series, does not change the rule, does not move any other occurrence, and does not destroy history: every past occurrence stays exactly as it was, and the skipped instant stays visible in nestr_list_occurrences marked `excluded`, so the skip is a visible decision rather than a silent gap. If the occurrence already exists as a real nest it is deleted along with the exclusion. This is NOT the same as splitting the series in two — bounding the rule with a COUNT and creating a second recurring nest after the gap leaves two nests with the same title, and a later edit to the pattern reaches only one of them. Use this instead. `instant` must be an occurrence the series actually has: read it from nestr_list_occurrences and pass it through unchanged. An instant off by a second or by a timezone is refused, not silently accepted.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The series, or any occurrence of it." },
+        instant: {
+          type: ["number", "string"],
+          description: "Which occurrence to skip: the `instant` value from nestr_list_occurrences, in epoch milliseconds. An ISO-8601 date is accepted but must be the exact instant the rule produces.",
+        },
+      },
+      required: ["nestId", "instant"],
+    },
+    ...destructive,
   },
   // Daily plan (requires OAuth token)
   {
@@ -4297,6 +4364,39 @@ async function _handleToolCall(
           ? "Recurrence removed. Future occurrences stop; anything already materialized is kept, detached from the series."
           : `Recurrence set to ${result.rrule}. Occurrences stay virtual until one is touched.`;
         return formatResult({ message, recurrence: result });
+      }
+
+      case "nestr_list_occurrences": {
+        const parsed = schemas.listOccurrences.parse(args);
+        const page = await client.listOccurrences(parsed.nestId, {
+          direction: parsed.direction,
+          cursor: parsed.cursor,
+          limit: parsed.limit,
+        });
+        if (!page.seriesId) {
+          return formatResult({
+            message: "This nest has no recurrence rule, so it has no occurrences. Set one with nestr_set_recurrence.",
+            ...page,
+          });
+        }
+        // Named, because the count an agent reports back is the count of rows it
+        // can see, not the size of the series: an open-ended rule has no end and
+        // the route returns no total.
+        const virtual = page.occurrences.filter((o) => o.virtual).length;
+        const message = `${page.occurrences.length} occurrence(s) on this page, ${virtual} of them virtual (no nest exists yet).`
+          + ` Skip one with nestr_skip_occurrence using its \`instant\`.`
+          + (page.hasMore ? " More beyond this page: pass nextCursor back as cursor." : "");
+        return formatResult({ message, ...page });
+      }
+
+      case "nestr_skip_occurrence": {
+        const parsed = schemas.skipOccurrence.parse(args);
+        const result = await client.skipOccurrence(parsed.nestId, parsed.instant);
+        const at = new Date(result.instant).toISOString();
+        return formatResult({
+          message: `Occurrence at ${at} skipped. The series continues: the rule is unchanged and every other occurrence, past and future, is untouched.`,
+          occurrence: result,
+        });
       }
 
       // Label management
