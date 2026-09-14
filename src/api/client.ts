@@ -243,7 +243,7 @@ export interface DeletedFollowingOccurrences {
   deleted: true;
   seriesId: string;
   instant: number;
-  /** The nest to restore to undo the cut. */
+  /** The nest to restore. Restores that nest only; occurrences deleted with it are restored separately. */
   restoreId: string;
 }
 
@@ -251,7 +251,7 @@ export interface DeletedFollowingOccurrences {
 export interface DeletedSeries {
   deleted: true;
   seriesId: string;
-  /** The series nest; restoring it undoes the delete. */
+  /** The series nest. Restores that nest only; occurrences deleted with it are restored separately. */
   restoreId: string;
 }
 
@@ -1865,7 +1865,7 @@ export class NestrClient {
    *
    * Scope `occurrence` (the default, sent as no query) excludes the instant and
    * never ends the series. Scope `following` deletes it and every later one and
-   * answers with the `restoreId` that undoes it.
+   * answers with a `restoreId`; restoring it brings back that nest only.
    *
    * `instant` is epoch milliseconds and must be one the series has; anything else
    * is refused with 422.

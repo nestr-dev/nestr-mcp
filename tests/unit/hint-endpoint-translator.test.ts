@@ -438,6 +438,6 @@ describe("translateEndpoint: recurrence routes", () => {
 
   it("does not map PATCH /nests/:id/recurrence onto the occurrence tool", () => {
     const call = translateEndpoint({ purpose: "p", method: "PATCH", path: "/nests/series-1/recurrence", body_example: { rrule: null } });
-    expect(call?.tool).not.toBe("nestr_update_occurrence");
+    expect(call).toBeNull();
   });
 });

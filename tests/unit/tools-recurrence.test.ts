@@ -392,6 +392,8 @@ describe("occurrence writes: nestr_skip_occurrence, nestr_update_occurrence, nes
     expect(description).toMatch(/COUNT/);
     expect(description).toMatch(/not the same/i);
     expect(description).toMatch(/restoreId/);
+    expect(description).toMatch(/that nest only/);
+    expect(description).not.toMatch(/undoes/);
   });
 
   it("points nestr_delete_nest at the recurrence tools and says it never ends a series", () => {
@@ -422,7 +424,10 @@ describe("occurrence writes: nestr_skip_occurrence, nestr_update_occurrence, nes
     expect(tool("nestr_update_occurrence").description).toMatch(/nestr_set_recurrence/);
     expect(tool("nestr_update_occurrence").description).toMatch(/_id/);
     expect(tool("nestr_update_occurrence").description).toMatch(/Not all-or-nothing/);
+    expect(tool("nestr_update_occurrence").description).toMatch(/not accountabilities, domains or workspaceId/);
     expect(tool("nestr_delete_series").description).toMatch(/rrule: null/);
+    expect(tool("nestr_delete_series").description).toMatch(/restored separately/);
+    expect(tool("nestr_delete_series").description).not.toMatch(/undoes/);
   });
 
   it("uses no em dashes in the descriptions this change wrote", () => {
@@ -485,9 +490,42 @@ describe("occurrence writes: nestr_skip_occurrence, nestr_update_occurrence, nes
 
     const parsed = parseResult(result.content[0].text);
     expect(parsed.message).toMatch(/every later one deleted/);
+    expect(parsed.message).toMatch(/history before it is kept/);
     expect(parsed.message).toMatch(/future-root/);
+    expect(parsed.message).toMatch(/that nest only/);
+    expect(parsed.message).toMatch(/restored separately/);
     expect(parsed.message).not.toMatch(/series continues/i);
+    expect(parsed.message).not.toMatch(/undo/i);
     expect(parsed.occurrence).toEqual({ deleted: true, seriesId: "series-1", instant: AT, restoreId: "future-root" });
+  });
+
+  // restoreId === seriesId means the cut was the first occurrence: no history is left.
+  it("says the whole series was deleted when a following cut was at the first occurrence", async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(200, {
+        status: "success",
+        data: { deleted: true, seriesId: "series-1", instant: AT, restoreId: "series-1" },
+      })
+    );
+    const result = await handleToolCall(client, "nestr_skip_occurrence", {
+      nestId: "series-1",
+      instant: AT,
+      scope: "following",
+    });
+    const parsed = parseResult(result.content[0].text);
+    expect(parsed.message).toMatch(/whole series was deleted/);
+    expect(parsed.message).not.toMatch(/history before it is kept/);
+    expect(parsed.message).toMatch(/restored separately/);
+  });
+
+  // The DELETE already happened, so a response without `instant` must not turn it into an error.
+  it("builds the success message from the requested instant, not the response", async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(200, { status: "success", data: { excluded: true, seriesId: "series-1" } })
+    );
+    const result = await handleToolCall(client, "nestr_skip_occurrence", { nestId: "series-1", instant: AT });
+    expect(result.isError).toBeFalsy();
+    expect(parseResult(result.content[0].text).message).toMatch(/2026-01-19T09:00:00.000Z/);
   });
 
   it("converts an ISO-8601 instant to the epoch milliseconds the route takes", async () => {
@@ -496,6 +534,35 @@ describe("occurrence writes: nestr_skip_occurrence, nestr_update_occurrence, nes
     );
     await handleToolCall(client, "nestr_skip_occurrence", { nestId: "series-1", instant: "2026-01-19T09:00:00.000Z" });
     expect(mockFetch.mock.calls[0][0]).toBe(`https://api.test.io/api/nests/series-1/recurrence/${AT}`);
+
+    await handleToolCall(client, "nestr_skip_occurrence", { nestId: "series-1", instant: "2026-01-19T10:00:00+01:00" });
+    expect(mockFetch.mock.calls[1][0]).toBe(`https://api.test.io/api/nests/series-1/recurrence/${AT}`);
+  });
+
+  it("refuses a non-integer numeric instant without calling the API", async () => {
+    for (const instant of [AT + 0.5, 1.5]) {
+      const result = await handleToolCall(client, "nestr_skip_occurrence", { nestId: "series-1", instant });
+      expect(result.isError).toBe(true);
+      const parsed = parseResult(result.content[0].text);
+      expect(parsed.code).toBe("VALIDATION");
+      expect(parsed.message).toMatch(/nestr_list_occurrences/);
+    }
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  // Without a Z or offset the MCP host's timezone would decide which instant is meant.
+  it("refuses an ISO date without a timezone, pointing at the listing's instant", async () => {
+    for (const instant of ["2026-01-19T09:00:00", "2026-01-19T09:00:00.000", "2026-01-19"]) {
+      for (const toolName of ["nestr_skip_occurrence", "nestr_update_occurrence"]) {
+        const result = await handleToolCall(client, toolName, { nestId: "series-1", instant });
+        expect(result.isError, `${toolName} ${instant}`).toBe(true);
+        const parsed = parseResult(result.content[0].text);
+        expect(parsed.code).toBe("VALIDATION");
+        expect(parsed.message).toMatch(/no timezone/);
+        expect(parsed.message).toMatch(/`instant` value from nestr_list_occurrences/);
+      }
+    }
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it("refuses a missing or unreadable instant, a missing nestId and an unknown scope, without calling the API", async () => {
@@ -643,6 +710,9 @@ describe("occurrence writes: nestr_skip_occurrence, nestr_update_occurrence, nes
     const parsed = parseResult(result.content[0].text);
     expect(parsed.message).toMatch(/past ones included/);
     expect(parsed.message).toMatch(/series-1/);
+    expect(parsed.message).toMatch(/that nest only/);
+    expect(parsed.message).toMatch(/restored separately/);
+    expect(parsed.message).not.toMatch(/undo/i);
     expect(parsed.series).toEqual({ deleted: true, seriesId: "series-1", restoreId: "series-1" });
   });
 

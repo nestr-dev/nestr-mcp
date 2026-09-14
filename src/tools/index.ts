@@ -957,18 +957,26 @@ const coerceFromJson = <T extends z.ZodTypeAny>(schema: T) =>
     return val;
   }, schema) as z.ZodEffects<T, z.output<T>, unknown>;
 
-// The instant an occurrence keys on, as epoch milliseconds. An ISO-8601 date is
-// accepted and converted, because a model asked about "the 3rd occurrence" will
-// reach for a date rather than a number. It still has to be the EXACT instant the
-// rule produces: the server refuses one off by a second or an offset.
+// The instant an occurrence keys on, as integer epoch milliseconds. An ISO-8601 date
+// is accepted only with an explicit Z or offset: without one this host's timezone
+// would silently decide the instant.
 const occurrenceInstant = z.union([z.number(), z.string()]).transform((val, ctx) => {
-  const at = typeof val === "number" ? val : (/^-?\d+$/.test(val.trim()) ? Number(val) : Date.parse(val));
-  if (!Number.isFinite(at)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `not an instant: "${val}". Use the \`instant\` value from nestr_list_occurrences (epoch milliseconds), or an ISO-8601 date.`,
-    });
+  const refuse = (message: string) => {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message });
     return z.NEVER;
+  };
+  const useListing = "Use the `instant` value from nestr_list_occurrences (integer epoch milliseconds)";
+  if (typeof val === "number") {
+    return Number.isInteger(val) ? val : refuse(`not an instant: ${val}. ${useListing}.`);
+  }
+  const text = val.trim();
+  if (/^-?\d+$/.test(text)) return Number(text);
+  const at = Date.parse(text);
+  if (!Number.isFinite(at)) {
+    return refuse(`not an instant: "${val}". ${useListing}, or an ISO-8601 date with a Z or an offset.`);
+  }
+  if (!/T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/i.test(text)) {
+    return refuse(`"${val}" has no timezone, so which instant it means depends on where this server runs. ${useListing}, or give the date with a Z or an offset.`);
   }
   return at;
 });
@@ -2698,14 +2706,14 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_skip_occurrence",
-    description: "Skip ONE occurrence of a recurring series, or with scope 'following' delete it and every later one. With scope 'occurrence' (the default) it is for the person away that week, the meeting cancelled once, the task that does not apply this time. It excludes that single instant and nothing else. It does NOT end the series, does not change the rule, does not move any other occurrence, and does not destroy history: every past occurrence stays exactly as it was, and the skipped instant stays visible in nestr_list_occurrences marked `excluded`, so the skip is a visible decision rather than a silent gap. If the occurrence already exists as a real nest it is deleted along with the exclusion. Skipping an instant that is already skipped succeeds and changes nothing. This is NOT the same as splitting the series in two: bounding the rule with a COUNT and creating a second recurring nest after the gap leaves two nests with the same title, and a later edit to the pattern reaches only one of them. Use this instead. With scope 'following' it deletes this occurrence and every later one: the series is split at the instant, the occurrences before it keep their history under a rule that now ends there, and cutting at the first occurrence ends the whole series. It answers with `restoreId`: restoring that nest in the Nestr app undoes the cut. `instant` must be an occurrence the series actually has: read it from nestr_list_occurrences and pass it through unchanged. An instant off by a second or by a timezone is refused, not silently accepted. Needs update rights on the series, plus delete rights on the occurrence nest when one exists; 'following' needs delete rights on the series and on every occurrence it removes, and a refusal writes nothing.",
+    description: "Skip ONE occurrence of a recurring series, or with scope 'following' delete it and every later one. With scope 'occurrence' (the default) it is for the person away that week, the meeting cancelled once, the task that does not apply this time. It excludes that single instant and nothing else. It does NOT end the series, does not change the rule, does not move any other occurrence, and does not destroy history: every past occurrence stays exactly as it was, and the skipped instant stays visible in nestr_list_occurrences marked `excluded`, so the skip is a visible decision rather than a silent gap. If the occurrence already exists as a real nest it is deleted along with the exclusion. Skipping an instant that is already skipped succeeds and changes nothing. This is NOT the same as splitting the series in two: bounding the rule with a COUNT and creating a second recurring nest after the gap leaves two nests with the same title, and a later edit to the pattern reaches only one of them. Use this instead. With scope 'following' it deletes this occurrence and every later one: the series is split at the instant, the occurrences before it keep their history under a rule that now ends there, and cutting at the first occurrence ends the whole series. It answers with `restoreId`, the nest to restore in the Nestr app: restoring it brings back that nest only, and the occurrences deleted with it are restored separately. `instant` must be an occurrence the series actually has: read it from nestr_list_occurrences and pass it through unchanged. An instant off by a second or by a timezone is refused, not silently accepted. Needs update rights on the series, plus delete rights on the occurrence nest when one exists; 'following' needs delete rights on the series and on every occurrence it removes, and a refusal writes nothing.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "The series, or any occurrence of it." },
         instant: {
           type: ["number", "string"],
-          description: "Which occurrence: the `instant` value from nestr_list_occurrences, in epoch milliseconds. An ISO-8601 date is accepted but must be the exact instant the rule produces.",
+          description: "Which occurrence: the `instant` value from nestr_list_occurrences, in epoch milliseconds. An ISO-8601 date is accepted only with a Z or an offset, and must be the exact instant the rule produces.",
         },
         scope: {
           type: "string",
@@ -2719,14 +2727,14 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_occurrence",
-    description: "Edit ONE occurrence of a recurring series: move this week's meeting, retitle one instance, assign one occurrence to someone else. Takes the same fields as nestr_update_nest. If the occurrence is still virtual it is materialized first, then the changes are applied to that occurrence only; the rule and every other occurrence are untouched. With no fields it only materializes the occurrence. Answers with the nest: use its `_id` with every other nest tool from then on. Not all-or-nothing: the occurrence is materialized before the changes are applied, so if the edit is refused the occurrence may already exist as a real nest, and nestr_list_occurrences shows its `nestId`. To change the pattern of the whole series, use nestr_set_recurrence instead. `instant` must be an occurrence the series actually has: read it from nestr_list_occurrences and pass it through unchanged.",
+    description: "Edit ONE occurrence of a recurring series: move this week's meeting, retitle one instance, assign one occurrence to someone else. Takes the same edit fields as nestr_update_nest, but not accountabilities, domains or workspaceId. If the occurrence is still virtual it is materialized first, then the changes are applied to that occurrence only; the rule and every other occurrence are untouched. With no fields it only materializes the occurrence. Answers with the nest: use its `_id` with every other nest tool from then on. Not all-or-nothing: the occurrence is materialized before the changes are applied, so if the edit is refused the occurrence may already exist as a real nest, and nestr_list_occurrences shows its `nestId`. To change the pattern of the whole series, use nestr_set_recurrence instead. `instant` must be an occurrence the series actually has: read it from nestr_list_occurrences and pass it through unchanged.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "The series, or any occurrence of it." },
         instant: {
           type: ["number", "string"],
-          description: "Which occurrence: the `instant` value from nestr_list_occurrences, in epoch milliseconds. An ISO-8601 date is accepted but must be the exact instant the rule produces.",
+          description: "Which occurrence: the `instant` value from nestr_list_occurrences, in epoch milliseconds. An ISO-8601 date is accepted only with a Z or an offset, and must be the exact instant the rule produces.",
         },
         ...NEST_UPDATE_FIELD_PROPERTIES,
       },
@@ -2736,7 +2744,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_delete_series",
-    description: "Delete a whole recurring series: the series nest and every occurrence, past ones included. Use only when the series and its history should go. To stop repeating but keep the nests, use nestr_set_recurrence with rrule: null. To skip one occurrence, or remove one and every later one while keeping history, use nestr_skip_occurrence. Answers with `restoreId`, the series nest: restoring it in the Nestr app undoes the delete. Needs delete rights on the series and on every occurrence it removes, and a refusal writes nothing. Refused when the nest has no recurrence.",
+    description: "Delete a whole recurring series: the series nest and every occurrence, past ones included. Use only when the series and its history should go. To stop repeating but keep the nests, use nestr_set_recurrence with rrule: null. To skip one occurrence, or remove one and every later one while keeping history, use nestr_skip_occurrence. Answers with `restoreId`, the series nest: restoring it in the Nestr app brings back that nest only, and the occurrences deleted with it are restored separately. Needs delete rights on the series and on every occurrence it removes, and a refusal writes nothing. Refused when the nest has no recurrence.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -4500,12 +4508,14 @@ async function _handleToolCall(
       case "nestr_skip_occurrence": {
         const parsed = schemas.skipOccurrence.parse(args);
         const result = await client.skipOccurrence(parsed.nestId, parsed.instant, parsed.scope);
-        const at = new Date(result.instant).toISOString();
-        if ("deleted" in result) {
-          return formatResult({
-            message: `Occurrence at ${at} and every later one deleted. The history before it is kept, under a rule that now ends there. To undo, restore nest ${result.restoreId} in the Nestr app.`,
-            occurrence: result,
-          });
+        const at = new Date(parsed.instant).toISOString();
+        if (result && "deleted" in result) {
+          const restore = `Restoring nest ${result.restoreId} in the Nestr app brings back that nest only; the occurrences deleted with it are restored separately.`;
+          // A cut at the first occurrence leaves no history, so the whole series is gone.
+          const message = result.restoreId === result.seriesId
+            ? `The cut at ${at} was the first occurrence, so the whole series was deleted. ${restore}`
+            : `Occurrence at ${at} and every later one deleted. The history before it is kept, under a rule that now ends there. ${restore}`;
+          return formatResult({ message, occurrence: result });
         }
         return formatResult({
           message: `Occurrence at ${at} skipped. The series continues: the rule is unchanged and every other occurrence, past and future, is untouched.`,
@@ -4540,7 +4550,7 @@ async function _handleToolCall(
         const parsed = schemas.deleteSeries.parse(args);
         const result = await client.deleteSeries(parsed.nestId);
         return formatResult({
-          message: `Series deleted: the series nest and every occurrence, past ones included. To undo, restore nest ${result.restoreId} in the Nestr app.`,
+          message: `Series deleted: the series nest and every occurrence, past ones included. Restoring nest ${result.restoreId} in the Nestr app brings back that nest only; the occurrences deleted with it are restored separately.`,
           series: result,
         });
       }
