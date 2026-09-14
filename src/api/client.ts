@@ -231,11 +231,18 @@ export interface OccurrencePage {
 /** Which occurrences a skip reaches: the one at the instant, or it and every later one. */
 export type OccurrenceScope = "occurrence" | "following";
 
-/** `DELETE nests/:id/recurrence/:instant` with scope `occurrence`. */
+/**
+ * `DELETE nests/:id/recurrence/:instant` with scope `occurrence`.
+ *
+ * Skipping the first occurrence deletes the series nest itself and hands the series
+ * on: then `restoreId` is the deleted nest, and `seriesId` is the new series nest,
+ * omitted when nothing carries on and the series has ended.
+ */
 export interface SkippedOccurrence {
   excluded: true;
-  seriesId: string;
+  seriesId?: string;
   instant: number;
+  restoreId?: string;
 }
 
 /** `DELETE nests/:id/recurrence/:instant` with scope `following`. */

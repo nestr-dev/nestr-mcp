@@ -2706,7 +2706,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_skip_occurrence",
-    description: "Skip ONE occurrence of a recurring series, or with scope 'following' delete it and every later one. With scope 'occurrence' (the default) it is for the person away that week, the meeting cancelled once, the task that does not apply this time. It excludes that single instant and nothing else. It does NOT end the series, does not change the rule, does not move any other occurrence, and does not destroy history: every past occurrence stays exactly as it was, and the skipped instant stays visible in nestr_list_occurrences marked `excluded`, so the skip is a visible decision rather than a silent gap. If the occurrence already exists as a real nest it is deleted along with the exclusion. Skipping an instant that is already skipped succeeds and changes nothing. This is NOT the same as splitting the series in two: bounding the rule with a COUNT and creating a second recurring nest after the gap leaves two nests with the same title, and a later edit to the pattern reaches only one of them. Use this instead. With scope 'following' it deletes this occurrence and every later one: the series is split at the instant, the occurrences before it keep their history under a rule that now ends there, and cutting at the first occurrence ends the whole series. It answers with `restoreId`, the nest to restore in the Nestr app: restoring it brings back that nest only, and the occurrences deleted with it are restored separately. `instant` must be an occurrence the series actually has: read it from nestr_list_occurrences and pass it through unchanged. An instant off by a second or by a timezone is refused, not silently accepted. Needs update rights on the series, plus delete rights on the occurrence nest when one exists; 'following' needs delete rights on the series and on every occurrence it removes, and a refusal writes nothing.",
+    description: "Skip ONE occurrence of a recurring series, or with scope 'following' delete it and every later one. With scope 'occurrence' (the default) it is for the person away that week, the meeting cancelled once, the task that does not apply this time. It excludes that single instant and nothing else. It does NOT end the series (unless the occurrence skipped is the first and nothing follows it, see below), does not change the rule, does not move any other occurrence, and does not destroy history: every past occurrence stays exactly as it was, and the skipped instant stays visible in nestr_list_occurrences marked `excluded`, so the skip is a visible decision rather than a silent gap. If the occurrence already exists as a real nest it is deleted along with the exclusion. The first occurrence is the series item itself: skipping it deletes that nest and hands the series to its next occurrence, which is the series nest from then on, and a series with nothing after it ends; the response then carries `restoreId`, and `seriesId` only when the series carries on. Skipping an instant that is already skipped succeeds and changes nothing. This is NOT the same as splitting the series in two: bounding the rule with a COUNT and creating a second recurring nest after the gap leaves two nests with the same title, and a later edit to the pattern reaches only one of them. Use this instead. With scope 'following' it deletes this occurrence and every later one: the series is split at the instant, the occurrences before it keep their history under a rule that now ends there, and cutting at the first occurrence ends the whole series. It answers with `restoreId`, the nest to restore in the Nestr app: restoring it brings back that nest only, and the occurrences deleted with it are restored separately. `instant` must be an occurrence the series actually has: read it from nestr_list_occurrences and pass it through unchanged. An instant off by a second or by a timezone is refused, not silently accepted. Needs update rights on the series, plus delete rights on the occurrence nest when one exists; 'following' needs delete rights on the series and on every occurrence it removes, and a refusal writes nothing.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2727,7 +2727,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_occurrence",
-    description: "Edit ONE occurrence of a recurring series: move this week's meeting, retitle one instance, assign one occurrence to someone else. Takes the same edit fields as nestr_update_nest, but not accountabilities, domains or workspaceId. If the occurrence is still virtual it is materialized first, then the changes are applied to that occurrence only; the rule and every other occurrence are untouched. With no fields it only materializes the occurrence. Answers with the nest: use its `_id` with every other nest tool from then on. Not all-or-nothing: the occurrence is materialized before the changes are applied, so if the edit is refused the occurrence may already exist as a real nest, and nestr_list_occurrences shows its `nestId`. To change the pattern of the whole series, use nestr_set_recurrence instead. `instant` must be an occurrence the series actually has: read it from nestr_list_occurrences and pass it through unchanged.",
+    description: "Edit ONE occurrence of a recurring series: move this week's meeting, retitle one instance, assign one occurrence to someone else. Takes the same edit fields as nestr_update_nest, but not accountabilities, domains or workspaceId. If the occurrence is still virtual it is materialized first, then the changes are applied to that occurrence only; the rule and every other occurrence are untouched. With no fields it only materializes the occurrence. Answers with the nest: use its `_id` with every other nest tool from then on. Not all-or-nothing: the occurrence is materialized before the changes are applied, so if the edit is refused the occurrence may already exist as a real nest, and nestr_list_occurrences shows its `nestId`. The first occurrence is the series item itself and is refused here: change it with nestr_update_nest on the series nest, which also changes occurrences not created yet. A skipped occurrence is refused too, since there is nothing to change. To change the pattern of the whole series, use nestr_set_recurrence instead. `instant` must be an occurrence the series actually has: read it from nestr_list_occurrences and pass it through unchanged.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -4517,6 +4517,16 @@ async function _handleToolCall(
             : `Occurrence at ${at} and every later one deleted. The history before it is kept, under a rule that now ends there. ${restore}`;
           return formatResult({ message, occurrence: result });
         }
+        if (result?.restoreId) {
+          const restore = `Restoring nest ${result.restoreId} in the Nestr app brings back that nest only; the occurrences deleted with it are restored separately.`;
+          const outcome = result.seriesId
+            ? `so it was deleted and the series continues from nest ${result.seriesId}.`
+            : "so it was deleted, and nothing followed it, so the series has ended.";
+          return formatResult({
+            message: `Occurrence at ${at} skipped. The first occurrence is the series item itself, ${outcome} ${restore}`,
+            occurrence: result,
+          });
+        }
         return formatResult({
           message: `Occurrence at ${at} skipped. The series continues: the rule is unchanged and every other occurrence, past and future, is untouched.`,
           occurrence: result,
@@ -4539,7 +4549,10 @@ async function _handleToolCall(
           return formatResult({ message, nest });
         } catch (err) {
           // The route materializes before it applies the body, so a refused edit is not a no-op.
-          if (err instanceof NestrApiError && err.status >= 400 && err.status < 500) {
+          // Except the two refusals that write nothing: the first occurrence and a skipped one.
+          const writesNothing = err instanceof NestrApiError
+            && /series item itself|has been skipped/i.test(err.message);
+          if (err instanceof NestrApiError && err.status >= 400 && err.status < 500 && !writesNothing) {
             err.hint = `${err.hint ? `${err.hint} ` : ""}The occurrence may already be materialized even though the edit was refused: nestr_list_occurrences shows its nestId.`;
           }
           throw err;

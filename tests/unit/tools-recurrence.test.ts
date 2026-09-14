@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, expectTypeOf, vi, beforeEach, afterEach } from "vitest";
 import { handleToolCall, toolDefinitions, schemas, READONLY_TOOL_NAMES } from "../../src/tools/index.js";
-import { NestrClient } from "../../src/api/client.js";
+import { NestrClient, type SkippedOccurrence } from "../../src/api/client.js";
 
 function mockResponse(status: number, body: unknown) {
   return {
@@ -425,6 +425,10 @@ describe("occurrence writes: nestr_skip_occurrence, nestr_update_occurrence, nes
     expect(tool("nestr_update_occurrence").description).toMatch(/_id/);
     expect(tool("nestr_update_occurrence").description).toMatch(/Not all-or-nothing/);
     expect(tool("nestr_update_occurrence").description).toMatch(/not accountabilities, domains or workspaceId/);
+    expect(tool("nestr_update_occurrence").description).toMatch(/first occurrence is the series item itself/);
+    expect(tool("nestr_update_occurrence").description).toMatch(/also changes occurrences not created yet/);
+    expect(tool("nestr_update_occurrence").description).toMatch(/skipped occurrence is refused/);
+    expect(tool("nestr_skip_occurrence").description).toMatch(/first occurrence is the series item itself/);
     expect(tool("nestr_delete_series").description).toMatch(/rrule: null/);
     expect(tool("nestr_delete_series").description).toMatch(/restored separately/);
     expect(tool("nestr_delete_series").description).not.toMatch(/undoes/);
@@ -459,6 +463,54 @@ describe("occurrence writes: nestr_skip_occurrence, nestr_update_occurrence, nes
     expect(parsed.message).toMatch(/2026-01-19T09:00:00.000Z/);
     expect(parsed.message).toMatch(/series continues/i);
     expect(parsed.occurrence).toEqual({ excluded: true, seriesId: "series-1", instant: AT });
+  });
+
+  // The first occurrence is the series nest itself: skipping it deletes that nest.
+  it("says a skip of the first occurrence deleted the series item and names the nest it continues from", async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(200, {
+        status: "success",
+        data: { excluded: true, seriesId: "next-root", instant: AT, restoreId: "series-1" },
+      })
+    );
+    const result = await handleToolCall(client, "nestr_skip_occurrence", { nestId: "series-1", instant: AT });
+    expect(result.isError).toBeFalsy();
+    expect(mockFetch.mock.calls[0][0]).toBe(`https://api.test.io/api/nests/series-1/recurrence/${AT}`);
+
+    const parsed = parseResult(result.content[0].text);
+    expect(parsed.message).toMatch(
+      /The first occurrence is the series item itself, so it was deleted and the series continues from nest next-root\./
+    );
+    expect(parsed.message).toMatch(/Restoring nest series-1 in the Nestr app brings back that nest only/);
+    expect(parsed.message).not.toMatch(/rule is unchanged/);
+    expect(parsed.occurrence).toEqual({ excluded: true, seriesId: "next-root", instant: AT, restoreId: "series-1" });
+  });
+
+  it("says the series has ended when a first-occurrence skip leaves nothing to carry on", async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(200, { status: "success", data: { excluded: true, instant: AT, restoreId: "series-1" } })
+    );
+    const result = await handleToolCall(client, "nestr_skip_occurrence", { nestId: "series-1", instant: AT });
+    expect(result.isError).toBeFalsy();
+
+    const parsed = parseResult(result.content[0].text);
+    expect(parsed.message).toMatch(
+      /The first occurrence is the series item itself, so it was deleted, and nothing followed it, so the series has ended\./
+    );
+    expect(parsed.message).toMatch(/restored separately/);
+    expect(parsed.message).not.toMatch(/continues/);
+    expect(parsed.message).not.toMatch(/undefined/);
+  });
+
+  it("types seriesId and restoreId as optional on a skipped occurrence", async () => {
+    expectTypeOf<SkippedOccurrence["seriesId"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<SkippedOccurrence["restoreId"]>().toEqualTypeOf<string | undefined>();
+    const ended: SkippedOccurrence = { excluded: true, instant: AT, restoreId: "series-1" };
+
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: ended }));
+    const result = await client.skipOccurrence("series-1", AT);
+    expect(result).toEqual(ended);
+    expect("seriesId" in result).toBe(false);
   });
 
   it("sends no scope query when scope is 'occurrence' either", async () => {
@@ -678,6 +730,23 @@ describe("occurrence writes: nestr_skip_occurrence, nestr_update_occurrence, nes
     expect(parsed.code).toBe("AUTH_SCOPE_INSUFFICIENT");
     expect(parsed.hint).toMatch(/may already be materialized/);
     expect("stack" in parsed).toBe(false);
+  });
+
+  it("surfaces the first-occurrence and skipped-instant PATCH refusals without the materialized note", async () => {
+    const refusals = [
+      "The first occurrence is the series item itself. Change it with PATCH nests/series-1, which also changes occurrences that are not created yet.",
+      "This occurrence has been skipped, so there is nothing to change.",
+    ];
+    for (const message of refusals) {
+      mockFetch.mockResolvedValueOnce(mockResponse(422, { status: "error", message }));
+      const result = await handleToolCall(client, "nestr_update_occurrence", { nestId: "series-1", instant: AT, title: "x" });
+      expect(result.isError).toBe(true);
+      const parsed = parseResult(result.content[0].text);
+      expect(parsed.code).toBe("VALIDATION");
+      expect(parsed.status).toBe(422);
+      expect(parsed.message).toBe(message);
+      expect(parsed.hint ?? "").not.toMatch(/may already be materialized/);
+    }
   });
 
   it("surfaces a 422 edit refusal as a validation error with the same note", async () => {
