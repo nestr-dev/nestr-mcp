@@ -153,7 +153,7 @@ describe("nestr_set_recurrence", () => {
   });
 });
 
-describe("nestr_list_occurrences / nestr_skip_occurrence", () => {
+describe("nestr_list_occurrences", () => {
   let mockFetch: ReturnType<typeof vi.fn>;
   let client: NestrClient;
 
@@ -216,25 +216,6 @@ describe("nestr_list_occurrences / nestr_skip_occurrence", () => {
     );
     expect(tool!.inputSchema.required).toEqual(["nestId"]);
     expect((tool as { annotations?: { readOnlyHint?: boolean } }).annotations?.readOnlyHint).toBe(true);
-  });
-
-  it("registers nestr_skip_occurrence as a destructive write taking nestId and instant", () => {
-    const tool = toolDefinitions.find((t) => t.name === "nestr_skip_occurrence");
-    expect(tool).toBeDefined();
-    expect(tool!.inputSchema.required).toEqual(["nestId", "instant"]);
-    const annotations = (tool as { annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } }).annotations;
-    expect(annotations?.readOnlyHint).toBe(false);
-    expect(annotations?.destructiveHint).toBe(true);
-  });
-
-  // The description is what an agent reads to decide, and the failure this tool
-  // exists for is an agent bounding the series with a COUNT and creating a second
-  // one after the gap. Saying so is load-bearing, not decoration.
-  it("tells an agent in the skip description that the series survives and that splitting is not the same thing", () => {
-    const tool = toolDefinitions.find((t) => t.name === "nestr_skip_occurrence");
-    expect(tool!.description).toMatch(/does NOT end the series/i);
-    expect(tool!.description).toMatch(/COUNT/);
-    expect(tool!.description).toMatch(/not the same/i);
   });
 
   it("tells an agent in the listing description that virtual occurrences are invisible to search", () => {
@@ -317,87 +298,6 @@ describe("nestr_list_occurrences / nestr_skip_occurrence", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  // ─── skipping ───────────────────────────────────────────────────
-
-  it("nestr_skip_occurrence DELETEs the instant and says the series survives", async () => {
-    mockFetch.mockResolvedValue(
-      mockResponse(200, {
-        status: "success",
-        data: { excluded: true, seriesId: "series-1", instant: AT_2 },
-      })
-    );
-
-    const result = await handleToolCall(client, "nestr_skip_occurrence", {
-      nestId: "series-1",
-      instant: AT_2,
-    });
-    expect(result.isError).toBeFalsy();
-
-    const [url, opts] = mockFetch.mock.calls[0];
-    expect(url).toBe(`https://api.test.io/api/nests/series-1/recurrence/${AT_2}`);
-    expect(opts.method).toBe("DELETE");
-
-    const parsed = parseResult(result.content[0].text);
-    expect(parsed.message).toMatch(/2026-01-19T09:00:00.000Z/);
-    expect(parsed.message).toMatch(/series continues/i);
-    expect(parsed.occurrence).toEqual({ excluded: true, seriesId: "series-1", instant: AT_2 });
-  });
-
-  it("nestr_skip_occurrence converts an ISO-8601 instant to the epoch milliseconds the route takes", async () => {
-    mockFetch.mockResolvedValue(
-      mockResponse(200, {
-        status: "success",
-        data: { excluded: true, seriesId: "series-1", instant: AT_2 },
-      })
-    );
-
-    await handleToolCall(client, "nestr_skip_occurrence", {
-      nestId: "series-1",
-      instant: "2026-01-19T09:00:00.000Z",
-    });
-
-    const [url] = mockFetch.mock.calls[0];
-    expect(url).toBe(`https://api.test.io/api/nests/series-1/recurrence/${AT_2}`);
-  });
-
-  it("nestr_skip_occurrence refuses an instant it cannot read, without calling the API", async () => {
-    for (const instant of [undefined, "next tuesday", ""]) {
-      const result = await handleToolCall(client, "nestr_skip_occurrence", {
-        nestId: "series-1",
-        ...(instant === undefined ? {} : { instant }),
-      });
-      expect(result.isError).toBe(true);
-      expect(parseResult(result.content[0].text).code).toBe("VALIDATION");
-    }
-    expect(mockFetch).not.toHaveBeenCalled();
-  });
-
-  // The hazard the route's guard exists for, seen from this side: an instant the
-  // rule does not produce is refused rather than silently excluding nothing, and
-  // the refusal has to reach the agent as a clean, actionable message.
-  it("nestr_skip_occurrence surfaces a refused instant as a clean validation error, no stack", async () => {
-    mockFetch.mockResolvedValue(
-      mockResponse(422, {
-        status: "error",
-        message: "This series has no occurrence at 2026-01-19T09:00:01.000Z (1768813201000)."
-          + " Read GET nests/:id/recurrence and use one of the instants it lists.",
-      })
-    );
-
-    const result = await handleToolCall(client, "nestr_skip_occurrence", {
-      nestId: "series-1",
-      instant: AT_2 + 1000,
-    });
-    expect(result.isError).toBe(true);
-
-    const parsed = parseResult(result.content[0].text);
-    expect(parsed.error).toBe(true);
-    expect(parsed.code).toBe("VALIDATION");
-    expect(parsed.message).toMatch(/no occurrence at/);
-    expect(parsed.status).toBe(422);
-    expect("stack" in parsed).toBe(false);
-  });
-
   it("nestr_list_occurrences surfaces a server error cleanly", async () => {
     mockFetch.mockResolvedValue(
       mockResponse(404, { status: "error", message: "Nest not found" })
@@ -414,15 +314,8 @@ describe("nestr_list_occurrences / nestr_skip_occurrence", () => {
 
   // ─── client methods ─────────────────────────────────────────────
 
-  it("client.listOccurrences and client.skipOccurrence unwrap { status, data }", async () => {
+  it("client.listOccurrences unwraps { status, data }", async () => {
     mockFetch.mockResolvedValueOnce(mockResponse(200, { status: "success", data: page }));
     expect(await client.listOccurrences("series-1")).toEqual(page);
-
-    mockFetch.mockResolvedValueOnce(
-      mockResponse(200, { status: "success", data: { excluded: true, seriesId: "series-1", instant: AT_2 } })
-    );
-    expect(await client.skipOccurrence("series-1", AT_2)).toEqual({
-      excluded: true, seriesId: "series-1", instant: AT_2,
-    });
   });
 });

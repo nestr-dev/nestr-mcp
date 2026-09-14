@@ -1818,28 +1818,6 @@ export class NestrClient {
     return response.data;
   }
 
-  /**
-   * Skip one occurrence of a series, wrapping `DELETE nests/:id/recurrence/:instant`.
-   *
-   * Excludes that one instant and soft-deletes the occurrence if it had already
-   * been materialized. The series itself is untouched: no other occurrence moves,
-   * the rule is unchanged, and the skipped instant stays listed, marked excluded.
-   *
-   * `instant` is epoch milliseconds and must be an instant the series actually has
-   * an occurrence at. One that is off by a second or by a timezone is refused
-   * rather than silently excluding nothing.
-   */
-  async skipOccurrence(
-    nestId: string,
-    instant: number
-  ): Promise<{ excluded: true; seriesId: string; instant: number }> {
-    const response = await this.fetch<{
-      status: string;
-      data: { excluded: true; seriesId: string; instant: number };
-    }>(`/nests/${nestId}/recurrence/${instant}`, { method: "DELETE" });
-    return response.data;
-  }
-
   // ============ TENSIONS ============
 
   async createTension(
