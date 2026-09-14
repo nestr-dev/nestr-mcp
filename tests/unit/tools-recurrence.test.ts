@@ -152,3 +152,170 @@ describe("nestr_set_recurrence", () => {
     expect(removeResult).toEqual({ removed: true });
   });
 });
+
+describe("nestr_list_occurrences", () => {
+  let mockFetch: ReturnType<typeof vi.fn>;
+  let client: NestrClient;
+
+  const AT_1 = Date.UTC(2026, 0, 12, 9, 0, 0);
+  const AT_2 = Date.UTC(2026, 0, 19, 9, 0, 0);
+
+  const page = {
+    seriesId: "series-1",
+    series: { _id: "series-1", title: "Weekly sync" },
+    allDay: false,
+    occurrences: [
+      {
+        instant: AT_1,
+        occurrenceStart: new Date(AT_1).toISOString(),
+        start: new Date(AT_1).toISOString(),
+        allDay: false,
+        title: "Weekly sync",
+        completed: false,
+        virtual: false,
+        nestId: "nest-1",
+        virtualId: null,
+        excluded: false,
+        altered: false,
+      },
+      {
+        instant: AT_2,
+        occurrenceStart: new Date(AT_2).toISOString(),
+        start: new Date(AT_2).toISOString(),
+        allDay: false,
+        title: "Weekly sync",
+        completed: false,
+        virtual: true,
+        nestId: null,
+        virtualId: "aBcDeFgHjKmNpQrSt",
+        excluded: false,
+        altered: false,
+      },
+    ],
+    hasMore: true,
+    nextCursor: new Date(AT_2).toISOString(),
+    nextCursorMs: AT_2,
+  };
+
+  beforeEach(() => {
+    mockFetch = vi.fn();
+    vi.stubGlobal("fetch", mockFetch);
+    client = new NestrClient({ apiKey: "test-token", baseUrl: "https://api.test.io/api" });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // ─── registration ───────────────────────────────────────────────
+
+  it("registers nestr_list_occurrences as a read, with only nestId required", () => {
+    const tool = toolDefinitions.find((t) => t.name === "nestr_list_occurrences");
+    expect(tool).toBeDefined();
+    expect(Object.keys(tool!.inputSchema.properties ?? {})).toEqual(
+      expect.arrayContaining(["nestId", "direction", "cursor", "limit"])
+    );
+    expect(tool!.inputSchema.required).toEqual(["nestId"]);
+    expect((tool as { annotations?: { readOnlyHint?: boolean } }).annotations?.readOnlyHint).toBe(true);
+  });
+
+  it("tells an agent in the listing description that virtual occurrences are invisible to search", () => {
+    const tool = toolDefinitions.find((t) => t.name === "nestr_list_occurrences");
+    expect(tool!.description).toMatch(/nestr_search/);
+    expect(tool!.description).toMatch(/virtual/i);
+  });
+
+  // ─── listing ────────────────────────────────────────────────────
+
+  it("nestr_list_occurrences GETs /nests/:id/recurrence and returns the union", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: page }));
+
+    const result = await handleToolCall(client, "nestr_list_occurrences", { nestId: "series-1" });
+    expect(result.isError).toBeFalsy();
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/series-1/recurrence");
+    expect(opts?.method ?? "GET").toBe("GET");
+
+    const parsed = parseResult(result.content[0].text);
+    const occurrences = parsed.occurrences as Array<Record<string, unknown>>;
+    expect(occurrences).toHaveLength(2);
+    expect(occurrences[0].nestId).toBe("nest-1");
+    expect(occurrences[0].virtual).toBe(false);
+    expect(occurrences[1].virtual).toBe(true);
+    expect(occurrences[1].instant).toBe(AT_2);
+    // An agent that reports a count must report the page's, not the series'.
+    expect(parsed.message).toMatch(/1 of them virtual/);
+    expect(parsed.hasMore).toBe(true);
+  });
+
+  it("nestr_list_occurrences forwards direction, cursor and limit as query parameters", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: page }));
+
+    await handleToolCall(client, "nestr_list_occurrences", {
+      nestId: "series-1",
+      direction: "past",
+      cursor: AT_2,
+      limit: 25,
+    });
+
+    const [url] = mockFetch.mock.calls[0];
+    expect(url).toBe(
+      `https://api.test.io/api/nests/series-1/recurrence?direction=past&cursor=${AT_2}&limit=25`
+    );
+  });
+
+  // The empty answer a nest with no rule gets. Reporting it as an empty list with
+  // no explanation reads as "the series has no occurrences", which is a different
+  // and wrong statement.
+  it("nestr_list_occurrences says the nest has no rule rather than returning a bare empty list", async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(200, {
+        status: "success",
+        data: {
+          seriesId: null, series: null, allDay: false, occurrences: [],
+          hasMore: false, nextCursor: null, nextCursorMs: null,
+        },
+      })
+    );
+
+    const result = await handleToolCall(client, "nestr_list_occurrences", { nestId: "plain-nest" });
+    const parsed = parseResult(result.content[0].text);
+    expect(parsed.message).toMatch(/no recurrence rule/i);
+    expect(parsed.occurrences).toEqual([]);
+  });
+
+  it("nestr_list_occurrences requires nestId and refuses an unknown direction", async () => {
+    const missing = await handleToolCall(client, "nestr_list_occurrences", {});
+    expect(missing.isError).toBe(true);
+    expect(parseResult(missing.content[0].text).code).toBe("VALIDATION");
+
+    const sideways = await handleToolCall(client, "nestr_list_occurrences", {
+      nestId: "series-1",
+      direction: "sideways",
+    });
+    expect(sideways.isError).toBe(true);
+    expect(parseResult(sideways.content[0].text).code).toBe("VALIDATION");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("nestr_list_occurrences surfaces a server error cleanly", async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(404, { status: "error", message: "Nest not found" })
+    );
+
+    const result = await handleToolCall(client, "nestr_list_occurrences", { nestId: "nope" });
+    expect(result.isError).toBe(true);
+
+    const parsed = parseResult(result.content[0].text);
+    expect(parsed.code).toBe("NOT_FOUND");
+    expect(parsed.message).toMatch(/not found/i);
+    expect("stack" in parsed).toBe(false);
+  });
+
+  // ─── client methods ─────────────────────────────────────────────
+
+  it("client.listOccurrences unwraps { status, data }", async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse(200, { status: "success", data: page }));
+    expect(await client.listOccurrences("series-1")).toEqual(page);
+  });
+});

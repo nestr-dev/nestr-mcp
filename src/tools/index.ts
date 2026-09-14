@@ -1341,6 +1341,13 @@ export const schemas = {
     rrule: z.string().nullable().describe("RFC-5545 RRULE string (e.g. 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=10') to set recurrence, or null to remove it. Required — pass null explicitly to remove rather than omitting the field."),
   }),
 
+  listOccurrences: z.object({
+    nestId: z.string().describe("The series, or any occurrence of it. Both resolve to the same series."),
+    direction: z.enum(["future", "past"]).optional().describe("'future' (default) lists upcoming occurrences, soonest first. 'past' lists history, most recent first."),
+    cursor: z.union([z.number(), z.string()]).optional().describe("Walk outward from this instant, exclusive. Pass back the nextCursor from the previous page. Defaults to now."),
+    limit: z.number().optional().describe("Occurrences per page. Default 10, capped at 50."),
+  }),
+
   // Daily plan (requires OAuth token)
   getDailyPlan: z.object({}),
 
@@ -2579,6 +2586,28 @@ export const toolDefinitions = [
       required: ["nestId", "rrule"],
     },
     ...mutating,
+  },
+  {
+    name: "nestr_list_occurrences",
+    description: "List the occurrences of a recurring task, project or meeting, so you can name the one you want to act on. This is the ONLY way to see them: occurrences beyond the next one are virtual, meaning the rule produces the instant and no nest exists for it, so nestr_search and nestr_get_nest_children find nothing and asking them is not evidence the occurrences are missing. Returns one page mixing both kinds in date order, each entry carrying `instant` (epoch milliseconds, the key that identifies one occurrence), `virtual` (false means a real nest exists and `nestId` names it), `excluded` (this instant is skipped by the series) and `completed`. Cursor-paged, not page-paged: a rule with no end produces occurrences forever, so there is no total. Pass `nextCursor` back as `cursor` while `hasMore` is true, and `direction: 'past'` to read history.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The series, or any occurrence of it. Both resolve to the same series." },
+        direction: {
+          type: "string",
+          enum: ["future", "past"],
+          description: "'future' (default) lists upcoming occurrences, soonest first. 'past' lists history, most recent first.",
+        },
+        cursor: {
+          type: ["number", "string"],
+          description: "Walk outward from this instant, exclusive. Pass back nextCursor from the previous page. Defaults to now.",
+        },
+        limit: { type: "number", description: "Occurrences per page. Default 10, capped at 50." },
+      },
+      required: ["nestId"],
+    },
+    ...readOnly,
   },
   // Daily plan (requires OAuth token)
   {
@@ -4297,6 +4326,28 @@ async function _handleToolCall(
           ? "Recurrence removed. Future occurrences stop; anything already materialized is kept, detached from the series."
           : `Recurrence set to ${result.rrule}. Occurrences stay virtual until one is touched.`;
         return formatResult({ message, recurrence: result });
+      }
+
+      case "nestr_list_occurrences": {
+        const parsed = schemas.listOccurrences.parse(args);
+        const page = await client.listOccurrences(parsed.nestId, {
+          direction: parsed.direction,
+          cursor: parsed.cursor,
+          limit: parsed.limit,
+        });
+        if (!page.seriesId) {
+          return formatResult({
+            message: "This nest has no recurrence rule, so it has no occurrences. Set one with nestr_set_recurrence.",
+            ...page,
+          });
+        }
+        // Named, because the count an agent reports back is the count of rows it
+        // can see, not the size of the series: an open-ended rule has no end and
+        // the route returns no total.
+        const virtual = page.occurrences.filter((o) => o.virtual).length;
+        const message = `${page.occurrences.length} occurrence(s) on this page, ${virtual} of them virtual (no nest exists yet).`
+          + (page.hasMore ? " More beyond this page: pass nextCursor back as cursor." : "");
+        return formatResult({ message, ...page });
       }
 
       // Label management
