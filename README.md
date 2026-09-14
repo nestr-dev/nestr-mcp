@@ -96,6 +96,16 @@ Ask your AI assistant things like:
 | `nestr_add_label` | Add a label to a nest |
 | `nestr_remove_label` | Remove a label from a nest |
 
+### Recurrence
+
+| Tool | Description |
+|------|-------------|
+| `nestr_set_recurrence` | Set or remove a task, project or meeting's recurrence rule |
+| `nestr_list_occurrences` | List a series' occurrences, virtual and materialized, each with the `instant` the tools below take |
+| `nestr_skip_occurrence` | Skip one occurrence without ending the series, or with `scope: "following"` delete it and every later one |
+| `nestr_update_occurrence` | Edit one occurrence, materializing it first if it is still virtual |
+| `nestr_delete_series` | Delete a whole series, past occurrences included |
+
 ### Comments & Discussion
 
 | Tool | Description |

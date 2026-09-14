@@ -912,6 +912,22 @@ const coerceFromJson = <T extends z.ZodTypeAny>(schema: T) =>
     return val;
   }, schema) as z.ZodEffects<T, z.output<T>, unknown>;
 
+// The instant an occurrence keys on, as epoch milliseconds. An ISO-8601 date is
+// accepted and converted, because a model asked about "the 3rd occurrence" will
+// reach for a date rather than a number. It still has to be the EXACT instant the
+// rule produces: the server refuses one off by a second or an offset.
+const occurrenceInstant = z.union([z.number(), z.string()]).transform((val, ctx) => {
+  const at = typeof val === "number" ? val : (/^-?\d+$/.test(val.trim()) ? Number(val) : Date.parse(val));
+  if (!Number.isFinite(at)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `not an instant: "${val}". Use the \`instant\` value from nestr_list_occurrences (epoch milliseconds), or an ISO-8601 date.`,
+    });
+    return z.NEVER;
+  }
+  return at;
+});
+
 // Coerce an integer-array param to number[] even when a client serialises it as
 // a string — e.g. a stale/cached tool schema that doesn't know the array type
 // sends "[4,5,6]", "4,5,6", or a bare 4. Non-numeric tokens are dropped and the
@@ -948,6 +964,54 @@ const PURPOSE_DESC =
 
 const CONTENT_DESC =
   "The primary content field: details, context, acceptance criteria. Structured data goes in fields, progress in comments. Supports Markdown and HTML.";
+
+// The editable fields of PATCH /nests/:id, shared by nestr_update_nest and
+// nestr_update_occurrence so the two cannot drift apart.
+const nestUpdateFieldSchemas = {
+  title: z.string().optional().describe("New title (plain text, HTML stripped)"),
+  description: z.string().optional().describe("The primary content field — use for project details, task context, acceptance criteria, and any detailed information. Supports Markdown and HTML."),
+  purpose: z.string().optional().describe(PURPOSE_DESC),
+  parentId: z.string().optional().describe("New parent ID (move nest to different location, e.g., move inbox item to a role or project)"),
+  labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to set (e.g., ['project'] to convert an item into a project)"),
+  fields: coerceFromJson(z.record(z.unknown())).optional().describe("Field updates (e.g., { 'project.status': 'Current' })"),
+  users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign"),
+  data: coerceFromJson(z.record(z.unknown())).optional().describe("Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead."),
+  due: z.string().optional().describe("Due date (ISO format). For projects/tasks: deadline. For roles: re-election date. For meetings: start time."),
+  completed: z.boolean().optional().describe("Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead."),
+};
+
+const NEST_UPDATE_FIELD_PROPERTIES = {
+  title: { type: "string", description: "New title (plain text, HTML tags stripped)" },
+  description: { type: "string", description: CONTENT_DESC },
+  purpose: { type: "string", description: PURPOSE_DESC },
+  parentId: { type: "string", description: "New parent ID (move nest to different location)" },
+  labels: {
+    type: "array",
+    items: { type: "string" },
+    description: "Label IDs to set (e.g., ['project'] to convert an item into a project)",
+  },
+  fields: {
+    type: "object",
+    description: "Field updates (e.g., { 'project.status': 'Current' })",
+  },
+  users: {
+    type: "array",
+    items: { type: "string" },
+    description: "User IDs to assign",
+  },
+  data: {
+    type: "object",
+    description: "Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead.",
+  },
+  due: {
+    type: "string",
+    description: "Due date (ISO format). For projects/tasks: deadline. For roles: re-election date. For meetings: start time.",
+  },
+  completed: {
+    type: "boolean",
+    description: "Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead.",
+  },
+};
 
 const HINTS_DESC =
   "Contextual hints. 'summary' keeps the per-nest signal (type, severity, count, url, and the "
@@ -1122,16 +1186,7 @@ export const schemas = {
 
   updateNest: z.object({
     nestId: z.string().describe("Nest ID to update"),
-    title: z.string().optional().describe("New title (plain text, HTML stripped)"),
-    description: z.string().optional().describe("The primary content field — use for project details, task context, acceptance criteria, and any detailed information. Supports Markdown and HTML."),
-    purpose: z.string().optional().describe(PURPOSE_DESC),
-    parentId: z.string().optional().describe("New parent ID (move nest to different location, e.g., move inbox item to a role or project)"),
-    labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to set (e.g., ['project'] to convert an item into a project)"),
-    fields: coerceFromJson(z.record(z.unknown())).optional().describe("Field updates (e.g., { 'project.status': 'Current' })"),
-    users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign"),
-    data: coerceFromJson(z.record(z.unknown())).optional().describe("Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead."),
-    due: z.string().optional().describe("Due date (ISO format). For projects/tasks: deadline. For roles: re-election date. For meetings: start time."),
-    completed: z.boolean().optional().describe("Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead."),
+    ...nestUpdateFieldSchemas,
     accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles for roles/circles (replaces existing). Only used when updating a role or circle. Requires workspaceId."),
     domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles for roles/circles (replaces existing). Only used when updating a role or circle. Requires workspaceId."),
     workspaceId: z.string().optional().describe("Workspace ID. Required when updating accountabilities or domains on roles/circles."),
@@ -1338,7 +1393,7 @@ export const schemas = {
   // Schedule / recurrence
   setRecurrence: z.object({
     nestId: z.string().describe("Nest ID to set or remove recurrence on"),
-    rrule: z.string().nullable().describe("RFC-5545 RRULE string (e.g. 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=10') to set recurrence, or null to remove it. Required — pass null explicitly to remove rather than omitting the field."),
+    rrule: z.string().nullable().describe("RFC-5545 RRULE string (e.g. 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=10') to set recurrence, or null to remove it. Required: pass null explicitly to remove rather than omitting the field."),
   }),
 
   listOccurrences: z.object({
@@ -1346,6 +1401,22 @@ export const schemas = {
     direction: z.enum(["future", "past"]).optional().describe("'future' (default) lists upcoming occurrences, soonest first. 'past' lists history, most recent first."),
     cursor: z.union([z.number(), z.string()]).optional().describe("Walk outward from this instant, exclusive. Pass back the nextCursor from the previous page. Defaults to now."),
     limit: z.number().optional().describe("Occurrences per page. Default 10, capped at 50."),
+  }),
+
+  skipOccurrence: z.object({
+    nestId: z.string().describe("The series, or any occurrence of it."),
+    instant: occurrenceInstant.describe("Which occurrence. Use the `instant` value from nestr_list_occurrences verbatim."),
+    scope: z.enum(["occurrence", "following"]).optional().describe("'occurrence' (default) skips this one and never ends the series. 'following' deletes this one and every later one."),
+  }),
+
+  updateOccurrence: z.object({
+    nestId: z.string().describe("The series, or any occurrence of it."),
+    instant: occurrenceInstant.describe("Which occurrence. Use the `instant` value from nestr_list_occurrences verbatim."),
+    ...nestUpdateFieldSchemas,
+  }),
+
+  deleteSeries: z.object({
+    nestId: z.string().describe("The series, or any occurrence of it."),
   }),
 
   // Daily plan (requires OAuth token)
@@ -1930,36 +2001,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID to update" },
-        title: { type: "string", description: "New title (plain text, HTML tags stripped)" },
-        description: { type: "string", description: CONTENT_DESC },
-        purpose: { type: "string", description: PURPOSE_DESC },
-        parentId: { type: "string", description: "New parent ID (move nest to different location)" },
-        labels: {
-          type: "array",
-          items: { type: "string" },
-          description: "Label IDs to set (e.g., ['project'] to convert an item into a project)",
-        },
-        fields: {
-          type: "object",
-          description: "Field updates (e.g., { 'project.status': 'Current' })",
-        },
-        users: {
-          type: "array",
-          items: { type: "string" },
-          description: "User IDs to assign",
-        },
-        data: {
-          type: "object",
-          description: "Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead.",
-        },
-        due: {
-          type: "string",
-          description: "Due date (ISO format). For projects/tasks: deadline. For roles: re-election date. For meetings: start time.",
-        },
-        completed: {
-          type: "boolean",
-          description: "Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead.",
-        },
+        ...NEST_UPDATE_FIELD_PROPERTIES,
         accountabilities: {
           type: "array",
           items: { type: "string" },
@@ -1981,7 +2023,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_delete_nest",
-    description: "Delete a nest. For governance items in established workspaces, use tensions instead.",
+    description: "Delete a nest. For governance items in established workspaces, use tensions instead. On a recurring item this deletes only that one nest and never ends the series: deleting an occurrence skips it, and deleting the series nest hands the series to its next occurrence, which carries on as the series. To skip an occurrence use nestr_skip_occurrence, to delete it and every later one use nestr_skip_occurrence with scope 'following', and to delete the whole series use nestr_delete_series. The delete is checked against the rights of the person behind the token, including a workspace-bound OAuth or agent token, so a caller who could not delete the nest themselves is refused with 403.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2573,14 +2615,14 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_set_recurrence",
-    description: "Set or remove a task/project/meeting's recurrence rule. Pass an RFC-5545 RRULE string (e.g. 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=10') to set it, or rrule: null to remove it. Setting a rule creates NO nests: occurrences are computed from the rule and stay virtual until something touches one (completing it, moving its dates, opening it), at which point that occurrence alone becomes a real nest. Do not tell the user their occurrences have been created. The rule expands from the nest's start, or its due when it has no start, and is refused when it has neither, so set a date first. An invalid RRULE is rejected before anything is written. Removing the rule stops future occurrences and keeps anything already materialized, detached from the series.",
+    description: "Set or remove a task/project/meeting's recurrence rule. Pass an RFC-5545 RRULE string (e.g. 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=10') to set it, or rrule: null to remove it. Setting a rule creates NO nests: occurrences are computed from the rule and stay virtual until something touches one (completing it, moving its dates, opening it), at which point that occurrence alone becomes a real nest. Do not tell the user their occurrences have been created. The rule expands from the nest's start, or its due when it has no start, and is refused when it has neither, so set a date first. An invalid RRULE is rejected before anything is written. Removing the rule stops future occurrences and keeps anything already materialized, detached from the series. Do not use this to leave out dates: bounding the series with a COUNT or UNTIL and creating a second recurring nest after the gap leaves two nests with the same title, and a later change to the pattern reaches only one of them. To skip an occurrence, use nestr_skip_occurrence; to edit one occurrence, nestr_update_occurrence.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID to set or remove recurrence on" },
         rrule: {
           type: ["string", "null"],
-          description: "RFC-5545 RRULE string to set recurrence, or null to remove it. Required — pass null explicitly rather than omitting the field.",
+          description: "RFC-5545 RRULE string to set recurrence, or null to remove it. Required: pass null explicitly rather than omitting the field.",
         },
       },
       required: ["nestId", "rrule"],
@@ -2589,7 +2631,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_occurrences",
-    description: "List the occurrences of a recurring task, project or meeting, so you can name the one you want to act on. This is the ONLY way to see them: occurrences beyond the next one are virtual, meaning the rule produces the instant and no nest exists for it, so nestr_search and nestr_get_nest_children find nothing and asking them is not evidence the occurrences are missing. Returns one page mixing both kinds in date order, each entry carrying `instant` (epoch milliseconds, the key that identifies one occurrence), `virtual` (false means a real nest exists and `nestId` names it), `excluded` (this instant is skipped by the series) and `completed`. Cursor-paged, not page-paged: a rule with no end produces occurrences forever, so there is no total. Pass `nextCursor` back as `cursor` while `hasMore` is true, and `direction: 'past'` to read history.",
+    description: "List the occurrences of a recurring task, project or meeting, so you can name the one you want to act on. This is the ONLY way to see them: occurrences beyond the next one are virtual, meaning the rule produces the instant and no nest exists for it, so nestr_search and nestr_get_nest_children find nothing and asking them is not evidence the occurrences are missing. Returns one page mixing both kinds in date order, each entry carrying `instant` (epoch milliseconds, the key that identifies one occurrence), `virtual` (false means a real nest exists and `nestId` names it), `excluded` (this instant is skipped by the series) and `completed`. Cursor-paged, not page-paged: a rule with no end produces occurrences forever, so there is no total. Pass `nextCursor` back as `cursor` while `hasMore` is true, and `direction: 'past'` to read history. What to do with an `instant`: skip that occurrence with nestr_skip_occurrence (scope 'following' deletes it and every later one), edit that one occurrence with nestr_update_occurrence, or delete the whole series with nestr_delete_series.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2608,6 +2650,56 @@ export const toolDefinitions = [
       required: ["nestId"],
     },
     ...readOnly,
+  },
+  {
+    name: "nestr_skip_occurrence",
+    description: "Skip ONE occurrence of a recurring series, or with scope 'following' delete it and every later one. With scope 'occurrence' (the default) it is for the person away that week, the meeting cancelled once, the task that does not apply this time. It excludes that single instant and nothing else. It does NOT end the series, does not change the rule, does not move any other occurrence, and does not destroy history: every past occurrence stays exactly as it was, and the skipped instant stays visible in nestr_list_occurrences marked `excluded`, so the skip is a visible decision rather than a silent gap. If the occurrence already exists as a real nest it is deleted along with the exclusion. Skipping an instant that is already skipped succeeds and changes nothing. This is NOT the same as splitting the series in two: bounding the rule with a COUNT and creating a second recurring nest after the gap leaves two nests with the same title, and a later edit to the pattern reaches only one of them. Use this instead. With scope 'following' it deletes this occurrence and every later one: the series is split at the instant, the occurrences before it keep their history under a rule that now ends there, and cutting at the first occurrence ends the whole series. It answers with `restoreId`: restoring that nest in the Nestr app undoes the cut. `instant` must be an occurrence the series actually has: read it from nestr_list_occurrences and pass it through unchanged. An instant off by a second or by a timezone is refused, not silently accepted. Needs update rights on the series, plus delete rights on the occurrence nest when one exists; 'following' needs delete rights on the series and on every occurrence it removes, and a refusal writes nothing.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The series, or any occurrence of it." },
+        instant: {
+          type: ["number", "string"],
+          description: "Which occurrence: the `instant` value from nestr_list_occurrences, in epoch milliseconds. An ISO-8601 date is accepted but must be the exact instant the rule produces.",
+        },
+        scope: {
+          type: "string",
+          enum: ["occurrence", "following"],
+          description: "'occurrence' (default) skips this one occurrence and never ends the series. 'following' deletes this occurrence and every later one, keeping the history before it.",
+        },
+      },
+      required: ["nestId", "instant"],
+    },
+    ...destructive,
+  },
+  {
+    name: "nestr_update_occurrence",
+    description: "Edit ONE occurrence of a recurring series: move this week's meeting, retitle one instance, assign one occurrence to someone else. Takes the same fields as nestr_update_nest. If the occurrence is still virtual it is materialized first, then the changes are applied to that occurrence only; the rule and every other occurrence are untouched. With no fields it only materializes the occurrence. Answers with the nest: use its `_id` with every other nest tool from then on. Not all-or-nothing: the occurrence is materialized before the changes are applied, so if the edit is refused the occurrence may already exist as a real nest, and nestr_list_occurrences shows its `nestId`. To change the pattern of the whole series, use nestr_set_recurrence instead. `instant` must be an occurrence the series actually has: read it from nestr_list_occurrences and pass it through unchanged.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The series, or any occurrence of it." },
+        instant: {
+          type: ["number", "string"],
+          description: "Which occurrence: the `instant` value from nestr_list_occurrences, in epoch milliseconds. An ISO-8601 date is accepted but must be the exact instant the rule produces.",
+        },
+        ...NEST_UPDATE_FIELD_PROPERTIES,
+      },
+      required: ["nestId", "instant"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_delete_series",
+    description: "Delete a whole recurring series: the series nest and every occurrence, past ones included. Use only when the series and its history should go. To stop repeating but keep the nests, use nestr_set_recurrence with rrule: null. To skip one occurrence, or remove one and every later one while keeping history, use nestr_skip_occurrence. Answers with `restoreId`, the series nest: restoring it in the Nestr app undoes the delete. Needs delete rights on the series and on every occurrence it removes, and a refusal writes nothing. Refused when the nest has no recurrence.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The series, or any occurrence of it." },
+      },
+      required: ["nestId"],
+    },
+    ...destructive,
   },
   // Daily plan (requires OAuth token)
   {
@@ -4346,8 +4438,57 @@ async function _handleToolCall(
         // the route returns no total.
         const virtual = page.occurrences.filter((o) => o.virtual).length;
         const message = `${page.occurrences.length} occurrence(s) on this page, ${virtual} of them virtual (no nest exists yet).`
+          + " Act on one by its `instant`: nestr_skip_occurrence to skip it, nestr_update_occurrence to edit it."
           + (page.hasMore ? " More beyond this page: pass nextCursor back as cursor." : "");
         return formatResult({ message, ...page });
+      }
+
+      case "nestr_skip_occurrence": {
+        const parsed = schemas.skipOccurrence.parse(args);
+        const result = await client.skipOccurrence(parsed.nestId, parsed.instant, parsed.scope);
+        const at = new Date(result.instant).toISOString();
+        if ("deleted" in result) {
+          return formatResult({
+            message: `Occurrence at ${at} and every later one deleted. The history before it is kept, under a rule that now ends there. To undo, restore nest ${result.restoreId} in the Nestr app.`,
+            occurrence: result,
+          });
+        }
+        return formatResult({
+          message: `Occurrence at ${at} skipped. The series continues: the rule is unchanged and every other occurrence, past and future, is untouched.`,
+          occurrence: result,
+        });
+      }
+
+      case "nestr_update_occurrence": {
+        const { nestId, instant, ...updates } = schemas.updateOccurrence.parse(args);
+        validatePrimeLabels(updates.labels);
+        updates.labels = ensureMeetingModifier(updates.labels);
+        const edited = Object.values(updates).some((value) => value !== undefined);
+        try {
+          const nest = await client.updateOccurrence(nestId, instant, {
+            ...updates,
+            data: updates.data as Record<string, unknown> | undefined,
+          });
+          const at = new Date(instant).toISOString();
+          const message = `${edited ? "Occurrence updated" : "Occurrence materialized"} at ${at}. Only this occurrence changed.`
+            + (nest?._id ? ` It is nest ${nest._id} now: use that id with every other nest tool.` : "");
+          return formatResult({ message, nest });
+        } catch (err) {
+          // The route materializes before it applies the body, so a refused edit is not a no-op.
+          if (err instanceof NestrApiError && err.status >= 400 && err.status < 500) {
+            err.hint = `${err.hint ? `${err.hint} ` : ""}The occurrence may already be materialized even though the edit was refused: nestr_list_occurrences shows its nestId.`;
+          }
+          throw err;
+        }
+      }
+
+      case "nestr_delete_series": {
+        const parsed = schemas.deleteSeries.parse(args);
+        const result = await client.deleteSeries(parsed.nestId);
+        return formatResult({
+          message: `Series deleted: the series nest and every occurrence, past ones included. To undo, restore nest ${result.restoreId} in the Nestr app.`,
+          series: result,
+        });
       }
 
       // Label management

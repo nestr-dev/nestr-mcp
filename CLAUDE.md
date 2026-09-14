@@ -320,6 +320,9 @@ The server exposes these tools to AI assistants:
 | `nestr_bulk_reorder` | `PATCH /workspaces/{id}/reorder` |
 | `nestr_set_recurrence` | `PATCH /nests/{id}/recurrence` |
 | `nestr_list_occurrences` | `GET /nests/{id}/recurrence` |
+| `nestr_skip_occurrence` | `DELETE /nests/{id}/recurrence/{instant}` (`?scope=following` deletes it and every later one) |
+| `nestr_update_occurrence` | `PATCH /nests/{id}/recurrence/{instant}` (materializes, then edits that one occurrence) |
+| `nestr_delete_series` | `DELETE /nests/{id}/recurrence` |
 | `nestr_create_tension` | `POST /nests/{id}/tensions` |
 | `nestr_get_tension` | `GET /nests/{id}/tensions/{tid}` |
 | `nestr_list_tensions` | `GET /nests/{id}/tensions` |

@@ -228,6 +228,47 @@ export interface OccurrencePage {
   nextCursorMs: number | null;
 }
 
+/** Which occurrences a skip reaches: the one at the instant, or it and every later one. */
+export type OccurrenceScope = "occurrence" | "following";
+
+/** `DELETE nests/:id/recurrence/:instant` with scope `occurrence`. */
+export interface SkippedOccurrence {
+  excluded: true;
+  seriesId: string;
+  instant: number;
+}
+
+/** `DELETE nests/:id/recurrence/:instant` with scope `following`. */
+export interface DeletedFollowingOccurrences {
+  deleted: true;
+  seriesId: string;
+  instant: number;
+  /** The nest to restore to undo the cut. */
+  restoreId: string;
+}
+
+/** `DELETE nests/:id/recurrence`. */
+export interface DeletedSeries {
+  deleted: true;
+  seriesId: string;
+  /** The series nest; restoring it undoes the delete. */
+  restoreId: string;
+}
+
+/** The editable fields `PATCH nests/:id` takes. */
+export type NestUpdates = Partial<{
+  title: string;
+  purpose: string;
+  description: string;
+  parentId: string;
+  labels: string[];
+  fields: Record<string, unknown>;
+  users: string[];
+  data: Record<string, unknown>;
+  due: string;
+  completed: boolean;
+}>;
+
 /** Metadata for a nest's file attachment (no contents). */
 export interface NestFileMeta {
   id: string;
@@ -1051,18 +1092,7 @@ export class NestrClient {
 
   async updateNest(
     nestId: string,
-    updates: Partial<{
-      title: string;
-      purpose: string;
-      description: string;
-      parentId: string;
-      labels: string[];
-      fields: Record<string, unknown>;
-      users: string[];
-      data: Record<string, unknown>;
-      due: string;
-      completed: boolean;
-    }>
+    updates: NestUpdates
   ): Promise<Nest> {
     return this.fetch<Nest>(`/nests/${nestId}`, {
       method: "PATCH",
@@ -1814,6 +1844,65 @@ export class NestrClient {
     const query = params.toString();
     const response = await this.fetch<{ status: string; data: OccurrencePage }>(
       `/nests/${nestId}/recurrence${query ? `?${query}` : ""}`
+    );
+    return response.data;
+  }
+
+  /**
+   * Skip one occurrence, or cut the series there, wrapping
+   * `DELETE nests/:id/recurrence/:instant`.
+   *
+   * Scope `occurrence` (the default, sent as no query) excludes the instant and
+   * never ends the series. Scope `following` deletes it and every later one and
+   * answers with the `restoreId` that undoes it.
+   *
+   * `instant` is epoch milliseconds and must be one the series has; anything else
+   * is refused with 422.
+   */
+  async skipOccurrence(
+    nestId: string,
+    instant: number,
+    scope?: OccurrenceScope
+  ): Promise<SkippedOccurrence | DeletedFollowingOccurrences> {
+    const query = scope === "following" ? "?scope=following" : "";
+    const response = await this.fetch<{
+      status: string;
+      data: SkippedOccurrence | DeletedFollowingOccurrences;
+    }>(`/nests/${nestId}/recurrence/${instant}${query}`, { method: "DELETE" });
+    return response.data;
+  }
+
+  /**
+   * Edit one occurrence, wrapping `PATCH nests/:id/recurrence/:instant`.
+   *
+   * Materializes the occurrence if it is still virtual, then applies `updates` to
+   * it; an empty body only materializes. Not all-or-nothing: a refused edit leaves
+   * the occurrence materialized. Answers with the nest, whose `_id` every other
+   * nest route takes from then on.
+   */
+  async updateOccurrence(
+    nestId: string,
+    instant: number,
+    updates: NestUpdates
+  ): Promise<Nest> {
+    const body = await this.fetch<Nest | { status: string; data: Nest }>(
+      `/nests/${nestId}/recurrence/${instant}`,
+      { method: "PATCH", body: JSON.stringify(updates) }
+    );
+    // A nest carries its own `data` store, so tell the envelope apart by `_id`.
+    const isEnvelope = body && typeof body === "object" && !("_id" in body) && "data" in body;
+    return (isEnvelope ? (body as { data: Nest }).data : body) as Nest;
+  }
+
+  /**
+   * Delete a whole series, wrapping `DELETE nests/:id/recurrence`: the series nest
+   * and every live occurrence, past ones included. To stop repeating and keep the
+   * nests, use `setRecurrence(nestId, null)` instead.
+   */
+  async deleteSeries(nestId: string): Promise<DeletedSeries> {
+    const response = await this.fetch<{ status: string; data: DeletedSeries }>(
+      `/nests/${nestId}/recurrence`,
+      { method: "DELETE" }
     );
     return response.data;
   }
