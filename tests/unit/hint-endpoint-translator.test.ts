@@ -347,3 +347,97 @@ describe("enrichHints with endpoints", () => {
     expect(result.hints[0]).not.toHaveProperty("toolCalls");
   });
 });
+
+// ─── recurrence routes ──────────────────────────────────────────────
+
+describe("translateEndpoint: recurrence routes", () => {
+  const AT = 1768813200000;
+
+  it("GET /nests/:id/recurrence → nestr_list_occurrences, keeping direction, cursor and limit", () => {
+    const call = translateEndpoint({
+      purpose: "See the rest of the series",
+      method: "GET",
+      path: "https://app.nestr.io/api/nests/series-1/recurrence",
+    });
+    expect(call).toEqual({
+      tool: "nestr_list_occurrences",
+      purpose: "See the rest of the series",
+      parametersExample: { nestId: "series-1" },
+    });
+
+    const paged = translateEndpoint({
+      purpose: "Older ones",
+      method: "GET",
+      path: `/api/nests/series-1/recurrence?direction=past&cursor=${AT}&limit=25`,
+    });
+    expect(paged?.parametersExample).toEqual({ nestId: "series-1", direction: "past", cursor: AT, limit: 25 });
+
+    // A cursor may be an ISO date, which is not a number and must stay a string.
+    const iso = translateEndpoint({
+      purpose: "p",
+      method: "GET",
+      path: "/nests/series-1/recurrence?cursor=2026-01-19T09:00:00.000Z",
+    });
+    expect(iso?.parametersExample).toEqual({ nestId: "series-1", cursor: "2026-01-19T09:00:00.000Z" });
+  });
+
+  it("DELETE /nests/:id/recurrence → nestr_delete_series", () => {
+    const call = translateEndpoint({
+      purpose: "Delete the whole series, past occurrences included",
+      method: "DELETE",
+      path: "https://app.nestr.io/api/nests/series-1/recurrence",
+    });
+    expect(call).toEqual({
+      tool: "nestr_delete_series",
+      purpose: "Delete the whole series, past occurrences included",
+      parametersExample: { nestId: "series-1" },
+    });
+  });
+
+  it("DELETE /nests/:id/recurrence/:instant → nestr_skip_occurrence with a numeric instant", () => {
+    const call = translateEndpoint({ purpose: "Skip it", method: "DELETE", path: `/api/nests/series-1/recurrence/${AT}` });
+    expect(call?.tool).toBe("nestr_skip_occurrence");
+    expect(call?.parametersExample).toEqual({ nestId: "series-1", instant: AT });
+    expect(typeof call?.parametersExample.instant).toBe("number");
+  });
+
+  it("keeps the scope query on a skip, so a following cut is not suggested as a single skip", () => {
+    const call = translateEndpoint({
+      purpose: "Delete this and every later one",
+      method: "DELETE",
+      path: `/api/nests/series-1/recurrence/${AT}?scope=following`,
+    });
+    expect(call?.tool).toBe("nestr_skip_occurrence");
+    expect(call?.parametersExample).toEqual({ nestId: "series-1", instant: AT, scope: "following" });
+  });
+
+  it("PATCH /nests/:id/recurrence/:instant → nestr_update_occurrence with the nest fields it accepts", () => {
+    const call = translateEndpoint({
+      purpose: "Move this one",
+      method: "PATCH",
+      path: `/nests/series-1/recurrence/${AT}`,
+      body_example: { due: "2026-01-20T09:00:00.000Z", title: "Moved", accountabilities: ["x"] },
+    });
+    expect(call?.tool).toBe("nestr_update_occurrence");
+    expect(call?.parametersExample).toEqual({
+      nestId: "series-1",
+      instant: AT,
+      due: "2026-01-20T09:00:00.000Z",
+      title: "Moved",
+    });
+    expect(call?.notes).toMatch(/accountabilities/);
+  });
+
+  it("matches the occurrence route rather than the series route when an instant is present", () => {
+    const skip = translateEndpoint({ purpose: "p", method: "DELETE", path: `/nests/series-1/recurrence/${AT}/` });
+    const series = translateEndpoint({ purpose: "p", method: "DELETE", path: "/nests/series-1/recurrence/" });
+    expect(skip?.tool).toBe("nestr_skip_occurrence");
+    expect(series?.tool).toBe("nestr_delete_series");
+    expect(series?.parametersExample).toEqual({ nestId: "series-1" });
+  });
+
+  it("does not map PATCH /nests/:id/recurrence onto the occurrence tool", () => {
+    const call = translateEndpoint({ purpose: "p", method: "PATCH", path: "/nests/series-1/recurrence", body_example: { rrule: null } });
+    expect(call?.tool).not.toBe("nestr_update_occurrence");
+  });
+});

@@ -667,6 +667,44 @@ describe("occurrence writes: nestr_skip_occurrence, nestr_update_occurrence, nes
     expect("stack" in plain).toBe(false);
   });
 
+  // ─── nestr_delete_nest on a recurring target ────────────────────
+
+  it("nestr_delete_nest passes through restoreId and turns the recurring_series hint into tool calls", async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(200, {
+        status: "success",
+        data: { message: "Nest was deleted", nestId: "occ-1", restoreId: "occ-1" },
+        hints: [
+          {
+            type: "recurring_series",
+            severity: "info",
+            label: "This item repeats. Only this nest was deleted, and the series carries on.",
+            endpoints: [
+              { purpose: "See the rest of the series", method: "GET", path: "https://app.test.io/api/nests/series-1/recurrence" },
+              { purpose: "Delete the whole series, past occurrences included", method: "DELETE", path: "https://app.test.io/api/nests/series-1/recurrence" },
+            ],
+          },
+        ],
+      })
+    );
+
+    const result = await handleToolCall(client, "nestr_delete_nest", { nestId: "occ-1" });
+    expect(result.isError).toBeFalsy();
+    const parsed = parseResult(result.content[0].text);
+    expect(parsed.message).toMatch(/occ-1 deleted/);
+    expect(parsed.restoreId).toBe("occ-1");
+    const hints = parsed.hints as Array<{ type: string; toolCalls: Array<{ tool: string; parametersExample: unknown }> }>;
+    expect(hints[0].type).toBe("recurring_series");
+    expect(hints[0].toolCalls.map((c) => c.tool)).toEqual(["nestr_list_occurrences", "nestr_delete_series"]);
+    expect(hints[0].toolCalls[1].parametersExample).toEqual({ nestId: "series-1" });
+  });
+
+  it("nestr_delete_nest still answers plainly for an empty or hint-less response", async () => {
+    mockFetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({}), text: async () => "" });
+    const parsed = parseResult((await handleToolCall(client, "nestr_delete_nest", { nestId: "n1" })).content[0].text);
+    expect(parsed).toEqual({ message: "Nest n1 deleted successfully" });
+  });
+
   // ─── client methods ─────────────────────────────────────────────
 
   it("client.skipOccurrence, updateOccurrence and deleteSeries unwrap { status, data }", async () => {

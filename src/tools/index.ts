@@ -354,6 +354,8 @@ interface EndpointToolMapping {
    * emitting the URL's spelling would produce a call the tool's schema rejects.
    */
   queryParams?: Readonly<Record<string, string>>;
+  /** Tool params (from path or query) that the tool takes as numbers when the URL value is all digits. */
+  numericParams?: ReadonlySet<string>;
 }
 
 const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
@@ -499,6 +501,43 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     pathParamNames: ["nestId", "tensionId"],
     bodyParams: new Set([]),
   },
+  // Recurrence. One occurrence (`/recurrence/:instant`) before the series routes.
+  {
+    method: "DELETE",
+    pattern: /^\/nests\/([^/]+)\/recurrence\/([^/]+)\/?$/,
+    tool: "nestr_skip_occurrence",
+    pathParamNames: ["nestId", "instant"],
+    bodyParams: new Set([]),
+    queryParams: { scope: "scope" },
+    numericParams: new Set(["instant"]),
+  },
+  {
+    method: "PATCH",
+    pattern: /^\/nests\/([^/]+)\/recurrence\/([^/]+)\/?$/,
+    tool: "nestr_update_occurrence",
+    pathParamNames: ["nestId", "instant"],
+    bodyParams: new Set([
+      "title", "description", "purpose", "parentId", "labels",
+      "fields", "users", "data", "due", "completed",
+    ]),
+    numericParams: new Set(["instant"]),
+  },
+  {
+    method: "GET",
+    pattern: /^\/nests\/([^/]+)\/recurrence\/?$/,
+    tool: "nestr_list_occurrences",
+    pathParamNames: ["nestId"],
+    bodyParams: new Set([]),
+    queryParams: { direction: "direction", cursor: "cursor", limit: "limit" },
+    numericParams: new Set(["cursor", "limit"]),
+  },
+  {
+    method: "DELETE",
+    pattern: /^\/nests\/([^/]+)\/recurrence\/?$/,
+    tool: "nestr_delete_series",
+    pathParamNames: ["nestId"],
+    bodyParams: new Set([]),
+  },
 ];
 
 /**
@@ -544,6 +583,12 @@ export function translateEndpoint(endpoint: ApiHintEndpoint): EnrichedToolCall |
           value === "true" || value === "false" ? value === "true" : value;
       }
     }
+    // An instant or a limit arrives as URL text; only an all-digit value is a number
+    // (a cursor may also be an ISO date, which stays a string).
+    mapping.numericParams?.forEach((name) => {
+      const value = parametersExample[name];
+      if (typeof value === "string" && /^-?\d+$/.test(value)) parametersExample[name] = Number(value);
+    });
     if (mapping.extraParams) Object.assign(parametersExample, mapping.extraParams);
 
     const droppedFields: string[] = [];
@@ -4030,8 +4075,17 @@ async function _handleToolCall(
 
       case "nestr_delete_nest": {
         const parsed = schemas.deleteNest.parse(args);
-        await client.deleteNest(parsed.nestId);
-        return formatResult({ message: `Nest ${parsed.nestId} deleted successfully` });
+        const response = await client.deleteNest(parsed.nestId);
+        const restoreId = response?.data?.restoreId;
+        // A recurring target answers with a recurring_series hint naming the series routes.
+        const hints = Array.isArray(response?.hints) && response.hints.length > 0
+          ? enrichHints({ hints: response.hints }).hints
+          : undefined;
+        return formatResult({
+          message: `Nest ${parsed.nestId} deleted successfully`,
+          ...(restoreId ? { restoreId } : {}),
+          ...(hints ? { hints } : {}),
+        });
       }
 
       case "nestr_add_comment": {

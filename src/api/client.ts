@@ -269,6 +269,13 @@ export type NestUpdates = Partial<{
   completed: boolean;
 }>;
 
+/** What `DELETE nests/:id` answers. Hints appear when a recurring series carries on. */
+export interface DeleteNestResponse {
+  status?: string;
+  data?: { message?: string; nestId?: string; restoreId?: string };
+  hints?: Array<Record<string, unknown>>;
+}
+
 /** Metadata for a nest's file attachment (no contents). */
 export interface NestFileMeta {
   id: string;
@@ -1162,8 +1169,12 @@ export class NestrClient {
     );
   }
 
-  async deleteNest(nestId: string): Promise<void> {
-    await this.fetch<void>(`/nests/${nestId}`, {
+  /**
+   * Deletes exactly that nest. On a recurring item the body carries `restoreId` and,
+   * while the series carries on, a `recurring_series` hint naming the series routes.
+   */
+  async deleteNest(nestId: string): Promise<DeleteNestResponse> {
+    return this.fetch<DeleteNestResponse>(`/nests/${nestId}`, {
       method: "DELETE",
     });
   }
