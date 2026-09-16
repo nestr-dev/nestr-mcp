@@ -147,6 +147,18 @@ describe("nestr_workspace_docs", () => {
       expect(text).not.toContain("End of document.");
     });
 
+    // offset 0 is a real value, not an absence. It matches the server default
+    // today, so this guards the day those stop meaning the same thing.
+    it("sends offset 0 rather than dropping it as falsy", async () => {
+      mockFetch.mockResolvedValueOnce(json({
+        id: "f1", name: "handbook.pdf", contentType: "text/plain",
+        text: "chapter one", offset: 0, total: 100, nextOffset: null,
+      }));
+      await call({ workspaceId: "ws1", fileId: "f1", offset: 0 });
+
+      expect(mockFetch.mock.calls[0][0]).toContain("offset=0");
+    });
+
     it("continues from an offset when given one", async () => {
       mockFetch.mockResolvedValueOnce(json({
         id: "f1", name: "handbook.pdf", contentType: "text/plain",

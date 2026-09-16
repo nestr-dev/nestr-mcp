@@ -1262,7 +1262,10 @@ export class NestrClient {
     offset?: number
   ): Promise<NestFileText> {
     const params = new URLSearchParams({ as: "text" });
-    if (offset) params.set("offset", String(offset));
+    // != null, not truthiness: offset 0 is a real value. It happens to match
+    // the server default today, so this is a footgun rather than a bug, but the
+    // day "absent" and "0" mean different things it would be a silent one.
+    if (offset != null) params.set("offset", String(offset));
     const response = await this.fetch<{ status: string; data: NestFileText }>(
       `/nests/${nestId}/files/${fileId}?${params.toString()}`
     );
