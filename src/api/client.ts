@@ -291,6 +291,26 @@ export interface NestFileMeta {
   size: number;
   createdBy?: string;
   createdAt?: string;
+  /** The group the uploading field wrote, e.g. "nestradamus_files". */
+  context?: string;
+  /** What the document holds and when to read it. Absent until someone says. */
+  description?: string;
+  /** "auto" (drafted on upload) or "admin" (someone wrote it). */
+  descriptionSource?: string;
+  /** Present only on a search: the passages that matched, best first. */
+  matches?: Array<{ excerpt: string; offset: number; score?: number }>;
+}
+
+/** A context document's extracted text, whole or as a resumable slice. */
+export interface NestFileText {
+  id: string;
+  name: string;
+  contentType: string;
+  text: string;
+  offset: number;
+  total: number;
+  /** null when the slice reaches the end. */
+  nextOffset: number | null;
 }
 
 /** A nest's file attachment with its base64-encoded contents. */
@@ -1208,9 +1228,46 @@ export class NestrClient {
    * by nestId). Wraps GET /nests/:id/files, which returns { status, data: [...] };
    * this unwraps to the metadata array.
    */
-  async getNestFiles(nestId: string): Promise<NestFileMeta[]> {
+  async getNestFiles(
+    nestId: string,
+    options?: { context?: string; search?: string }
+  ): Promise<NestFileMeta[]> {
+    const params = new URLSearchParams();
+    // The group id the uploading field set. Without it the listing is every
+    // attachment on the nest, which for a workspace root is not what a caller
+    // asking about context documents wants.
+    if (options?.context) params.set("context", options.context);
+    // Filters to the documents whose extracted text matches, each gaining a
+    // `matches` array. Scored server-side: the largest context document in
+    // production is over half a million characters.
+    if (options?.search) params.set("search", options.search);
+    const query = params.toString();
     const response = await this.fetch<{ status: string; data: NestFileMeta[] }>(
-      `/nests/${nestId}/files`
+      `/nests/${nestId}/files${query ? `?${query}` : ""}`
+    );
+    return response.data;
+  }
+
+  /**
+   * Read a context document's extracted text rather than its bytes. Whole when
+   * it fits, otherwise a slice carrying `nextOffset` to continue from.
+   *
+   * Only resolves for files whose text was extracted on upload, so this is a
+   * representation that can be unavailable rather than a conversion that always
+   * works; anything else errors.
+   */
+  async getNestFileText(
+    nestId: string,
+    fileId: string,
+    offset?: number
+  ): Promise<NestFileText> {
+    const params = new URLSearchParams({ as: "text" });
+    // != null, not truthiness: offset 0 is a real value. It happens to match
+    // the server default today, so this is a footgun rather than a bug, but the
+    // day "absent" and "0" mean different things it would be a silent one.
+    if (offset != null) params.set("offset", String(offset));
+    const response = await this.fetch<{ status: string; data: NestFileText }>(
+      `/nests/${nestId}/files/${fileId}?${params.toString()}`
     );
     return response.data;
   }

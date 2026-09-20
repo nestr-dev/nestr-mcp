@@ -1370,6 +1370,13 @@ export const schemas = {
     workspaceId: z.string().describe("Workspace ID"),
   }),
 
+  workspaceDocs: z.object({
+    workspaceId: z.string().optional(),
+    search: z.string().optional(),
+    fileId: z.string().optional(),
+    offset: z.number().optional(),
+  }),
+
   // Inbox tools (require OAuth token)
   listInbox: z.object({
     completedAfter: z.string().optional().describe("Include completed items from this date (ISO format). If omitted, only non-completed items are returned. For reordering, this default is usually sufficient — nestr_reorder_inbox only requires the IDs of items you want to reposition."),
@@ -3443,6 +3450,20 @@ export const toolDefinitions = [
     ...mutating,
   },
   {
+    name: "nestr_workspace_docs",
+    description: "The workspace's reference documents: an organisation constitution, a staff handbook, an onboarding guide, whatever this workspace uploaded for its agents to draw on. CALL THIS WITH NO ARGUMENTS FIRST to see what exists — the index lists each document with a description of what it holds and when to read it, and costs almost nothing. Then `search` across them for the passage that answers a question, or `fileId` to read one document. Prefer `search` over reading a whole document: the large ones run past half a million characters, and the answer is usually one section. These are the organisation's own words about how it works, so they outrank your general knowledge about how organisations work; where a document covers the question, quote it rather than reasoning from first principles. Nothing here is guaranteed to exist: a workspace that uploaded nothing returns an empty index, which is an answer, not an error. Auth: any valid token with access to the workspace.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace whose documents to read. Omit when you can only reach one." },
+        search: { type: "string", description: "Find the passages across all the documents that match this. Use words the document would use, not the user's phrasing." },
+        fileId: { type: "string", description: "Read one document, from the index or from a search hit." },
+        offset: { type: "number", description: "With fileId, continue from a previous nextOffset, or from a search hit's offset." },
+      },
+    },
+    ...readOnly,
+  },
+  {
     name: "nestr_get_nest_files",
     description: "List a nest's file attachments. Images pasted into the nest's text are deliberately excluded — they belong to the text that references them; the inline_images hint counts those and their ids come from the references in the content. A comment ID works too — files are keyed by nestId, so pass a comment ID to see files attached to that comment. Returns each file's id, name, contentType and size. Use nestr_read_file with a returned id to read one (images come back as viewable image content). Auth: any valid token with access to the nest.",
     inputSchema: {
@@ -5128,6 +5149,98 @@ async function _handleToolCall(
           message: `The agent was dispatched.${watching}`,
           ...result,
         });
+      }
+
+      case "nestr_workspace_docs": {
+        const parsed = schemas.workspaceDocs.parse(args);
+        const CONTEXT = "nestradamus_files";
+
+        // A key scoped to one workspace should not have to name it, and a user
+        // with exactly one has nothing to disambiguate. More than one and we ask
+        // rather than guess: reading the wrong organisation's constitution is a
+        // confident wrong answer, not a missing one.
+        let workspaceId = parsed.workspaceId;
+        if (!workspaceId) {
+          const workspaces = await client.listWorkspaces({ limit: 5, cleanText: true });
+          if (workspaces.length === 1) {
+            workspaceId = workspaces[0]._id;
+          } else if (workspaces.length === 0) {
+            return { content: [{ type: "text", text: "No workspace is reachable with this token." }] };
+          } else {
+            const names = workspaces.map((w) => `- ${w._id} — ${w.title || "Untitled"}`).join("\n");
+            return {
+              content: [{
+                type: "text",
+                text: `_Resolved as: needs a workspace._\n\nThis token reaches several workspaces, so name one rather than have me pick:\n\n${names}`,
+              }],
+            };
+          }
+        }
+
+        // Read one document.
+        if (parsed.fileId) {
+          const doc = await client.getNestFileText(workspaceId, parsed.fileId, parsed.offset);
+          const more = doc.nextOffset === null
+            ? "End of document."
+            : `More to read: nestr_workspace_docs({ fileId: "${parsed.fileId}", offset: ${doc.nextOffset} }). Prefer a search if you are looking for something specific.`;
+          return {
+            content: [{
+              type: "text",
+              text: `_Resolved as: document read._\n\n**${doc.name}** (${doc.offset}–${doc.offset + doc.text.length} of ${doc.total} characters)\n\n${doc.text}\n\n---\n${more}`,
+            }],
+          };
+        }
+
+        const files = await client.getNestFiles(workspaceId, {
+          context: CONTEXT,
+          search: parsed.search,
+        });
+
+        // Search.
+        if (parsed.search) {
+          if (files.length === 0) {
+            return {
+              content: [{
+                type: "text",
+                text: `_Resolved as: document search._\n\nNothing in this workspace's reference documents matches "${parsed.search}". The search reads the documents' text, so an exact phrase can miss where a synonym would hit. An empty result is not evidence the organisation has no position on this: say you could not find it documented, never that it does not exist.`,
+              }],
+            };
+          }
+          const blocks = files.map((f) => {
+            const hits = (f.matches || [])
+              .map((m) => `> ${m.excerpt}\n\n_Read on from here: nestr_workspace_docs({ fileId: "${f.id}", offset: ${m.offset} })_`)
+              .join("\n\n");
+            return `### ${f.name}\n\n${hits}`;
+          });
+          return {
+            content: [{
+              type: "text",
+              text: `_Resolved as: document search._\n\nPassages matching "${parsed.search}" in ${files.length} document${files.length === 1 ? "" : "s"}. These are the organisation's own words, so prefer them to your general knowledge.\n\n${blocks.join("\n\n")}`,
+            }],
+          };
+        }
+
+        // The index.
+        if (files.length === 0) {
+          return {
+            content: [{
+              type: "text",
+              text: "_Resolved as: document index._\n\nThis workspace has uploaded no reference documents. That is an answer, not a failure: there is nothing here to consult, so do not keep looking.",
+            }],
+          };
+        }
+        const lines = files.map((f) => {
+          const described = f.description
+            ? f.description
+            : "No description yet, so the filename is the only clue to what it holds.";
+          return `- **${f.name}** (id: ${f.id}, ${formatBytes(f.size)})\n  ${described}`;
+        });
+        return {
+          content: [{
+            type: "text",
+            text: `_Resolved as: document index._\n\n${files.length} reference document${files.length === 1 ? "" : "s"} in this workspace. Search them with nestr_workspace_docs({ search: "..." }) rather than reading one whole.\n\n${lines.join("\n")}`,
+          }],
+        };
       }
 
       case "nestr_get_nest_files": {
