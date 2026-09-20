@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { NestrClient, NestrApiError } from "../../src/api/client.js";
+import { NestrClient, NestrApiError, unwrapList } from "../../src/api/client.js";
 
 describe("NestrClient", () => {
   let mockFetch: ReturnType<typeof vi.fn>;
@@ -654,5 +654,51 @@ describe("NestrApiError", () => {
         expect((err as NestrApiError).retryable).toBe(true);
       }
     });
+  });
+});
+
+// ─── unwrapList ─────────────────────────────────────────────────────
+
+/**
+ * The rows out of a list body, whichever shape it arrived in.
+ *
+ * `fetch` hands back what the route answered and does not unwrap, so a caller
+ * that indexes into the result has to come through here. nestr_workspace_docs
+ * did not, and `.length` on the envelope is undefined rather than a number, so
+ * its single-workspace and no-workspace branches both missed and every bare
+ * call reached `.map` on an object.
+ */
+describe("unwrapList", () => {
+  it("returns the rows of a { status, meta, data } envelope", () => {
+    const rows = [{ _id: "ws1" }, { _id: "ws2" }];
+    expect(unwrapList({ status: "success", meta: { total: 2 }, data: rows })).toEqual(rows);
+  });
+
+  it("returns a bare array unchanged", () => {
+    const rows = [{ _id: "ws1" }];
+    expect(unwrapList(rows)).toBe(rows);
+  });
+
+  // The count is the whole point: the envelope's own `length` is undefined, so
+  // a caller comparing it against 1 or 0 misses both and falls through.
+  it("gives a usable length for a single-row envelope", () => {
+    const body = { status: "success", data: [{ _id: "ws1" }] };
+    expect((body as unknown as unknown[]).length).toBeUndefined();
+    expect(unwrapList(body)).toHaveLength(1);
+  });
+
+  it("reads an empty envelope as no rows", () => {
+    expect(unwrapList({ status: "success", data: [] })).toEqual([]);
+  });
+
+  // Every caller is asking which workspaces a token can see. An unreadable
+  // answer to that is none of them, not an exception.
+  it.each([
+    ["null", null],
+    ["undefined", undefined],
+    ["an object with no data", { status: "success" } as never],
+    ["a non-array data", { status: "success", data: "nope" } as never],
+  ])("reads %s as no rows", (_label, body) => {
+    expect(unwrapList(body as never)).toEqual([]);
   });
 });

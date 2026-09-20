@@ -29,9 +29,15 @@ describe("nestr_workspace_docs", () => {
     text: async () => JSON.stringify({ status: "success", data }),
   });
 
-  // /workspaces returns a bare array; /nests/:id/files returns { status, data }.
-  // Wrapping both the same way is what made the first version of these tests
-  // fail with "workspaces.map is not a function".
+  // A bare, unenveloped body. /workspaces does NOT answer this shape, and the
+  // note that used to sit here said it did: the first version of these tests hit
+  // "workspaces.map is not a function", read that as the mock being wrong, and
+  // reshaped the mock until it passed. The handler was the thing that was wrong,
+  // and every workspace-resolution test below has been green against a body the
+  // API never sends while the bare call failed in production for months.
+  //
+  // Kept because unwrapList tolerates this shape too, and one test below pins
+  // that tolerance. Nothing else may use it for /workspaces.
   const bare = (data: unknown) => ({
     ok: true, status: 200, statusText: "OK",
     json: async () => data,
@@ -173,7 +179,7 @@ describe("nestr_workspace_docs", () => {
   describe("resolving the workspace", () => {
     it("uses the only reachable workspace when there is exactly one", async () => {
       mockFetch
-        .mockResolvedValueOnce(bare([{ _id: "ws1", title: "Acme" }]))
+        .mockResolvedValueOnce(json([{ _id: "ws1", title: "Acme" }]))
         .mockResolvedValueOnce(json([doc()]));
       const text = textOf(await call({}));
 
@@ -184,7 +190,7 @@ describe("nestr_workspace_docs", () => {
     // Reading the wrong organisation's constitution is a confident wrong
     // answer, which is worse than asking.
     it("asks rather than guessing when several are reachable", async () => {
-      mockFetch.mockResolvedValueOnce(bare([
+      mockFetch.mockResolvedValueOnce(json([
         { _id: "ws1", title: "Acme" },
         { _id: "ws2", title: "Globex" },
       ]));
@@ -197,7 +203,28 @@ describe("nestr_workspace_docs", () => {
     });
 
     it("says so when the token reaches nothing", async () => {
-      mockFetch.mockResolvedValueOnce(bare([]));
+      mockFetch.mockResolvedValueOnce(json([]));
+      expect(textOf(await call({}))).toMatch(/no workspace is reachable/i);
+    });
+
+    // The shape this file used to assert everywhere. It is not what /workspaces
+    // sends, but unwrapList takes it, and pinning that keeps the helper honest
+    // about why it still exists.
+    it("still resolves if the route ever answers a bare array", async () => {
+      mockFetch
+        .mockResolvedValueOnce(bare([{ _id: "ws1", title: "Acme" }]))
+        .mockResolvedValueOnce(json([doc()]));
+      const text = textOf(await call({}));
+
+      expect(text).toContain("handbook.pdf");
+      expect(mockFetch.mock.calls[1][0]).toContain("/nests/ws1/files");
+    });
+
+    // A body that is neither shape reads as no workspaces rather than a crash:
+    // the question is "which workspaces does this token see", and an unreadable
+    // answer to that is none of them.
+    it("says nothing is reachable when the body is neither shape", async () => {
+      mockFetch.mockResolvedValueOnce(bare({ unexpected: true }));
       expect(textOf(await call({}))).toMatch(/no workspace is reachable/i);
     });
   });

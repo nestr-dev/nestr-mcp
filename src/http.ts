@@ -35,7 +35,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createServer } from "./server.js";
 import { toolDefinitions, PUBLIC_TOOL_NAMES, READONLY_TOOL_NAMES } from "./tools/index.js";
-import { NestrClient, NestrApiError, tokenFingerprint } from "./api/client.js";
+import { NestrClient, NestrApiError, tokenFingerprint, unwrapList } from "./api/client.js";
 import { bearerIsReadOnly } from "./api/readonly-bearer.js";
 import {
   getProtectedResourceMetadata,
@@ -1963,8 +1963,8 @@ async function handleMcpPost(req: Request, res: Response, routeOpts: { isReadOnl
       try {
         const tempClient = new NestrClient({ apiKey: authToken });
         const result = await tempClient.listWorkspaces({ limit: 1 });
-        const workspaces = Array.isArray(result) ? result : (result as any)?.data || [];
-        if (Array.isArray(workspaces) && workspaces.length > 0) {
+        const workspaces = unwrapList(result);
+        if (workspaces.length > 0) {
           const ws = workspaces[0];
           userId = ws._id;
           userName = `${ws.title} (API key)`;
@@ -2000,8 +2000,8 @@ async function handleMcpPost(req: Request, res: Response, routeOpts: { isReadOnl
           try {
             const tempClient = new NestrClient({ apiKey: authToken, baseUrl: process.env.NESTR_API_BASE });
             const result = await tempClient.listWorkspaces({ limit: 1 });
-            const workspaces = Array.isArray(result) ? result : (result as any)?.data || [];
-            if (Array.isArray(workspaces) && workspaces.length > 0) {
+            const workspaces = unwrapList(result);
+            if (workspaces.length > 0) {
               const ws = workspaces[0];
               userId = ws._id;
               userName = `${ws.title} (Bearer key)`;
