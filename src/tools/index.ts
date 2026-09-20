@@ -4,7 +4,7 @@
  */
 
 import { z } from "zod";
-import { NestrApiError, tokenFingerprint, type NestrClient, type Nest, type ToolError, type ErrorCode } from "../api/client.js";
+import { NestrApiError, tokenFingerprint, unwrapList, type NestrClient, type Nest, type ToolError, type ErrorCode, type ListEnvelope, type MaybeListEnvelope } from "../api/client.js";
 import { appResources } from "../apps/index.js";
 import { getCorrelationId } from "../util/request-context.js";
 import { VERSION } from "../version.js";
@@ -78,12 +78,16 @@ const COMPACT_FIELDS = {
 
 // Strip verbose fields from API responses for list operations
 export function compactResponse<T>(
-  data: T[] | { status: string; meta?: unknown; data: T[] } | T,
+  // ListEnvelope rather than an inline `{ status: string; ... }`: the inline one
+  // required `status`, which no caller here can promise, since this takes a body
+  // the API sent. Nothing below reads `status` — the wrapped branch turns on
+  // `data` being an array — so requiring it only refused bodies it handles fine.
+  data: MaybeListEnvelope<T> | T,
   type: "nest" | "role" | "user" | "label" = "nest"
-): Partial<T>[] | { status: string; meta?: unknown; data: Partial<T>[] } | T {
+): Partial<T>[] | ListEnvelope<Partial<T>> | T {
   // Handle wrapped response: { status, meta, data: [...] }
   if (data && typeof data === "object" && "data" in data && Array.isArray((data as { data: unknown }).data)) {
-    const wrapped = data as { status: string; meta?: unknown; data: T[] };
+    const wrapped = data as ListEnvelope<T>;
     return {
       ...wrapped,
       data: compactResponse(wrapped.data, type) as Partial<T>[],
@@ -5161,7 +5165,12 @@ async function _handleToolCall(
         // confident wrong answer, not a missing one.
         let workspaceId = parsed.workspaceId;
         if (!workspaceId) {
-          const workspaces = await client.listWorkspaces({ limit: 5, cleanText: true });
+          // unwrapList, not the raw body: /workspaces answers the rows inside a
+          // { status, meta, data } envelope, whose `length` is undefined, so both
+          // branches below missed and every call without a workspaceId reached
+          // `.map` on an object. A token that sees exactly one workspace never
+          // got its own fast path.
+          const workspaces = unwrapList(await client.listWorkspaces({ limit: 5, cleanText: true }));
           if (workspaces.length === 1) {
             workspaceId = workspaces[0]._id;
           } else if (workspaces.length === 0) {

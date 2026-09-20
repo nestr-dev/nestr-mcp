@@ -10,7 +10,7 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { NestrClient, createClientFromEnv } from "./api/client.js";
+import { NestrClient, createClientFromEnv, unwrapList } from "./api/client.js";
 import { VERSION } from "./version.js";
 import { toolDefinitions, handleToolCall, PUBLIC_TOOL_NAMES, READONLY_TOOL_NAMES } from "./tools/index.js";
 import { getCompletableListHtml, appResources } from "./apps/index.js";
@@ -344,9 +344,9 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
         // Try to identify by workspace name instead.
         try {
           const result = await client.listWorkspaces({ limit: 1 });
-          // Handle both array responses and wrapped { data: [...] } responses
-          const workspaces = Array.isArray(result) ? result : (result as any)?.data || [];
-          if (Array.isArray(workspaces) && workspaces.length > 0) {
+          // Handles both the rows and the { status, meta, data } envelope.
+          const workspaces = unwrapList(result);
+          if (workspaces.length > 0) {
             const ws = workspaces[0];
             cachedIdentity = {
               userId: ws._id,

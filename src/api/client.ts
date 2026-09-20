@@ -138,6 +138,34 @@ export interface Nest {
  * `data`, because the route carries an unread_posts hint beside it (when the caller is
  * user-scoped) and `meta` for paging, and both are the point.
  */
+/**
+ * A list route's body: the rows, or the `{ status, meta, data }` envelope the
+ * Nestr API wraps them in. `NestrClient.fetch` does not unwrap, so a caller that
+ * wants the rows has to say so.
+ */
+export interface ListEnvelope<T> {
+  status?: string;
+  meta?: Record<string, unknown>;
+  data: T[];
+}
+
+export type MaybeListEnvelope<T> = T[] | ListEnvelope<T>;
+
+/**
+ * The rows out of either shape, and `[]` for anything else.
+ *
+ * Hand-rolled at three call sites before this existed, and missing at a fourth,
+ * which is the bug it is named for. Tolerant on purpose: a null body, a missing
+ * `data` and a `data` that is not an array all answer `[]` rather than throwing,
+ * because every caller is asking "which workspaces can this token see" and an
+ * unreadable answer to that is none of them, not a crash.
+ */
+export function unwrapList<T>(body: MaybeListEnvelope<T> | null | undefined): T[] {
+  if (Array.isArray(body)) return body;
+  const rows = (body as ListEnvelope<T> | null | undefined)?.data;
+  return Array.isArray(rows) ? rows : [];
+}
+
 export interface PostsEnvelope {
   status?: string;
   data?: Post[];
@@ -859,13 +887,27 @@ export class NestrClient {
     return (unwrapped ?? body) as TokenSelf;
   }
 
+  /**
+   * Lists the workspaces a bearer reaches.
+   *
+   * Returns the RAW body, which is why the type is a union rather than `Nest[]`.
+   * `fetch` hands back what the route answered and does not unwrap, and callers
+   * genuinely want both shapes: nestr_list_workspaces and the nestr://workspaces
+   * resource render the envelope because `meta` carries the paging, while the
+   * identity resolvers and nestr_workspace_docs want the rows. Declaring `Nest[]`
+   * here told every caller it was safe to index into the result, and one of them
+   * believed it: `.length` on the envelope is undefined, so a single-workspace
+   * token missed its own fast path and fell through to `.map` on an object.
+   *
+   * Pass the result through `unwrapList` when you want the rows.
+   */
   async listWorkspaces(options?: {
     search?: string;
     sort?: string;
     limit?: number;
     page?: number;
     cleanText?: boolean;
-  }): Promise<Nest[]> {
+  }): Promise<MaybeListEnvelope<Nest>> {
     const params = new URLSearchParams();
     if (options?.search) params.set("search", options.search);
     if (options?.sort) params.set("sort", options.sort);
@@ -874,7 +916,7 @@ export class NestrClient {
     if (options?.cleanText) params.set("cleanText", "true");
 
     const query = params.toString();
-    return this.fetch<Nest[]>(`/workspaces${query ? `?${query}` : ""}`);
+    return this.fetch<MaybeListEnvelope<Nest>>(`/workspaces${query ? `?${query}` : ""}`);
   }
 
   async getWorkspace(workspaceId: string, cleanText = false): Promise<Nest> {
