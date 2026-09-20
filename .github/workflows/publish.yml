@@ -120,6 +120,40 @@ jobs:
             -domain nestr.io \
             -private-key "${{ secrets.MCP_REGISTRY_PRIVATE_KEY }}"
 
+      # npm publish exiting 0 means npm accepted the tarball, not that the version
+      # resolves. The MCP Registry validates a package by fetching it, and that
+      # fetch 404s inside npm's propagation window: on v0.1.108 the check ran at
+      # 16:32:35 and npm recorded the version as published at 16:33:22, 47
+      # seconds later. v0.1.107 died on the same error a release earlier, and
+      # because npm and GHCR both go green nobody was told, so the registry sat
+      # two releases behind for nine days.
+      #
+      # `needs: publish-npm` cannot fix this. That dependency is already declared
+      # and was satisfied; the race lives inside it. The only thing that helps is
+      # waiting for the artifact the registry is about to look for.
+      - name: Wait for npm to serve the version
+        env:
+          VERSION: ${{ needs.build-and-test.outputs.version }}
+        run: |
+          # No `curl -f`: a 404 is the expected answer while we wait, so it has
+          # to come back as a value to loop on rather than a non-zero exit to
+          # swallow. The scope is URL-encoded, which is the form the npm registry
+          # documents for a scoped package.
+          for i in $(seq 1 30); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' \
+              "https://registry.npmjs.org/@nestr%2Fmcp/${VERSION}" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "npm is serving @nestr/mcp@${VERSION}"
+              exit 0
+            fi
+            echo "attempt $i: npm answered ${code}; retrying in 10s"
+            sleep 10
+          done
+          # Loud rather than skipped. A soft pass here is how the last two
+          # releases went unregistered without anyone noticing.
+          echo "::error::npm did not serve @nestr/mcp@${VERSION} within 5 minutes"
+          exit 1
+
       - name: Publish to MCP Registry
         run: mcp-publisher publish
 
