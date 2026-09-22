@@ -558,7 +558,7 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 - \`governance\` - Combined with \`meeting\` label to create a governance meeting (processes governance tensions/proposals)
 - \`circle-meeting\` - Combined with \`meeting\` label to create a circle/tactical meeting (processes operational tensions — projects, todos, inter-role requests)
 
-**Creating meetings:** See \`nestr_help({ topic: "meetings" })\` for where a meeting nest belongs (an existing circle — the anchor circle counts) and why you must not create a circle to hold one. A meeting is a nest with \`labels: ["meeting", "governance"]\` or \`labels: ["meeting", "circle-meeting"]\`. Set \`due\` to the meeting start time. Assign all role fillers in the circle to the meeting's \`users\` array — this includes people/agents energizing roles in the circle, plus rep-link and circle-lead roles from sub-circles. Use graph tools (\`nestr_add_graph_link\` with relation \`meeting\`) to link tensions as agenda items. Agenda items that don't originate from a specific role can be created as child nests of the meeting directly.
+**Creating meetings:** See \`nestr_help({ topic: "meetings" })\` for where a meeting nest belongs (an existing circle — the anchor circle counts) and why you must not create a circle to hold one. A meeting is a nest with \`labels: ["meeting", "governance"]\` or \`labels: ["meeting", "circle-meeting"]\`. Set \`due\` to the meeting start time. Assign all role fillers in the circle to the meeting's \`users\` array — this includes people/agents energizing roles in the circle, plus rep-link and circle-lead roles from sub-circles. Use graph tools (\`nestr_add_graph_link\` with relation \`meeting\`, nestId the tension and targetId the meeting) to link tensions as agenda items. Agenda items that don't originate from a specific role can be created as child nests of the meeting directly.
 
 **OKRs & Goals:**
 - \`goal\` - An Objective (the O in OKR)
@@ -2015,7 +2015,7 @@ If a meeting genuinely seems to want a circle of its own, that is a claim about 
 - \`due\` — the meeting start time as an ISO datetime. A future \`due\` schedules it (the web app shows a countdown and a "Start meeting now" link); omit it to mean now.
 - \`users\` — everyone who should attend: the people and agents energizing roles in the circle, plus circle-lead and rep-link fillers from its sub-circles.
 
-Agenda items are tensions. Link them with \`nestr_add_graph_link\` (relation \`meeting\`); an agenda item with no originating role can be a plain child nest of the meeting instead.
+Agenda items are tensions. Link them with \`nestr_add_graph_link\` (relation \`meeting\`, from the tension to the meeting; remove it the same way round); an agenda item with no originating role can be a plain child nest of the meeting instead.
 
 ### Before you create one
 

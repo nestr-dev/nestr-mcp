@@ -301,6 +301,9 @@ export type NestUpdates = Partial<{
   users: string[];
   data: Record<string, unknown>;
   due: string;
+  /** ISO 8601 or yyyy-mm-dd; null clears. */
+  start: string | null;
+  allDay: boolean | null;
   completed: boolean;
 }>;
 
@@ -1101,6 +1104,9 @@ export class NestrClient {
     users?: string[];
     /** ISO 8601. The field the dated-work sweep reads; a title date is not it. */
     due?: string;
+    /** ISO 8601 or yyyy-mm-dd. With due it makes a span; yyyy-mm-dd dates are all-day. */
+    start?: string;
+    allDay?: boolean;
   }): Promise<Nest> {
     return this.fetch<Nest>("/nests", {
       method: "POST",
