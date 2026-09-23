@@ -74,19 +74,27 @@ git switch main
 echo "Waiting for review and merge (timeout ${WAIT_TIMEOUT_SECONDS}s)..."
 deadline=$((SECONDS + WAIT_TIMEOUT_SECONDS))
 while true; do
-  read -r STATE DECISION MERGE_SHA FAILED < <(gh pr view "$PR_URL" \
+  # Captured rather than read from a process substitution, whose exit status
+  # set -e ignores: a failed call would leave every field empty and the loop
+  # would spin silently. A transient failure is retried until the deadline.
+  if ! pr_status=$(gh pr view "$PR_URL" \
     --json state,reviewDecision,mergeCommit,statusCheckRollup \
     --jq '[.state, (.reviewDecision // "NONE"), (.mergeCommit.oid // "-"),
-      ([.statusCheckRollup[]? | select(.conclusion == "FAILURE")] | length)] | @tsv')
+      ([.statusCheckRollup[]? | select(.conclusion == "FAILURE")] | length)] | @tsv'); then
+    echo "Warning: could not read $PR_URL; retrying."
+    pr_status=""
+  fi
+  read -r STATE DECISION MERGE_SHA FAILED <<< "$pr_status" || true
 
-  if [ "$STATE" = "MERGED" ]; then
+  # mergeCommit can lag behind state on the first poll after the merge
+  if [ "${STATE:-}" = "MERGED" ] && [ "${MERGE_SHA:--}" != "-" ]; then
     break
   fi
-  if [ "$STATE" = "CLOSED" ]; then
+  if [ "${STATE:-}" = "CLOSED" ]; then
     echo "Error: $PR_URL was closed without merging. Nothing was tagged."
     exit 1
   fi
-  if [ "$DECISION" = "CHANGES_REQUESTED" ]; then
+  if [ "${DECISION:-}" = "CHANGES_REQUESTED" ]; then
     echo "Error: changes were requested on $PR_URL. Nothing was tagged."
     exit 1
   fi
@@ -97,7 +105,7 @@ while true; do
     exit 1
   fi
   if [ "$SECONDS" -ge "$deadline" ]; then
-    echo "Timed out waiting for $PR_URL to merge (state: $STATE, review: $DECISION)."
+    echo "Timed out waiting for $PR_URL to merge (state: ${STATE:-unknown}, review: ${DECISION:-unknown})."
     echo "Once it merges, finish the release with:"
     echo "  git fetch origin main && git tag $TAG <merge-commit-sha> && git push origin $TAG"
     exit 1
