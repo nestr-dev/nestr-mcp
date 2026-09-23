@@ -21,6 +21,20 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      # Anyone (or any app) with write access can push a v* tag on any commit,
+      # and the tag alone publishes to npm, GHCR and the MCP Registry. v0.1.108
+      # went out from a feature branch that way. Only publish commits that
+      # reached main, which means they passed review and CI.
+      - name: Verify the commit is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::$GITHUB_SHA is not on main. Release through ./release.sh so the bump is merged first."
+            exit 1
+          fi
 
       - name: Determine version
         id: version
