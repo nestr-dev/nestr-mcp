@@ -47,6 +47,18 @@ describe("compactResponse", () => {
     expect(result).toEqual(data);
   });
 
+  it("keeps the schedule, so a span does not read as a bare deadline", () => {
+    const data = [{ _id: "1", title: "Span", start: "2026-10-05T00:00:00.000Z", due: "2026-10-09T23:59:00.000Z", allDay: true }];
+    const result = compactResponse(data) as any[];
+    expect(result[0]).toMatchObject({ start: "2026-10-05T00:00:00.000Z", allDay: true });
+  });
+
+  it("keeps relation and direction on graph links, and only there", () => {
+    const data = [{ _id: "1", title: "Linked", relation: "depends_on", direction: "incoming" }];
+    expect((compactResponse(data, "graph") as any[])[0]).toMatchObject({ relation: "depends_on", direction: "incoming" });
+    expect((compactResponse(data) as any[])[0]).not.toHaveProperty("direction");
+  });
+
   it("includes role fields when type is role", () => {
     const data = [
       { _id: "1", title: "Role", accountabilities: ["a"], domains: ["d"], extraField: "gone" },

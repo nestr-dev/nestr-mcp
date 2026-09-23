@@ -64,7 +64,11 @@ const COMPACT_FIELDS = {
   // silently anonymous, so "which of these roles are mine?" or "who owns this project?"
   // has no answer in the data and a model fills the gap by guessing. It costs a short
   // id array per item and it is the difference between an answer and a fabrication.
-  base: ["_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description", "due", "users", "hints"],
+  // `start`/`allDay` with `due` are the schedule: without them a span reads as a bare deadline.
+  base: [
+    "_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description",
+    "due", "start", "allDay", "users", "hints",
+  ],
   // Additional fields for roles
   role: ["accountabilities", "domains"],
   // Additional fields for users. `bot` and `assistant` are not optional trim:
@@ -74,6 +78,8 @@ const COMPACT_FIELDS = {
   user: ["_id", "username", "profile", "bot", "assistant"],
   // Additional fields for labels
   label: ["_id", "title"],
+  // Graph links: without these, a listing of both directions is rows that look identical.
+  graph: ["relation", "direction"],
 };
 
 // Strip verbose fields from API responses for list operations
@@ -83,7 +89,7 @@ export function compactResponse<T>(
   // the API sent. Nothing below reads `status` — the wrapped branch turns on
   // `data` being an array — so requiring it only refused bodies it handles fine.
   data: MaybeListEnvelope<T> | T,
-  type: "nest" | "role" | "user" | "label" = "nest"
+  type: "nest" | "role" | "user" | "label" | "graph" = "nest"
 ): Partial<T>[] | ListEnvelope<Partial<T>> | T {
   // Handle wrapped response: { status, meta, data: [...] }
   if (data && typeof data === "object" && "data" in data && Array.isArray((data as { data: unknown }).data)) {
@@ -104,6 +110,7 @@ export function compactResponse<T>(
     ...(type === "role" ? COMPACT_FIELDS.role : []),
     ...(type === "user" ? COMPACT_FIELDS.user : []),
     ...(type === "label" ? COMPACT_FIELDS.label : []),
+    ...(type === "graph" ? COMPACT_FIELDS.graph : []),
   ]);
 
   return data.map((item) => {
@@ -1022,6 +1029,18 @@ const PURPOSE_DESC =
 const CONTENT_DESC =
   "The primary content field: details, context, acceptance criteria. Structured data goes in fields, progress in comments. Supports Markdown and HTML.";
 
+const START_DESC =
+  "When the item begins: an ISO 8601 date-time, or a yyyy-mm-dd date for a whole day. "
+  + "Set it with due to make a span, which is what the Timeline draws. For whole days send allDay: true "
+  + "with yyyy-mm-dd dates, e.g. start \"2026-10-05\", due \"2026-10-09\"; they read as the same dates in "
+  + "every timezone. A due before the start is refused.";
+const ALL_DAY_DESC =
+  "true when start/due are whole calendar days, false when they are instants. Send it with start/due; "
+  + "yyyy-mm-dd dates imply true.";
+const DUE_DESC =
+  "Due date (ISO 8601, or yyyy-mm-dd). With a start it is the END of the item (a meeting's finish, the last "
+  + "day of a span); without one it is the deadline. For roles: re-election date.";
+
 // The editable fields of PATCH /nests/:id, shared by nestr_update_nest and
 // nestr_update_occurrence so the two cannot drift apart.
 const nestUpdateFieldSchemas = {
@@ -1033,7 +1052,9 @@ const nestUpdateFieldSchemas = {
   fields: coerceFromJson(z.record(z.unknown())).optional().describe("Field updates (e.g., { 'project.status': 'Current' })"),
   users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign"),
   data: coerceFromJson(z.record(z.unknown())).optional().describe("Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead."),
-  due: z.string().optional().describe("Due date (ISO format). For projects/tasks: deadline. For roles: re-election date. For meetings: start time."),
+  due: z.string().optional().describe(DUE_DESC),
+  start: z.string().nullable().optional().describe(START_DESC),
+  allDay: z.boolean().nullable().optional().describe(ALL_DAY_DESC),
   completed: z.boolean().optional().describe("Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead."),
 };
 
@@ -1062,7 +1083,15 @@ const NEST_UPDATE_FIELD_PROPERTIES = {
   },
   due: {
     type: "string",
-    description: "Due date (ISO format). For projects/tasks: deadline. For roles: re-election date. For meetings: start time.",
+    description: DUE_DESC,
+  },
+  start: {
+    type: ["string", "null"],
+    description: START_DESC,
+  },
+  allDay: {
+    type: ["boolean", "null"],
+    description: ALL_DAY_DESC,
   },
   completed: {
     type: "boolean",
@@ -1235,7 +1264,9 @@ export const schemas = {
     labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to apply"),
     fields: coerceFromJson(z.record(z.unknown())).optional().describe("Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call."),
     users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
-    due: z.string().optional().describe("Due date (ISO 8601). SET THIS whenever the item is meant to happen at a time. It is a field, not a title: the sweep that fires dated work reads `due` and nothing else, so a task called \"Daily digest, 28 Aug\" with no due is invisible to it and simply never runs, with nothing anywhere saying so. For projects/tasks: deadline. For meetings: start time."),
+    start: z.string().optional().describe(START_DESC),
+    allDay: z.boolean().optional().describe(ALL_DAY_DESC),
+    due: z.string().optional().describe("Due date (ISO 8601). SET THIS whenever the item is meant to happen at a time. It is a field, not a title: the sweep that fires dated work reads `due` and nothing else, so a task called \"Daily digest, 28 Aug\" with no due is invisible to it and simply never runs, with nothing anywhere saying so. For projects/tasks: the deadline, or the end when a start is set."),
     accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes an accountability child nest."),
     domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes a domain child nest."),
     workspaceId: z.string().optional().describe("Workspace ID. Required when creating roles/circles with accountabilities or domains (used to route to the self-organization API)."),
@@ -2035,9 +2066,17 @@ export const toolDefinitions = [
           items: { type: "string" },
           description: "User IDs to assign. ALWAYS set this for projects and tasks — use the role filler's user ID. Placing a nest under a role does NOT auto-assign it.",
         },
+        start: {
+          type: "string",
+          description: START_DESC,
+        },
+        allDay: {
+          type: "boolean",
+          description: ALL_DAY_DESC,
+        },
         due: {
           type: "string",
-          description: "Due date (ISO 8601). SET THIS whenever the item is meant to happen at a time. It is a field, not a title: the sweep that fires dated work reads `due` and nothing else, so a task called \"Daily digest, 28 Aug\" with no due is invisible to it and simply never runs, with nothing anywhere saying so. For projects/tasks: deadline. For meetings: start time.",
+          description: "Due date (ISO 8601). SET THIS whenever the item is meant to happen at a time. It is a field, not a title: the sweep that fires dated work reads `due` and nothing else, so a task called \"Daily digest, 28 Aug\" with no due is invisible to it and simply never runs, with nothing anywhere saying so. For projects/tasks: the deadline, or the end when a start is set.",
         },
         accountabilities: {
           type: "array",
@@ -3179,13 +3218,13 @@ export const toolDefinitions = [
   // Graph link tools
   {
     name: "nestr_get_graph_links",
-    description: "Get nests linked via a named graph relation. Use 'meeting' relation to get agenda items or linked meetings.",
+    description: "Get nests linked via a named graph relation. Links are directed: each row says whether it is outgoing (this nest links to it) or incoming (it links to this nest). Use 'meeting' relation to get agenda items or linked meetings. For Timeline dependencies use 'depends_on': outgoing are the predecessors this nest waits for, incoming are the nests waiting on it.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID to get graph links for" },
         relation: { type: "string", description: "Relation name (e.g., 'meeting' for meeting agenda items)" },
-        direction: { type: "string", enum: ["outgoing", "incoming"], description: "Link direction: 'outgoing' (default) = links FROM this nest, 'incoming' = links TO this nest" },
+        direction: { type: "string", enum: ["outgoing", "incoming"], description: "Link direction: 'outgoing' = links FROM this nest, 'incoming' = links TO this nest. Omit for both." },
         limit: { type: "number", description: "Max results per page (default 50)" },
         page: { type: "number", description: "Page number for pagination" },
       },
@@ -3195,7 +3234,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_graph_link",
-    description: "Create a bidirectional graph link between two nests. E.g., link a tension to a meeting as an agenda item.",
+    description: "Create a directed graph link from nestId to targetId. It reads as outgoing on nestId and incoming on targetId. E.g., link a tension to a meeting as an agenda item. For a Timeline dependency use relation 'depends_on' with nestId the item that waits and targetId the one it waits for: the same link dragging between two bars makes. A depends_on that would create a cycle, or tie a parent to its own child, is refused.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3209,7 +3248,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_remove_graph_link",
-    description: "Remove a graph link between two nests. For example, remove a tension from a meeting's agenda by removing the 'meeting' relation.",
+    description: "Remove the graph link from nestId to targetId. A link running the other way is left alone, and the error names the call that removes it. For example, remove a tension from a meeting's agenda by removing the 'meeting' relation.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -4055,6 +4094,8 @@ async function _handleToolCall(
           fields: parsed.fields,
           users: parsed.users,
           due: parsed.due,
+          start: parsed.start,
+          allDay: parsed.allDay,
         });
         return formatResult({ message: "Nest created successfully", nest });
       }
@@ -4101,6 +4142,8 @@ async function _handleToolCall(
           users: parsed.users,
           data: parsed.data as Record<string, unknown> | undefined,
           due: parsed.due,
+          start: parsed.start,
+          allDay: parsed.allDay,
           completed: parsed.completed,
         });
         return formatResult({ message: "Nest updated successfully", nest });
@@ -4952,7 +4995,7 @@ async function _handleToolCall(
           limit: parsed.limit,
           page: parsed.page,
         });
-        return formatResult(compactResponse(result));
+        return formatResult(compactResponse(result, "graph"));
       }
 
       case "nestr_add_graph_link": {
