@@ -1808,6 +1808,23 @@ export const schemas = {
     message: z.string().optional().describe("What this run is for. Omit for a plain 'advance this item' run."),
   }),
 
+  getAgentMode: z.object({
+    nestId: z.string().describe("The role, project or task"),
+    agentUserId: z.string().describe("The agent's bot user ID"),
+  }),
+
+  setAgentMode: z.object({
+    nestId: z.string().describe("The role, project or task this setting is for"),
+    agentUserId: z.string().describe("The agent's bot user ID"),
+    mode: z.enum(["reactive", "autonomous"]).nullable()
+      .describe("reactive (acts when triggered) or autonomous (works on a cadence). null clears this nest's own setting so it inherits again."),
+    recheck: z.enum(["continuous", "hourly", "daily", "weekly"]).optional()
+      .describe("Required when mode is autonomous. continuous works the item until done or blocked; hourly, daily and weekly make periodic progress."),
+  }).refine((v) => v.mode !== "autonomous" || !!v.recheck, {
+    message: "recheck is required when mode is autonomous",
+    path: ["recheck"],
+  }),
+
   // File attachments (a comment id works as the nestId — files are keyed by nestId)
   getNestFiles: z.object({
     nestId: z.string().describe("Nest or comment ID whose file attachments to list"),
@@ -3489,6 +3506,42 @@ export const toolDefinitions = [
         message: { type: "string", description: "What this run is for. Omit for a plain 'advance this item' run." },
       },
       required: ["workspaceId", "agentUserId", "nestId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_get_agent_mode",
+    description: "How one agent operates on one nest: reactive (acts when mentioned, messaged or handed work) or autonomous on a cadence (continuous, hourly, daily, weekly). The mode is always per nest, never a setting of the agent as a whole, and items inherit it from their role or circle unless they set their own. `source` says which: own, inherited, or default.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The role, project or task" },
+        agentUserId: { type: "string", description: "The agent's bot user ID" },
+      },
+      required: ["nestId", "agentUserId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_set_agent_mode",
+    description: "Set how one agent operates on one nest: reactive, or autonomous on a cadence. Applies to this nest and to the items under it that set nothing of their own; mode null clears this nest's own setting. A cadence re-checks one item until it is done, so it fits keeping an open-ended role or project moving. For a job that should happen again and again, such as a weekly report, do not use a cadence: create a task assigned to the agent with a due date and set a repeat with nestr_set_recurrence, so each occurrence runs when it comes due. You need assign rights on the nest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The role, project or task this setting is for" },
+        agentUserId: { type: "string", description: "The agent's bot user ID" },
+        mode: {
+          type: ["string", "null"],
+          enum: ["reactive", "autonomous", null],
+          description: "reactive or autonomous. null clears this nest's own setting so it inherits again.",
+        },
+        recheck: {
+          type: "string",
+          enum: ["continuous", "hourly", "daily", "weekly"],
+          description: "Required when mode is autonomous.",
+        },
+      },
+      required: ["nestId", "agentUserId", "mode"],
     },
     ...mutating,
   },
@@ -5196,6 +5249,22 @@ async function _handleToolCall(
           message: `The agent was dispatched.${watching}`,
           ...result,
         });
+      }
+
+      case "nestr_get_agent_mode": {
+        const parsed = schemas.getAgentMode.parse(args);
+        return formatResult(await client.getAgentMode(parsed.nestId, parsed.agentUserId));
+      }
+
+      case "nestr_set_agent_mode": {
+        const parsed = schemas.setAgentMode.parse(args);
+        // recheck only travels with autonomous: the server ignores it on reactive,
+        // and sending it there reads as a cadence that was never set.
+        const body = parsed.mode === "autonomous"
+          ? { mode: parsed.mode, recheck: parsed.recheck }
+          : { mode: parsed.mode };
+        const { result, hints } = await client.setAgentMode(parsed.nestId, parsed.agentUserId, body);
+        return formatResult({ ...result, ...(hints && hints.length ? { hints } : {}) });
       }
 
       case "nestr_workspace_docs": {
