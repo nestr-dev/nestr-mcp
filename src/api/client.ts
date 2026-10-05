@@ -488,7 +488,7 @@ export interface ConnectionListing {
   }>;
 }
 
-/** What an agent can and cannot use, and why. */
+/** An autonomous agent's cadence on a nest. */
 export type AgentRecheck = "continuous" | "hourly" | "daily" | "weekly";
 
 /** One agent's operating mode on one nest (GET /nests/:id/agents/:userId/mode). */
@@ -501,6 +501,7 @@ export interface AgentMode {
   source: "own" | "inherited" | "default";
 }
 
+/** What an agent can and cannot use, and why. */
 export interface AgentConnectorReach {
   connectionId: string;
   connectorId: string | null;
