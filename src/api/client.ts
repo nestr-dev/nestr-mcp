@@ -488,6 +488,19 @@ export interface ConnectionListing {
   }>;
 }
 
+/** An autonomous agent's cadence on a nest. */
+export type AgentRecheck = "continuous" | "hourly" | "daily" | "weekly";
+
+/** One agent's operating mode on one nest (GET /nests/:id/agents/:userId/mode). */
+export interface AgentMode {
+  agentUserId: string;
+  nestId: string;
+  mode: "reactive" | "autonomous";
+  recheck: AgentRecheck | null;
+  /** own: set on this nest. inherited: from an ancestor role or circle. default: nothing set. */
+  source: "own" | "inherited" | "default";
+}
+
 /** What an agent can and cannot use, and why. */
 export interface AgentConnectorReach {
   connectionId: string;
@@ -2752,6 +2765,47 @@ export class NestrClient {
       body: JSON.stringify(body),
     });
     return response.data;
+  }
+
+  /**
+   * How one agent operates on one nest: reactive, or autonomous on a cadence,
+   * and whether that is set on the nest itself, inherited from an ancestor role
+   * or circle, or the reactive default. The mode is always per nest, never a
+   * setting of the agent as a whole.
+   *
+   * Wraps GET /nests/:id/agents/:userId/mode.
+   */
+  async getAgentMode(nestId: string, agentUserId: string): Promise<AgentMode> {
+    const response = await this.fetch<{ status: string; data: AgentMode }>(
+      `/nests/${nestId}/agents/${agentUserId}/mode`
+    );
+    return response.data;
+  }
+
+  /**
+   * Set or clear how one agent operates on one nest. mode null clears the
+   * nest's own setting so it inherits again. The caller needs assign rights on
+   * the nest.
+   *
+   * Wraps PUT /nests/:id/agents/:userId/mode.
+   */
+  async setAgentMode(
+    nestId: string,
+    agentUserId: string,
+    body: { mode: "reactive" | "autonomous" | null; recheck?: AgentRecheck }
+  ): Promise<{ result: Record<string, unknown>; hints?: unknown[] }> {
+    // The envelope's hints are kept: the server answers every set with the one
+    // that says a repeating job belongs on a repeating task, which is the advice
+    // a caller reaching for "weekly" most needs.
+    const response = await this.fetch<{
+      status: string;
+      data: Record<string, unknown>;
+      hints?: unknown[];
+    }>(`/nests/${nestId}/agents/${agentUserId}/mode`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+    return { result: response.data, hints: response.hints };
   }
 }
 
