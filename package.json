@@ -74,7 +74,7 @@
     "ioredis": "^5.4.0",
     "jimp": "^1.6.1",
     "mcpcat": "^0.1.13",
-    "zod": "^3.25.0"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
