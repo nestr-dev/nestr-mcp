@@ -19,8 +19,15 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
-# Release from an up-to-date main, so the PR contains nothing but the bump
-git fetch origin main --tags --quiet
+# Release from an up-to-date main, so the PR contains nothing but the bump.
+# Not --quiet: under set -e a failed fetch exits with no output at all, and the
+# usual cause is a diverged tag whose rejection line --quiet is hiding.
+if ! git fetch origin main --tags; then
+  echo "Error: could not fetch origin."
+  echo "If a tag diverged ('would clobber existing tag'), take origin's copy with:"
+  echo "  git fetch origin main --tags --force"
+  exit 1
+fi
 if [ "$(git rev-parse --abbrev-ref HEAD)" != "main" ]; then
   echo "Error: run releases from main."
   exit 1
