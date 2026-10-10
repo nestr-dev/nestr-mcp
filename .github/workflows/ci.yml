@@ -21,6 +21,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # SECURITY.md commits to zero production advisories before a release; this
+      # is that policy, enforced per PR rather than remembered at release time.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev
+
       - name: Build
         run: npm run build
 
