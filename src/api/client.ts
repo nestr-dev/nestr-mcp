@@ -488,8 +488,12 @@ export interface ConnectionListing {
   }>;
 }
 
-/** An autonomous agent's cadence on a nest. */
-export type AgentRecheck = "continuous" | "hourly" | "daily" | "weekly";
+/**
+ * An autonomous agent's cadence on a nest: "continuous", or an RRULE such as
+ * "FREQ=WEEKLY;BYDAY=MO". "hourly", "daily" and "weekly" are accepted as shorthand
+ * when setting; the server always answers with the rule.
+ */
+export type AgentRecheck = string;
 
 /** One agent's operating mode on one nest (GET /nests/:id/agents/:userId/mode). */
 export interface AgentMode {
@@ -497,6 +501,12 @@ export interface AgentMode {
   nestId: string;
   mode: "reactive" | "autonomous";
   recheck: AgentRecheck | null;
+  /** The schedule's anchor: when it starts and what time of day it runs at. */
+  start?: string | null;
+  /** IANA zone the schedule keeps its local time in. */
+  tzid?: string | null;
+  /** The next time the schedule fires. null for continuous, reactive, or an ended schedule. */
+  nextRunAt?: string | null;
   /** own: set on this nest. inherited: from an ancestor role or circle. default: nothing set. */
   source: "own" | "inherited" | "default";
 }
@@ -2792,7 +2802,12 @@ export class NestrClient {
   async setAgentMode(
     nestId: string,
     agentUserId: string,
-    body: { mode: "reactive" | "autonomous" | null; recheck?: AgentRecheck }
+    body: {
+      mode: "reactive" | "autonomous" | null;
+      recheck?: AgentRecheck;
+      start?: string;
+      tzid?: string;
+    }
   ): Promise<{ result: Record<string, unknown>; hints?: unknown[] }> {
     // The envelope's hints are kept: the server answers every set with the one
     // that says a repeating job belongs on a repeating task, which is the advice
