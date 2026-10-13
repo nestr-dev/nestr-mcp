@@ -1821,7 +1821,7 @@ export const schemas = {
     recheck: z.string().min(1).optional()
       .describe("Required when mode is autonomous. \"continuous\" works the item until done or blocked. Otherwise an RRULE such as FREQ=DAILY or FREQ=WEEKLY;BYDAY=MO,WE,FR; hourly, daily and weekly are accepted as shorthand. Nothing more often than hourly."),
     start: z.string().optional()
-      .describe("ISO date-time the schedule starts at. It also sets the time of day the schedule runs at. Defaults to now."),
+      .describe("ISO date-time the schedule starts at. It also sets the time of day the schedule runs at. A value with no offset is read as local time in tzid. Defaults to now."),
     tzid: z.string().optional()
       .describe("IANA time zone the schedule keeps its local time in, such as Europe/Amsterdam. Defaults to UTC."),
   }).refine((v) => v.mode !== "autonomous" || !!v.recheck, {
@@ -3545,7 +3545,7 @@ export const toolDefinitions = [
         },
         start: {
           type: "string",
-          description: "ISO date-time the schedule starts at; sets the time of day it runs at. Defaults to now.",
+          description: "ISO date-time the schedule starts at; sets the time of day it runs at. A value with no offset is read as local time in tzid. Defaults to now.",
         },
         tzid: {
           type: "string",

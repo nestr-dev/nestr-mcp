@@ -209,6 +209,7 @@ describe("agent mode tools", () => {
     const props = (def?.inputSchema as { properties: Record<string, unknown> }).properties;
     expect(props.start).toBeDefined();
     expect(props.tzid).toBeDefined();
+    expect((props.start as { description: string }).description).toContain("no offset");
     expect((props.recheck as { enum?: unknown }).enum).toBeUndefined();
   });
 });
