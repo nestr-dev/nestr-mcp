@@ -18,8 +18,9 @@ on:
 jobs:
   claude-review:
     runs-on: ubuntu-latest
-    # Skip draft PRs and fork PRs (forks don't have access to secrets, and we don't want to review untrusted code)
-    if: '!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository'
+    # Skip draft PRs and fork PRs (forks don't have access to secrets, and we don't want to review untrusted code).
+    # Skip Dependabot PRs: the action refuses non-human actors and the job would fail.
+    if: "!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'"
     permissions:
       contents: read
       pull-requests: write
