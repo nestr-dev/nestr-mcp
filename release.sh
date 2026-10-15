@@ -19,6 +19,11 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "Error: jq is required to update server.json."
+  exit 1
+fi
+
 # Release from an up-to-date main, so the PR contains nothing but the bump.
 # Not --quiet: under set -e a failed fetch exits with no output at all, and the
 # usual cause is a diverged tag whose rejection line --quiet is hiding.
@@ -64,12 +69,16 @@ echo "Bumping version: $CURRENT_VERSION -> $NEW_VERSION"
 # the tree and the published tarball disagreed with the lockfile in git.
 git switch -c "$BRANCH"
 npm version "$NEW_VERSION" --no-git-tag-version >/dev/null
-git add package.json package-lock.json
+# server.json is what the MCP Registry reads. publish.yml rewrites it in CI too,
+# but only inside the runner, so without this the copy on main stays stale.
+jq --arg v "$NEW_VERSION" '.version = $v | .packages[0].version = $v' server.json > server.json.tmp
+mv server.json.tmp server.json
+git add package.json package-lock.json server.json
 git commit -m "$TAG"
 git push -u origin "$BRANCH"
 
 PR_URL=$(gh pr create --base main --head "$BRANCH" --title "$TAG" \
-  --body "Release $TAG. Bumps package.json and package-lock.json; the tag is pushed once this merges.")
+  --body "Release $TAG. Bumps package.json, package-lock.json and server.json; the tag is pushed once this merges.")
 echo "Opened $PR_URL"
 
 # Squash so main gets one commit per release; the branch is deleted on merge

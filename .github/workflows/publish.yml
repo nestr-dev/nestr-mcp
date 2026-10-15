@@ -117,6 +117,14 @@ jobs:
       - name: Update server.json version
         run: |
           VERSION=${{ needs.build-and-test.outputs.version }}
+          # release.sh commits server.json with the bump, so a mismatch here means
+          # main drifted. Warn rather than fail so an old release can still publish.
+          for field in .version '.packages[0].version'; do
+            current=$(jq -r "$field" server.json)
+            if [ "$current" != "$VERSION" ]; then
+              echo "::warning file=server.json::server.json $field is $current but the release is $VERSION. Commit the bump with ./release.sh so main stays in sync."
+            fi
+          done
           # Update root version and package version in server.json
           jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.json.tmp
           mv server.json.tmp server.json
