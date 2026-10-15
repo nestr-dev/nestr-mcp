@@ -133,8 +133,8 @@ jobs:
       # Pinned and hash-checked because this binary runs with the registry
       # signing key. Dependabot can't see a curl download, so bump it by hand:
       # pick a release from https://github.com/modelcontextprotocol/registry/releases,
-      # set the version, and copy the mcp-publisher_linux_amd64.tar.gz line from
-      # that release's registry_<version>_checksums.txt into the hash. The hash is
+      # set the version, and copy just the hash from the mcp-publisher_linux_amd64.tar.gz
+      # line of that release's registry_<version>_checksums.txt. The hash is
       # hardcoded rather than fetched because the registry's releases are not
       # immutable, so a checksums file from the same release proves nothing.
       - name: Install mcp-publisher
