@@ -123,4 +123,93 @@ describe("agent mode tools", () => {
     expect(def?.description).toContain("nestr_set_recurrence");
     expect(def?.description).toMatch(/per nest|one nest/);
   });
+
+  it("nestr_set_agent_mode sends an RRULE with its start and time zone", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, {
+      status: "success",
+      data: {
+        agentUserId: "bot-1",
+        nestId: "role-7",
+        mode: "autonomous",
+        recheck: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
+        start: "2026-10-12T07:00:00.000Z",
+        tzid: "Europe/Amsterdam",
+        nextRunAt: "2026-10-13T07:00:00.000Z",
+      },
+    }));
+
+    const result = await handleToolCall(client, "nestr_set_agent_mode", {
+      nestId: "role-7",
+      agentUserId: "bot-1",
+      mode: "autonomous",
+      recheck: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
+      start: "2026-10-12T09:00:00+02:00",
+      tzid: "Europe/Amsterdam",
+    });
+    expect(result.isError).toBeFalsy();
+
+    const [, opts] = mockFetch.mock.calls[0];
+    expect(JSON.parse(opts.body)).toEqual({
+      mode: "autonomous",
+      recheck: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
+      start: "2026-10-12T09:00:00+02:00",
+      tzid: "Europe/Amsterdam",
+    });
+    expect(parseResult(result.content[0].text).nextRunAt).toBe("2026-10-13T07:00:00.000Z");
+  });
+
+  it("nestr_set_agent_mode still accepts the shorthand words and sends no empty anchor", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, {
+      status: "success",
+      data: { agentUserId: "bot-1", nestId: "proj-3", mode: "autonomous", recheck: "FREQ=DAILY;INTERVAL=1" },
+    }));
+
+    await handleToolCall(client, "nestr_set_agent_mode", {
+      nestId: "proj-3", agentUserId: "bot-1", mode: "autonomous", recheck: "daily",
+    });
+    const [, opts] = mockFetch.mock.calls[0];
+    expect(JSON.parse(opts.body)).toEqual({ mode: "autonomous", recheck: "daily" });
+  });
+
+  it("nestr_set_agent_mode drops start and tzid on reactive", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, {
+      status: "success",
+      data: { agentUserId: "bot-1", nestId: "proj-3", mode: "reactive", recheck: null },
+    }));
+
+    await handleToolCall(client, "nestr_set_agent_mode", {
+      nestId: "proj-3", agentUserId: "bot-1", mode: "reactive", start: "2026-10-12T09:00:00Z", tzid: "UTC",
+    });
+    const [, opts] = mockFetch.mock.calls[0];
+    expect(JSON.parse(opts.body)).toEqual({ mode: "reactive" });
+  });
+
+  it("nestr_get_agent_mode passes the schedule fields through", async () => {
+    const mode = {
+      agentUserId: "bot-1",
+      nestId: "role-7",
+      mode: "autonomous",
+      recheck: "FREQ=DAILY;INTERVAL=1",
+      start: "2026-10-12T07:00:00.000Z",
+      tzid: "Europe/Amsterdam",
+      nextRunAt: "2026-10-13T07:00:00.000Z",
+      source: "own",
+    };
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: mode }));
+    const result = await handleToolCall(client, "nestr_get_agent_mode", {
+      nestId: "role-7", agentUserId: "bot-1",
+    });
+    expect(parseResult(result.content[0].text)).toEqual(mode);
+  });
+
+  it("the set description tells the model where the time of day goes", () => {
+    const def = toolDefinitions.find((t) => t.name === "nestr_set_agent_mode");
+    expect(def?.description).toContain("RRULE");
+    expect(def?.description).toContain("BYHOUR");
+    const props = (def?.inputSchema as { properties: Record<string, unknown> }).properties;
+    expect(props.start).toBeDefined();
+    expect(props.tzid).toBeDefined();
+    expect((props.start as { description: string }).description).toContain("no offset");
+    expect((props.recheck as { enum?: unknown }).enum).toBeUndefined();
+  });
 });

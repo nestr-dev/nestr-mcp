@@ -1818,8 +1818,12 @@ export const schemas = {
     agentUserId: z.string().describe("The agent's bot user ID"),
     mode: z.enum(["reactive", "autonomous"]).nullable()
       .describe("reactive (acts when triggered) or autonomous (works on a cadence). null clears this nest's own setting so it inherits again."),
-    recheck: z.enum(["continuous", "hourly", "daily", "weekly"]).optional()
-      .describe("Required when mode is autonomous. continuous works the item until done or blocked; hourly, daily and weekly make periodic progress."),
+    recheck: z.string().min(1).optional()
+      .describe("Required when mode is autonomous. \"continuous\" works the item until done or blocked. Otherwise an RRULE such as FREQ=DAILY or FREQ=WEEKLY;BYDAY=MO,WE,FR; hourly, daily and weekly are accepted as shorthand. Nothing more often than hourly."),
+    start: z.string().optional()
+      .describe("ISO date-time the schedule starts at. It also sets the time of day the schedule runs at. A value with no offset is read as local time in tzid. Defaults to now."),
+    tzid: z.string().optional()
+      .describe("IANA time zone the schedule keeps its local time in, such as Europe/Amsterdam. Defaults to UTC."),
   }).refine((v) => v.mode !== "autonomous" || !!v.recheck, {
     message: "recheck is required when mode is autonomous",
     path: ["recheck"],
@@ -3511,7 +3515,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_agent_mode",
-    description: "How one agent operates on one nest: reactive (acts when mentioned, messaged or handed work) or autonomous on a cadence (continuous, hourly, daily, weekly). The mode is always per nest, never a setting of the agent as a whole, and items inherit it from their role or circle unless they set their own. `source` says which: own, inherited, or default.",
+    description: "How one agent operates on one nest: reactive (acts when mentioned, messaged or handed work) or autonomous on a cadence. `recheck` is \"continuous\" or an RRULE; `start` and `tzid` anchor it and `nextRunAt` is when it fires next. The mode is always per nest, never a setting of the agent as a whole, and items inherit it from their role or circle unless they set their own. `source` says which: own, inherited, or default.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3524,7 +3528,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_set_agent_mode",
-    description: "Set how one agent operates on one nest: reactive, or autonomous on a cadence. Applies to this nest and to the items under it that set nothing of their own; mode null clears this nest's own setting. A cadence re-checks one item until it is done, so it fits keeping an open-ended role or project moving. For a job that should happen again and again, such as a weekly report, do not use a cadence: create a task assigned to the agent with a due date and set a repeat with nestr_set_recurrence, so each occurrence runs when it comes due. You need assign rights on the nest.",
+    description: "Set how one agent operates on one nest: reactive, or autonomous on a cadence. The cadence (`recheck`) is \"continuous\" or an RRULE. Put the time of day in `start` and the zone in `tzid`, never in BYHOUR: weekdays at 09:00 Amsterdam time is recheck FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR with start 2026-10-12T09:00:00+02:00 and tzid Europe/Amsterdam. Applies to this nest and to the items under it that set nothing of their own; mode null clears this nest's own setting. A cadence re-checks one item until it is done, so it fits keeping an open-ended role or project moving. For a job that should happen again and again, such as a weekly report, do not use a cadence: create a task assigned to the agent with a due date and set a repeat with nestr_set_recurrence, so each occurrence runs when it comes due. You need assign rights on the nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3537,8 +3541,15 @@ export const toolDefinitions = [
         },
         recheck: {
           type: "string",
-          enum: ["continuous", "hourly", "daily", "weekly"],
-          description: "Required when mode is autonomous.",
+          description: "Required when mode is autonomous. \"continuous\", or an RRULE such as FREQ=WEEKLY;BYDAY=MO,WE,FR. hourly, daily and weekly are accepted as shorthand.",
+        },
+        start: {
+          type: "string",
+          description: "ISO date-time the schedule starts at; sets the time of day it runs at. A value with no offset is read as local time in tzid. Defaults to now.",
+        },
+        tzid: {
+          type: "string",
+          description: "IANA time zone, such as Europe/Amsterdam. Defaults to UTC.",
         },
       },
       required: ["nestId", "agentUserId", "mode"],
@@ -5258,10 +5269,15 @@ async function _handleToolCall(
 
       case "nestr_set_agent_mode": {
         const parsed = schemas.setAgentMode.parse(args);
-        // recheck only travels with autonomous: the server ignores it on reactive,
-        // and sending it there reads as a cadence that was never set.
+        // The cadence only travels with autonomous: the server ignores it on
+        // reactive, and sending it there reads as a schedule that was never set.
         const body = parsed.mode === "autonomous"
-          ? { mode: parsed.mode, recheck: parsed.recheck }
+          ? {
+            mode: parsed.mode,
+            recheck: parsed.recheck,
+            ...(parsed.start ? { start: parsed.start } : {}),
+            ...(parsed.tzid ? { tzid: parsed.tzid } : {}),
+          }
           : { mode: parsed.mode };
         const { result, hints } = await client.setAgentMode(parsed.nestId, parsed.agentUserId, body);
         return formatResult({ ...result, ...(hints && hints.length ? { hints } : {}) });
