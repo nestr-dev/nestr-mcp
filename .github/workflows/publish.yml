@@ -130,9 +130,23 @@ jobs:
           mv server.json.tmp server.json
           cat server.json
 
+      # Pinned and hash-checked because this binary runs with the registry
+      # signing key. Dependabot can't see a curl download, so bump it by hand:
+      # pick a release from https://github.com/modelcontextprotocol/registry/releases,
+      # set the version, and copy the mcp-publisher_linux_amd64.tar.gz line from
+      # that release's registry_<version>_checksums.txt into the hash. The hash is
+      # hardcoded rather than fetched because the registry's releases are not
+      # immutable, so a checksums file from the same release proves nothing.
       - name: Install mcp-publisher
+        env:
+          MCP_PUBLISHER_VERSION: 1.8.1
+          MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
         run: |
-          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz
+          asset=mcp-publisher_linux_amd64.tar.gz
+          curl -fsSL -o "$asset" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/${asset}"
+          echo "${MCP_PUBLISHER_SHA256}  ${asset}" | sha256sum -c -
+          tar xzf "$asset" mcp-publisher
           sudo mv mcp-publisher /usr/local/bin/
 
       - name: Login to MCP Registry
