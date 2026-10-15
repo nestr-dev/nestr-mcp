@@ -966,14 +966,14 @@ const coerceFromJson = <T extends z.ZodTypeAny>(schema: T) =>
       try { return JSON.parse(val); } catch { return val; }
     }
     return val;
-  }, schema) as z.ZodEffects<T, z.output<T>, unknown>;
+  }, schema);
 
 // The instant an occurrence keys on, as integer epoch milliseconds. An ISO-8601 date
 // is accepted only with an explicit Z or offset: without one this host's timezone
 // would silently decide the instant.
 const occurrenceInstant = z.union([z.number(), z.string()]).transform((val, ctx) => {
   const refuse = (message: string) => {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+    ctx.addIssue({ code: "custom", message });
     return z.NEVER;
   };
   const useListing = "Use the `instant` value from nestr_list_occurrences (integer epoch milliseconds)";
@@ -1012,7 +1012,7 @@ const coerceIntArray = <T extends z.ZodTypeAny>(schema: T) =>
       return toNums(s.replace(/[[\]]/g, '').split(/[\s,]+/).filter(Boolean));
     }
     return val;
-  }, schema) as z.ZodEffects<T, z.output<T>, unknown>;
+  }, schema);
 
 // Shared description for the sort parameter on list/fetch tools. All of these
 // endpoints honor a `sort` query param server-side (field name, '-' prefix for
@@ -1049,9 +1049,9 @@ const nestUpdateFieldSchemas = {
   purpose: z.string().optional().describe(PURPOSE_DESC),
   parentId: z.string().optional().describe("New parent ID (move nest to different location, e.g., move inbox item to a role or project)"),
   labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to set (e.g., ['project'] to convert an item into a project)"),
-  fields: coerceFromJson(z.record(z.unknown())).optional().describe("Field updates (e.g., { 'project.status': 'Current' })"),
+  fields: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Field updates (e.g., { 'project.status': 'Current' })"),
   users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign"),
-  data: coerceFromJson(z.record(z.unknown())).optional().describe("Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead."),
+  data: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead."),
   due: z.string().optional().describe(DUE_DESC),
   start: z.string().nullable().optional().describe(START_DESC),
   allDay: z.boolean().nullable().optional().describe(ALL_DAY_DESC),
@@ -1262,7 +1262,7 @@ export const schemas = {
     description: z.string().optional().describe("The primary content field — use for project details, task context, acceptance criteria, Definition of Done, and any detailed information. Supports Markdown and HTML."),
     purpose: z.string().optional().describe(PURPOSE_DESC),
     labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to apply"),
-    fields: coerceFromJson(z.record(z.unknown())).optional().describe("Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call."),
+    fields: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call."),
     users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
     start: z.string().optional().describe(START_DESC),
     allDay: z.boolean().optional().describe(ALL_DAY_DESC),
@@ -1431,7 +1431,7 @@ export const schemas = {
     title: z.string().optional().describe("Updated title (plain text, HTML stripped)"),
     description: z.string().optional().describe("Updated description (supports Markdown and HTML)"),
     completed: z.boolean().optional().describe("Mark as completed (processed)"),
-    data: coerceFromJson(z.record(z.unknown())).optional().describe("Custom data storage"),
+    data: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Custom data storage"),
   }),
 
   reorderInbox: z.object({
@@ -1738,9 +1738,9 @@ export const schemas = {
     workspaceId: z.string().describe("Workspace ID to register the connector in"),
     type: z.enum(["mcp", "cli", "api"]).optional().describe("Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command). Required unless templateId is given."),
     name: z.string().optional().describe("Unique connector name within the workspace catalog. Required unless templateId is given, where it defaults to the template's own name."),
-    config: coerceFromJson(z.record(z.unknown())).optional().describe("Per-type transport config, no secret. mcp/api need a url (e.g., { url: 'https://...' }); cli needs a command (e.g., { command: 'some-cli' }). Optional non-secret headers go under headers."),
-    capabilities: coerceFromJson(z.record(z.unknown())).optional().describe("Capability descriptor: { discover: boolean, tools: [{ name, description, inputSchema }] }. discover:true lets the connector self-describe its tools at runtime."),
-    exposure: coerceFromJson(z.record(z.unknown())).optional().describe("Exposure policy deciding which owners may bind: { userAgent: boolean, domainGated: boolean }. Set domainGated:true to allow binding to a role's domain."),
+    config: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Per-type transport config, no secret. mcp/api need a url (e.g., { url: 'https://...' }); cli needs a command (e.g., { command: 'some-cli' }). Optional non-secret headers go under headers."),
+    capabilities: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Capability descriptor: { discover: boolean, tools: [{ name, description, inputSchema }] }. discover:true lets the connector self-describe its tools at runtime."),
+    exposure: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Exposure policy deciding which owners may bind: { userAgent: boolean, domainGated: boolean }. Set domainGated:true to allow binding to a role's domain."),
     authStrategy: z.enum(["secret", "oauth2"]).optional().describe("How a principal connects: 'secret' (a one-time secret captured via the Connect button) or 'oauth2'. The agent never sees the secret."),
   }),
 
@@ -1749,7 +1749,7 @@ export const schemas = {
     name: z.string().describe("The AGENT's own name, as its identity calls it (e.g. 'Collab'). Not the name of the work: that belongs to the role this agent will fill."),
     description: z.string().optional().describe("What the agent is LIKE: its character and what it is careful about. Not its instructions, which belong in a skill on the role."),
     roleAssignable: z.boolean().optional().describe("Defaults to true. Pass false to create an ASSISTANT: an agent that can never be assigned to a role, so it can never stop being able to act with the authority of the person it helps."),
-    agentConfig: coerceFromJson(z.record(z.unknown())).optional().describe("Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Omit for an agent that runs on Nestr's own runtime."),
+    agentConfig: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Omit for an agent that runs on Nestr's own runtime."),
   }),
 
   bindConnector: z.object({
@@ -1764,9 +1764,9 @@ export const schemas = {
     connectorId: z.string().describe("ID of the connector to update"),
     type: z.enum(["mcp", "cli", "api"]).optional().describe("Transport"),
     name: z.string().optional().describe("Unique connector name within the workspace catalog"),
-    config: coerceFromJson(z.record(z.unknown())).optional().describe("Per-type transport config, no secret"),
-    capabilities: coerceFromJson(z.record(z.unknown())).optional().describe("Capability descriptor"),
-    exposure: coerceFromJson(z.record(z.unknown())).optional().describe("Exposure policy: { userAgent, domainGated }"),
+    config: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Per-type transport config, no secret"),
+    capabilities: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Capability descriptor"),
+    exposure: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Exposure policy: { userAgent, domainGated }"),
     authStrategy: z.enum(["secret", "oauth2"]).optional().describe("How a principal connects"),
     enabled: z.boolean().optional().describe("Switch the connector on or off in this workspace"),
   }),
@@ -5499,7 +5499,7 @@ async function _handleToolCall(
       return formatError({
         error: true,
         code: "VALIDATION",
-        message: error.errors.map(e => `${e.path.join(".")}: ${e.message}`).join("; "),
+        message: error.issues.map(e => `${e.path.join(".")}: ${e.message}`).join("; "),
         retryable: false,
         hint: "Check the tool parameters match the expected schema.",
         correlationId: getCorrelationId(),

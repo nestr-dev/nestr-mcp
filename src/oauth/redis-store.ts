@@ -237,6 +237,11 @@ class RedisStore implements OAuthStore {
  */
 export async function createRedisStore(redisUrl: string): Promise<OAuthStore> {
   const redis = new Redis(redisUrl, {
+    // ioredis 6 defaults to RESP3 and only falls back to RESP2 when HELLO is
+    // rejected with NOPROTO or "unknown command". A proxy in front of Redis
+    // that refuses it any other way fails the handshake instead. Nothing here
+    // needs RESP3, so stay on the v5 wire protocol.
+    protocol: 2,
     maxRetriesPerRequest: 3,
     retryStrategy(times: number) {
       // Exponential backoff: 50ms, 100ms, 200ms, ... capped at 2s
