@@ -109,11 +109,15 @@ export class RedisStore implements OAuthStore {
   // ---- Clients ----
 
   async registerClient(client: RegisteredClient): Promise<void> {
-    await this.redis
+    const results = await this.redis
       .multi()
       .set(PREFIX.client + client.client_id, this.serialize(client), "EX", CLIENT_TTL)
       .zadd(PREFIX.clientIndex, Date.now() + CLIENT_TTL * 1000, client.client_id)
       .exec();
+    // exec() reports a failed command as an [err, result] pair instead of
+    // rejecting. Throw, so a client_id that was never stored is not handed out.
+    const err = results?.find(([e]) => e)?.[0];
+    if (err) throw err;
     console.log(`Registered OAuth client: ${client.client_id}`);
   }
 

@@ -29,9 +29,16 @@ function createFakeRedis() {
       const tx = {
         set: (...args: Parameters<typeof fake.set>) => (queued.push(() => fake.set(...args)), tx),
         zadd: (...args: Parameters<typeof fake.zadd>) => (queued.push(() => fake.zadd(...args)), tx),
+        // Like ioredis: a failing command becomes an [err, null] pair, not a rejection.
         exec: async () => {
-          const results = [];
-          for (const run of queued) results.push([null, await run()]);
+          const results: Array<[Error | null, unknown]> = [];
+          for (const run of queued) {
+            try {
+              results.push([null, await run()]);
+            } catch (e) {
+              results.push([e as Error, null]);
+            }
+          }
           return results;
         },
       };
@@ -91,12 +98,20 @@ function client(id: string): RegisteredClient {
 
 describe("RedisStore client registrations", () => {
   let store: RedisStore;
+  let redis: ReturnType<typeof createFakeRedis>;
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
     vi.spyOn(console, "log").mockImplementation(() => {});
-    store = new RedisStore(createFakeRedis() as unknown as Redis);
+    redis = createFakeRedis();
+    store = new RedisStore(redis as unknown as Redis);
+  });
+
+  it("rejects the registration when storing the client fails inside the transaction", async () => {
+    vi.spyOn(redis, "set").mockRejectedValueOnce(new Error("OOM command not allowed"));
+
+    await expect(store.registerClient(client("mcp-a"))).rejects.toThrow("OOM");
   });
 
   afterEach(() => {
