@@ -109,8 +109,11 @@ export class RedisStore implements OAuthStore {
   // ---- Clients ----
 
   async registerClient(client: RegisteredClient): Promise<void> {
-    await this.redis.set(PREFIX.client + client.client_id, this.serialize(client), "EX", CLIENT_TTL);
-    await this.indexClient(client.client_id);
+    await this.redis
+      .multi()
+      .set(PREFIX.client + client.client_id, this.serialize(client), "EX", CLIENT_TTL)
+      .zadd(PREFIX.clientIndex, Date.now() + CLIENT_TTL * 1000, client.client_id)
+      .exec();
     console.log(`Registered OAuth client: ${client.client_id}`);
   }
 
@@ -118,6 +121,8 @@ export class RedisStore implements OAuthStore {
     // GETEX resets the TTL, so a client in use never expires.
     const raw = await this.redis.getex(PREFIX.client + clientId, "EX", CLIENT_TTL);
     if (!raw) return undefined;
+    // Separate from the GETEX on purpose: re-index only on a hit, so a lookup of
+    // an unknown id never adds a phantom entry to the live count.
     await this.indexClient(clientId);
     return this.deserialize<RegisteredClient>(raw);
   }

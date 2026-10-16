@@ -23,7 +23,20 @@ function createFakeRedis() {
     return entry;
   };
 
-  return {
+  const fake = {
+    multi() {
+      const queued: Array<() => Promise<unknown>> = [];
+      const tx = {
+        set: (...args: Parameters<typeof fake.set>) => (queued.push(() => fake.set(...args)), tx),
+        zadd: (...args: Parameters<typeof fake.zadd>) => (queued.push(() => fake.zadd(...args)), tx),
+        exec: async () => {
+          const results = [];
+          for (const run of queued) results.push([null, await run()]);
+          return results;
+        },
+      };
+      return tx;
+    },
     async set(key: string, value: string, _ex: "EX", seconds: number) {
       strings.set(key, { value, expiresAt: Date.now() + seconds * 1000 });
       return "OK";
@@ -61,6 +74,7 @@ function createFakeRedis() {
       return zsets.get(key)?.size ?? 0;
     },
   };
+  return fake;
 }
 
 function client(id: string): RegisteredClient {
@@ -126,6 +140,12 @@ describe("RedisStore client registrations", () => {
     expect(await store.getClientCount()).toBe(1);
 
     vi.advanceTimersByTime(30 * DAY_MS);
+    expect(await store.getClientCount()).toBe(0);
+  });
+
+  it("does not count a lookup of an unknown client_id", async () => {
+    await store.getClient("mcp-never-registered");
+
     expect(await store.getClientCount()).toBe(0);
   });
 
