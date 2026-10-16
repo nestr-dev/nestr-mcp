@@ -428,7 +428,7 @@ app.get("/oauth/authorize", oauthLimiter, async (req: Request, res: Response) =>
     if (!client) {
       res.status(400).json({
         error: "invalid_client",
-        error_description: `Unknown client_id: ${clientId}`,
+        error_description: `Unknown client_id: ${clientId}. This client registration is no longer known to the server. Remove the Nestr connector from your MCP client and add it again to register a new one.`,
       });
       return;
     }
@@ -952,6 +952,18 @@ app.post("/oauth/token", tokenLimiter, express.urlencoded({ extended: true }), a
           error_description: "Missing required parameter: refresh_token",
         });
         return;
+      }
+
+      // Look the client up only to reset its sliding TTL, so a client that only
+      // ever refreshes stays registered for its next /oauth/authorize. A miss is
+      // not rejected: registrations that lapsed under the old 24h TTL must keep
+      // refreshing, and Nestr validates the refresh token itself.
+      if (typeof client_id === "string" && client_id.startsWith("mcp-")) {
+        try {
+          await getStore().getClient(client_id);
+        } catch (err) {
+          console.error("OAuth Token: failed to refresh client registration TTL:", err);
+        }
       }
 
       // Build refresh request to Nestr

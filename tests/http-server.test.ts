@@ -737,6 +737,68 @@ describe("HTTP Server", () => {
 
       vi.unstubAllGlobals();
     });
+
+    it("still proxies a refresh for a dynamic client whose registration has lapsed", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        status: 200,
+        json: async () => ({ access_token: "new-token", token_type: "bearer" }),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const res = await request(app)
+        .post("/oauth/token")
+        .set("Content-Type", "application/x-www-form-urlencoded")
+        .send("grant_type=refresh_token&refresh_token=old-refresh&client_id=mcp-lapsed");
+
+      expect(res.status).toBe(200);
+      expect(res.body.access_token).toBe("new-token");
+      expect(mockFetch).toHaveBeenCalled();
+
+      vi.unstubAllGlobals();
+    });
+
+    it("looks up a dynamic client on refresh, which keeps its registration alive", async () => {
+      await mockStore.registerClient({
+        client_id: "mcp-refreshing",
+        redirect_uris: ["https://example.com/callback"],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+        registered_at: Date.now(),
+      });
+      const getClient = vi.spyOn(mockStore, "getClient");
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        status: 200,
+        json: async () => ({ access_token: "new-token", token_type: "bearer" }),
+      }));
+
+      const res = await request(app)
+        .post("/oauth/token")
+        .set("Content-Type", "application/x-www-form-urlencoded")
+        .send("grant_type=refresh_token&refresh_token=old-refresh&client_id=mcp-refreshing");
+
+      expect(res.status).toBe(200);
+      expect(getClient).toHaveBeenCalledWith("mcp-refreshing");
+
+      getClient.mockRestore();
+      vi.unstubAllGlobals();
+    });
+
+    it("tells the user how to recover when /oauth/authorize gets an unknown client_id", async () => {
+      const res = await request(app)
+        .get("/oauth/authorize")
+        .query({
+          client_id: "mcp-unknown",
+          redirect_uri: "https://example.com/callback",
+          response_type: "code",
+          state: "s",
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("invalid_client");
+      expect(res.body.error_description).toMatch(/Unknown client_id: mcp-unknown/);
+      expect(res.body.error_description).toMatch(/add it again/);
+    });
   });
 
   // ─── DELETE /mcp ──────────────────────────────────────────────────
