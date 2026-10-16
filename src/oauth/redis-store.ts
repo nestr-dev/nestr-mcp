@@ -24,7 +24,9 @@ import type {
 // Key prefixes
 const PREFIX = {
   client: "oauth:client:",
-  clientCount: "oauth:client:count",
+  // Sorted set of client_id -> expiry (ms). Gives a live count that drops as
+  // registrations expire, which a plain INCR counter never did.
+  clientIndex: "oauth:client:index",
   pending: "oauth:pending:",
   pkce: "oauth:pkce:",
   session: "oauth:session:",
@@ -34,7 +36,11 @@ const PREFIX = {
 // TTLs in seconds
 const PENDING_AUTH_TTL = 300; // 5 minutes
 const PKCE_TTL = 300; // 5 minutes
-const CLIENT_TTL = 86400; // 24 hours (clients re-register on reconnect)
+// Sliding: every lookup resets it. MCP clients (claude.ai, Cowork, Cursor...)
+// register once and reuse their client_id indefinitely, so a fixed short TTL
+// strands them with "Unknown client_id" the next time they send a user through
+// /oauth/authorize. Only a registration nobody has used for this long expires.
+const CLIENT_TTL = 90 * 86400; // 90 days
 const SESSION_REFRESH_TTL = 30 * 86400; // 30 days for sessions with refresh tokens
 const MCP_SESSION_TTL = 7 * 86400; // 7 days — refreshed on every touch
 
@@ -75,7 +81,7 @@ function decrypt(encryptedData: string, key: Buffer): string {
   return decrypted;
 }
 
-class RedisStore implements OAuthStore {
+export class RedisStore implements OAuthStore {
   private redis: Redis;
   private encryptionKey: Buffer | null;
 
@@ -103,26 +109,35 @@ class RedisStore implements OAuthStore {
   // ---- Clients ----
 
   async registerClient(client: RegisteredClient): Promise<void> {
-    const key = PREFIX.client + client.client_id;
-    // Only increment the counter for genuinely new clients (SET NX returns 1 if key didn't exist).
-    // Without this, the counter drifts upward as clients re-register and eventually blocks
-    // all registrations when it hits MAX_REGISTERED_CLIENTS.
-    const isNew = await this.redis.set(key, this.serialize(client), "EX", CLIENT_TTL, "GET");
-    if (isNew === null) {
-      await this.redis.incr(PREFIX.clientCount);
-    }
+    const results = await this.redis
+      .multi()
+      .set(PREFIX.client + client.client_id, this.serialize(client), "EX", CLIENT_TTL)
+      .zadd(PREFIX.clientIndex, Date.now() + CLIENT_TTL * 1000, client.client_id)
+      .exec();
+    // exec() reports a failed command as an [err, result] pair instead of
+    // rejecting. Throw, so a client_id that was never stored is not handed out.
+    const err = results?.find(([e]) => e)?.[0];
+    if (err) throw err;
     console.log(`Registered OAuth client: ${client.client_id}`);
   }
 
   async getClient(clientId: string): Promise<RegisteredClient | undefined> {
-    const raw = await this.redis.get(PREFIX.client + clientId);
+    // GETEX resets the TTL, so a client in use never expires.
+    const raw = await this.redis.getex(PREFIX.client + clientId, "EX", CLIENT_TTL);
     if (!raw) return undefined;
+    // Separate from the GETEX on purpose: re-index only on a hit, so a lookup of
+    // an unknown id never adds a phantom entry to the live count.
+    await this.indexClient(clientId);
     return this.deserialize<RegisteredClient>(raw);
   }
 
   async getClientCount(): Promise<number> {
-    const count = await this.redis.get(PREFIX.clientCount);
-    return count ? parseInt(count, 10) : 0;
+    await this.redis.zremrangebyscore(PREFIX.clientIndex, "-inf", Date.now());
+    return this.redis.zcard(PREFIX.clientIndex);
+  }
+
+  private async indexClient(clientId: string): Promise<void> {
+    await this.redis.zadd(PREFIX.clientIndex, Date.now() + CLIENT_TTL * 1000, clientId);
   }
 
   async clientExists(clientId: string): Promise<boolean> {
