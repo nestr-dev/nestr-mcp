@@ -137,6 +137,25 @@ describe("nestr_update_agent", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  // On the hosted server MCPcat adds a `context` argument to every tool's
+  // advertised schema, models fill it in, and mcpcat 0.1.17 reads it for the
+  // event's userIntent without removing it. Strict parsing must not count it
+  // as a field the caller sent, and it must never reach the PATCH body.
+  it("accepts MCPcat's context argument and keeps it out of the request", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: { _id: "u1", username: "Collab" } }));
+
+    const result = await update({ workspaceId: "ws1", userId: "u1", name: "Collab", context: "The user is renaming their agent" });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ name: "Collab" });
+  });
+
+  it("still refuses a call whose only field is MCPcat's context", async () => {
+    const result = await update({ workspaceId: "ws1", userId: "u1", context: "Checking the agent" });
+    expect(result.isError).toBe(true);
+    expect(String(parseResult(result.content[0].text).message)).toMatch(/Nothing to update/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it("relays the route's own unknown-field refusal should the API ever see one", async () => {
     const message = "Unsupported parameter: purpose. Accepted: name, description, webSearch, status, roleAssignable, agentConfig.";
     mockFetch.mockResolvedValue(mockResponse(422, { status: "error", message }));

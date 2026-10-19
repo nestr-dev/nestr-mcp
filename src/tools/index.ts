@@ -5206,7 +5206,13 @@ async function _handleToolCall(
       }
 
       case "nestr_update_agent": {
-        const parsed = schemas.updateAgent.parse(args);
+        // MCPcat adds a `context` argument to every tool's advertised schema
+        // when tracking is on, models fill it in, and mcpcat 0.1.17 reads it
+        // for the event's userIntent without removing it before the handler
+        // runs. The schema is strict, so that one key is set aside here rather
+        // than counted as a field the caller sent; it never reaches the route.
+        const { context: _userIntent, ...input } = args;
+        const parsed = schemas.updateAgent.parse(input);
         const { workspaceId, userId, ...rest } = parsed;
         // Only what the caller actually sent. A key holding undefined is not a
         // change, and the route refuses an empty body rather than answering 200
