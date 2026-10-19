@@ -124,12 +124,23 @@ describe("nestr_update_agent", () => {
     expect("stack" in parsed).toBe(false);
   });
 
-  it("relays the route's unknown-field refusal, which lists the accepted keys", async () => {
+  // The description promises that a field the tool does not list is refused,
+  // not dropped. A plain z.object strips unknown keys, which would PATCH the
+  // known ones and answer "every field you sent has landed" for one that
+  // never left the process.
+  it("refuses a field it does not list, naming it, without calling the API", async () => {
+    const result = await update({ workspaceId: "ws1", userId: "u1", name: "Collab", instructions: "Be brief" });
+    expect(result.isError).toBe(true);
+    const parsed = parseResult(result.content[0].text);
+    expect(parsed.code).toBe("VALIDATION");
+    expect(String(parsed.message)).toContain("instructions");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("relays the route's own unknown-field refusal should the API ever see one", async () => {
     const message = "Unsupported parameter: purpose. Accepted: name, description, webSearch, status, roleAssignable, agentConfig.";
     mockFetch.mockResolvedValue(mockResponse(422, { status: "error", message }));
 
-    // Zod strips unknown keys, so this reaches the route only through a field
-    // the tool knows; the point is what comes back when the route refuses.
     const result = await update({ workspaceId: "ws1", userId: "u1", name: "Collab" });
     expect(result.isError).toBe(true);
     expect(parseResult(result.content[0].text).message).toBe(message);

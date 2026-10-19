@@ -1761,7 +1761,10 @@ export const schemas = {
     status: z.enum(["active", "paused", "disabled"]).optional().describe("active, paused or disabled."),
     roleAssignable: z.boolean().optional().describe("false makes it an ASSISTANT that can never be assigned to a role. Refused while it still fills one; the error names the roles, so unassign it there first. true makes an assistant assignable again."),
     agentConfig: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Replaces the stored wiring as a whole."),
-  }),
+    // Strict, as the description promises: a key this tool does not list is
+    // refused and named, not stripped. Stripped, it would PATCH the known keys
+    // and answer "every field you sent has landed" for one that never left.
+  }).strict(),
 
   bindConnector: z.object({
     workspaceId: z.string().describe("Workspace ID the connector and owner belong to"),
