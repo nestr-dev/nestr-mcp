@@ -455,6 +455,20 @@ describe("NestrClient", () => {
     expect(url).toBe("https://api.test.io/api/workspaces/ws1/projects?cleanText=true");
   });
 
+  // ─── Reorder ────────────────────────────────────────────────────
+
+  it("reorderInboxItem PATCHes the single-item inbox reorder route", async () => {
+    // The API defines this route as PATCH only, so a POST never reaches it.
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: { _id: "n1" } }));
+    const client = createClient();
+
+    await client.reorderInboxItem("n1", "before", "n2");
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/users/me/inbox/n1/reorder/before/n2");
+    expect(opts.method).toBe("PATCH");
+  });
+
   // ─── Elections ──────────────────────────────────────────────────
 
   it("createElection POSTs an election part to the tension parts endpoint", async () => {

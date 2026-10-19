@@ -1914,7 +1914,7 @@ export class NestrClient {
   ): Promise<Nest & { searchOrder?: number; order?: number }> {
     const response = await this.fetch<{ status: string; data: Nest & { searchOrder?: number; order?: number } }>(
       `/users/me/inbox/${nestId}/reorder/${position}/${relatedNestId}`,
-      { method: "POST" }
+      { method: "PATCH" }
     );
     return response.data;
   }

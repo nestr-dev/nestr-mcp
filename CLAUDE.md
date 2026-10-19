@@ -303,7 +303,7 @@ The server exposes these tools to AI assistants:
 | `nestr_get_inbox_item` | `GET /users/me/inbox/{id}` (OAuth only) |
 | `nestr_update_inbox_item` | `PATCH /users/me/inbox/{id}` (OAuth only) |
 | `nestr_reorder_inbox` | `PATCH /users/me/inbox/reorder` (OAuth only) |
-| `nestr_reorder_inbox_item` | `POST /users/me/inbox/{id}/reorder/{position}/{relatedId}` (OAuth only) |
+| `nestr_reorder_inbox_item` | `PATCH /users/me/inbox/{id}/reorder/{position}/{relatedId}` (OAuth only) |
 | `nestr_list_personal_labels` | `GET /users/me/labels` (OAuth only) |
 | `nestr_create_personal_label` | `POST /users/me/labels` (OAuth only) |
 | `nestr_get_daily_plan` | `GET /users/me/today` (OAuth only) |
