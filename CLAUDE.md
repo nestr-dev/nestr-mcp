@@ -316,7 +316,7 @@ The server exposes these tools to AI assistants:
 | `nestr_list_tensions_awaiting_consent` | `GET /users/me/tensions/awaiting-my-consent` (OAuth only) |
 | `nestr_list_notifications` | `GET /users/me/notifications` (OAuth only) |
 | `nestr_mark_notifications_read` | `POST /users/me/notifications/mark-all-read` (OAuth only) |
-| `nestr_reorder_nest` | `POST /nests/{id}/reorder/{position}/{relatedId}` |
+| `nestr_reorder_nest` | `PATCH /nests/{id}/reorder/{position}/{relatedId}` |
 | `nestr_bulk_reorder` | `PATCH /workspaces/{id}/reorder` |
 | `nestr_set_recurrence` | `PATCH /nests/{id}/recurrence` |
 | `nestr_list_occurrences` | `GET /nests/{id}/recurrence` |

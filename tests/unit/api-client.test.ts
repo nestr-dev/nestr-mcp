@@ -469,6 +469,18 @@ describe("NestrClient", () => {
     expect(opts.method).toBe("PATCH");
   });
 
+  it("reorderNest PATCHes the nest reorder route", async () => {
+    // Same as the inbox route: the API defines it as PATCH only.
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: { _id: "n1" } }));
+    const client = createClient();
+
+    await client.reorderNest("n1", "after", "n2");
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/n1/reorder/after/n2");
+    expect(opts.method).toBe("PATCH");
+  });
+
   // ─── Elections ──────────────────────────────────────────────────
 
   it("createElection POSTs an election part to the tension parts endpoint", async () => {

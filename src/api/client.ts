@@ -1880,7 +1880,7 @@ export class NestrClient {
   ): Promise<Nest & { searchOrder?: number; order?: number }> {
     const response = await this.fetch<{ status: string; data: Nest & { searchOrder?: number; order?: number } }>(
       `/nests/${nestId}/reorder/${position}/${relatedNestId}`,
-      { method: "POST" }
+      { method: "PATCH" }
     );
     return response.data;
   }
