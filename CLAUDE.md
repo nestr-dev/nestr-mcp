@@ -303,7 +303,7 @@ The server exposes these tools to AI assistants:
 | `nestr_get_inbox_item` | `GET /users/me/inbox/{id}` (OAuth only) |
 | `nestr_update_inbox_item` | `PATCH /users/me/inbox/{id}` (OAuth only) |
 | `nestr_reorder_inbox` | `PATCH /users/me/inbox/reorder` (OAuth only) |
-| `nestr_reorder_inbox_item` | `POST /users/me/inbox/{id}/reorder/{position}/{relatedId}` (OAuth only) |
+| `nestr_reorder_inbox_item` | `PATCH /users/me/inbox/{id}/reorder/{position}/{relatedId}` (OAuth only) |
 | `nestr_list_personal_labels` | `GET /users/me/labels` (OAuth only) |
 | `nestr_create_personal_label` | `POST /users/me/labels` (OAuth only) |
 | `nestr_get_daily_plan` | `GET /users/me/today` (OAuth only) |
@@ -316,7 +316,7 @@ The server exposes these tools to AI assistants:
 | `nestr_list_tensions_awaiting_consent` | `GET /users/me/tensions/awaiting-my-consent` (OAuth only) |
 | `nestr_list_notifications` | `GET /users/me/notifications` (OAuth only) |
 | `nestr_mark_notifications_read` | `POST /users/me/notifications/mark-all-read` (OAuth only) |
-| `nestr_reorder_nest` | `POST /nests/{id}/reorder/{position}/{relatedId}` |
+| `nestr_reorder_nest` | `PATCH /nests/{id}/reorder/{position}/{relatedId}` |
 | `nestr_bulk_reorder` | `PATCH /workspaces/{id}/reorder` |
 | `nestr_set_recurrence` | `PATCH /nests/{id}/recurrence` |
 | `nestr_list_occurrences` | `GET /nests/{id}/recurrence` |
