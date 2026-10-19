@@ -345,6 +345,8 @@ The server exposes these tools to AI assistants:
 | `nestr_list_connectors` | `GET /workspaces/{id}/connectors` |
 | `nestr_register_connector` | `POST /workspaces/{id}/connectors` (workspace-admin only) |
 | `nestr_bind_connector` | `POST /workspaces/{id}/connections` (workspace-admin only) |
+| `nestr_create_agent` | `POST /workspaces/{id}/agents` (workspace-admin only) |
+| `nestr_update_agent` | `PATCH /workspaces/{id}/agents/{uid}` (workspace-admin only; send only the fields to change) |
 
 ## Adding a New Tool
 

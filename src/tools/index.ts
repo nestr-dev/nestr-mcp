@@ -1752,6 +1752,17 @@ export const schemas = {
     agentConfig: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Omit for an agent that runs on Nestr's own runtime."),
   }),
 
+  updateAgent: z.object({
+    workspaceId: z.string().describe("Workspace ID the agent belongs to"),
+    userId: z.string().describe("The agent's user id, from nestr_list_users with agents:'only' or nestr_get_user"),
+    name: z.string().optional().describe("The AGENT's own name, as its identity calls it. Cannot be blank."),
+    description: z.string().optional().describe("What the agent is LIKE: its character and what it is careful about. Shown as its purpose wherever it is listed. Not its instructions, which belong in a skill on the role."),
+    webSearch: z.boolean().optional().describe("Whether the agent may search the web."),
+    status: z.enum(["active", "paused", "disabled"]).optional().describe("active, paused or disabled."),
+    roleAssignable: z.boolean().optional().describe("false makes it an ASSISTANT that can never be assigned to a role. Refused while it still fills one; the error names the roles, so unassign it there first. true makes an assistant assignable again."),
+    agentConfig: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Replaces the stored wiring as a whole."),
+  }),
+
   bindConnector: z.object({
     workspaceId: z.string().describe("Workspace ID the connector and owner belong to"),
     connectorId: z.string().describe("ID of an enabled connector from nestr_list_connectors"),
@@ -3375,6 +3386,34 @@ export const toolDefinitions = [
         },
       },
       required: ["workspaceId", "name"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_update_agent",
+    description: "Change an existing agent's settings: its name, its description, whether it may search the web, its status, whether it may be assigned to roles, and its runtime config. Send only the fields to change; the rest are left as they are. Workspace-admin only; a non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error).\n\nThe description is what the agent is LIKE, shown as its purpose wherever it is listed. It is not the agent's instructions: what the agent should DO lives in a skill nest under the role it fills, so a stale description is fixed here and a stale instruction is fixed on the skill. This tool changes the agent, never the work it is on: to move it to other work, change the role's users with nestr_update_nest.\n\nroleAssignable:false turns the agent into an ASSISTANT, one that can never be assigned to a role and so can never stop acting with the authority of the person it helps. It is refused while the agent still fills a role, and the error names the roles: unassign it there first (nestr_update_nest users on the role), then call again. roleAssignable:true makes an assistant assignable again; it keeps assisting until someone assigns it to a role.\n\nA field this tool does not list, and a call that changes nothing, are refused with VALIDATION rather than ignored, so a success answer means every field you sent has landed. There is no need to read the agent back to check.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the agent belongs to" },
+        userId: { type: "string", description: "The agent's user id, from nestr_list_users with agents:'only' or nestr_get_user" },
+        name: { type: "string", description: "The AGENT's own name, as its identity calls it. Cannot be blank." },
+        description: {
+          type: "string",
+          description: "What the agent is LIKE: its character and what it is careful about. Shown as its purpose wherever it is listed. Not its instructions, which belong in a skill on the role.",
+        },
+        webSearch: { type: "boolean", description: "Whether the agent may search the web." },
+        status: { type: "string", enum: ["active", "paused", "disabled"], description: "active, paused or disabled." },
+        roleAssignable: {
+          type: "boolean",
+          description: "false makes it an ASSISTANT that can never be assigned to a role. Refused while it still fills one; the error names the roles, so unassign it there first. true makes an assistant assignable again.",
+        },
+        agentConfig: {
+          type: "object",
+          description: "Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Replaces the stored wiring as a whole.",
+        },
+      },
+      required: ["workspaceId", "userId"],
     },
     ...mutating,
   },
@@ -5161,6 +5200,37 @@ async function _handleToolCall(
           ? "Assistant created: it can never be assigned to a role, so it will always act with the authority of whoever it is helping. Put it on the TASK beside that person (nestr_update_nest users on the task, naming both), and leave the role's users to them alone. Its instructions belong in a skill nest under the role."
           : "Agent created, and assignable to roles. It assists while it holds none; assigning it to a role is what makes it act as that role instead. To have it fill work: create or find a role named for the WORK (not for the agent) with nestr_create_nest, then assign it with nestr_update_nest users. To have it help a person with work that follows THEM, leave it out of every role and put it on the task beside them. Its instructions belong in a skill nest under the role, not on the agent.";
         return formatResult({ message: nextStep, agent });
+      }
+
+      case "nestr_update_agent": {
+        const parsed = schemas.updateAgent.parse(args);
+        const { workspaceId, userId, ...rest } = parsed;
+        // Only what the caller actually sent. A key holding undefined is not a
+        // change, and the route refuses an empty body rather than answering 200
+        // to a write that changed nothing, so the same refusal is made here
+        // before a request goes out.
+        const updates = Object.fromEntries(
+          Object.entries(rest).filter(([, value]) => value !== undefined)
+        ) as Parameters<NestrClient["updateAgent"]>[2];
+        if (Object.keys(updates).length === 0) {
+          return formatError({
+            error: true,
+            code: "VALIDATION",
+            message: "Nothing to update: pass at least one of name, description, webSearch, status, roleAssignable, agentConfig.",
+            retryable: false,
+          });
+        }
+        const agent = await client.updateAgent(workspaceId, userId, updates);
+        // A success means every field sent has landed: the route refuses what it
+        // cannot write instead of dropping it, which is what used to make an
+        // assistant re-read the agent after every write.
+        let message = "Agent updated. Every field you sent has landed; the rest are unchanged.";
+        if (updates.roleAssignable === false) {
+          message = "Agent updated: it is now an assistant and can never be assigned to a role, so it always acts with the authority of whoever it is helping. Put it on the TASK beside that person (nestr_update_nest users on the task), never in a role's users.";
+        } else if (updates.roleAssignable === true) {
+          message = "Agent updated: it may be assigned to roles again. It assists while it holds none; assigning it to a role (nestr_update_nest users on the role) is what makes it act as that role instead.";
+        }
+        return formatResult({ message, agent });
       }
 
       case "nestr_bind_connector": {

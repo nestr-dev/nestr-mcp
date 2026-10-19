@@ -2559,6 +2559,42 @@ export class NestrClient {
   }
 
   /**
+   * Change an existing agent's settings. Workspace-admin only: the REST route
+   * enforces it and returns 403 (mapped to AUTH_SCOPE_INSUFFICIENT) for a
+   * non-admin caller.
+   *
+   * Only the fields sent are changed. The route refuses a field it does not
+   * know, an empty body, a blank name, and roleAssignable:false while the agent
+   * still fills a role, all with a 422 whose message says why (the last one
+   * names the roles), so the message is worth relaying as it is.
+   *
+   * Wraps PATCH /workspaces/:workspaceId/agents/:userId. The route returns
+   * { status, data }; this unwraps to the updated agent user.
+   */
+  async updateAgent(
+    workspaceId: string,
+    userId: string,
+    body: {
+      name?: string;
+      description?: string;
+      webSearch?: boolean;
+      status?: "active" | "paused" | "disabled";
+      /** false makes an assistant: never assignable to a role. */
+      roleAssignable?: boolean;
+      agentConfig?: Record<string, unknown>;
+    }
+  ): Promise<User> {
+    const response = await this.fetch<{ status: string; data: User }>(
+      `/workspaces/${workspaceId}/agents/${userId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }
+    );
+    return response.data;
+  }
+
+  /**
    * Register a connector in the workspace catalog. Workspace-admin only: the
    * REST route enforces it and returns 403 (mapped to AUTH_SCOPE_INSUFFICIENT)
    * for a non-admin caller. Holds no secret.
