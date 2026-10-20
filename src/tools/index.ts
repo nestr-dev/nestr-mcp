@@ -636,6 +636,19 @@ export function translateEndpoint(endpoint: ApiHintEndpoint): EnrichedToolCall |
 // Nestr re-points a comment aimed at a message inside a DM onto the conversation, since
 // DM threads are flat. The created post carries the parent it actually landed on, so say
 // so when it differs from the id the caller passed.
+// The id of the object a write tool just created or updated. REST writes answer
+// { status, data: <object> }, a few client methods unwrap that, and the
+// self-organization routes can answer with a list, so look in each place, and only
+// there: a nest's own `data` store and its `fields` hold objects too, and a peel
+// that took the first object it found would land in one of them.
+export function writtenId(result: unknown): string | undefined {
+  if (Array.isArray(result)) return writtenId(result[0]);
+  if (!result || typeof result !== "object") return undefined;
+  const obj = result as { _id?: unknown; data?: unknown };
+  if (typeof obj._id === "string") return obj._id;
+  return obj.data && typeof obj.data === "object" ? writtenId(obj.data) : undefined;
+}
+
 export function commentPlacementNote(
   requestedNestId: string,
   post: { parentId?: string } | null | undefined
@@ -1107,6 +1120,13 @@ const HINTS_DESC =
   "Contextual hints. 'summary' keeps the per-nest signal (type, severity, count, url, and the "
   + "`query` that finds every other nest with the same problem) and drops the fixed teaching prose "
   + "and endpoint list. 'full' is the whole payload. false for none.";
+
+// The response shape of a write tool, stated in its description. The REST response
+// stays under its per-tool key, unchanged, so a client that peels by key keeps
+// working; `_id` is the one key every write result shares.
+const writeReturns = (key: string, what: string, extra = "") =>
+  ` Returns { message, _id, ${extra}${key} }: _id is the ${what}'s id, and ${key} is the API `
+  + `response, { status, data: <the ${what}> }.`;
 
 const STRIP_DESCRIPTION =
   "Strip description fields to shrink the response. Use for bulk or index reads.";
@@ -2108,7 +2128,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_nest",
-    description: `Create a nest under a parent. Labels define the type, e.g. ['project'], ['role']. ${PRIME_LABEL_RULE} Sprint/epic/milestone never pair; stories link to those via graph relations. In established workspaces prefer the tension flow for governance. Meetings attach to a circle that ALREADY exists — the workspace anchor circle counts, and is the right parent when no sub-circle fits. Never create a circle to hold a meeting. Use \`['meeting','circle-meeting']\` for a tactical meeting, \`['meeting','governance']\` for a governance meeting, and set \`due\` to the start time. See nestr_help('labels') and nestr_help('meetings').`,
+    description: `Create a nest under a parent. Labels define the type, e.g. ['project'], ['role']. ${PRIME_LABEL_RULE} Sprint/epic/milestone never pair; stories link to those via graph relations. In established workspaces prefer the tension flow for governance. Meetings attach to a circle that ALREADY exists — the workspace anchor circle counts, and is the right parent when no sub-circle fits. Never create a circle to hold a meeting. Use \`['meeting','circle-meeting']\` for a tactical meeting, \`['meeting','governance']\` for a governance meeting, and set \`due\` to the start time. See nestr_help('labels') and nestr_help('meetings').${writeReturns("nest", "nest")}`,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2163,7 +2183,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_nest",
-    description: `Update nest properties. Set parentId to move. Send only what changes. When replacing labels: ${PRIME_LABEL_RULE} Prefer tensions for governance. See nestr_help('nest-model') for fields and data namespacing.`,
+    description: `Update nest properties. Set parentId to move. Send only what changes. When replacing labels: ${PRIME_LABEL_RULE} Prefer tensions for governance. See nestr_help('nest-model') for fields and data namespacing.${writeReturns("nest", "nest")}`,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2202,7 +2222,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_comment",
-    description: "Add a comment to a nest, for progress updates and discussion. Mentions need literal curly braces, see `body`. Optionally attach labels at creation.",
+    description: "Add a comment to a nest, for progress updates and discussion. Mentions need literal curly braces, see `body`. Optionally attach labels at creation." + writeReturns("post", "comment", "placement?, "),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2220,7 +2240,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_comment",
-    description: "Update an existing comment's body and/or labels. Supports HTML and @mentions — **mentions MUST be wrapped in literal curly braces** (e.g. `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`); without the braces the user is not notified. When `labels` is provided it REPLACES the existing label set — use nestr_add_label / nestr_remove_label for incremental changes.",
+    description: "Update an existing comment's body and/or labels. Supports HTML and @mentions — **mentions MUST be wrapped in literal curly braces** (e.g. `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`); without the braces the user is not notified. When `labels` is provided it REPLACES the existing label set — use nestr_add_label / nestr_remove_label for incremental changes." + writeReturns("comment", "comment"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2654,7 +2674,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_inbox_item",
-    description: "Quick capture: add an item to the inbox for later processing. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
+    description: "Quick capture: add an item to the inbox for later processing. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose." + writeReturns("item", "inbox item"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2680,7 +2700,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_inbox_item",
-    description: "Update an inbox item. Set completed:true when processed. Use nestr_update_nest with parentId to move out of inbox. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
+    description: "Update an inbox item. Set completed:true when processed. Use nestr_update_nest with parentId to move out of inbox. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose." + writeReturns("item", "inbox item"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2736,7 +2756,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_personal_label",
-    description: "Create a personal label. Can be used across workspaces. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
+    description: "Create a personal label. Can be used across workspaces. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose." + writeReturns("label", "label"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2933,7 +2953,7 @@ export const toolDefinitions = [
   // Label management
   {
     name: "nestr_add_label",
-    description: "Add a label to a nest. Personal labels (like 'now') are automatically scoped to the authenticated user by the API. Will reject any attempt to add a prime label (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback) to a nest that already has one — a nest can only have one core identity.",
+    description: "Add a label to a nest. Personal labels (like 'now') are automatically scoped to the authenticated user by the API. Will reject any attempt to add a prime label (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback) to a nest that already has one — a nest can only have one core identity." + writeReturns("nest", "nest"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2946,7 +2966,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_remove_label",
-    description: "Remove a label from a nest. Personal labels (like 'now') are automatically scoped to the authenticated user by the API.",
+    description: "Remove a label from a nest. Personal labels (like 'now') are automatically scoped to the authenticated user by the API." + writeReturns("nest", "nest"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3052,7 +3072,7 @@ export const toolDefinitions = [
   // Tension tools
   {
     name: "nestr_create_tension",
-    description: "Create a tension on a role or circle. Tensions drive organizational change. See nestr_help('tension-processing') for guidance on placement and pathways.",
+    description: "Create a tension on a role or circle. Tensions drive organizational change. See nestr_help('tension-processing') for guidance on placement and pathways." + writeReturns("tension", "tension"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3097,7 +3117,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_tension",
-    description: "Update a tension's title, description, feeling, or needs.",
+    description: "Update a tension's title, description, feeling, or needs." + writeReturns("tension", "tension"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3140,7 +3160,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_tension_part",
-    description: "Add a part to a tension. A part is either the operational work the tension asks for or a governance change it proposes. Modes: OPERATIONAL OUTPUT (title, description, users, role, and no governance label) is what a work request is made of, and is the common case; new governance item (omit _id, give title plus a governance label such as ['role'] or ['policy']); change one (_id plus the changed fields; editing a role copies its accountabilities/domains in, so it reads as a full role edit); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities/domains untouched). The part you get back has its own _id and a sourceId, the output nest underneath it; nestr_modify_tension_part takes the part _id, not the sourceId. See nestr_help('tension-processing').",
+    description: "Add a part to a tension. A part is either the operational work the tension asks for or a governance change it proposes. Modes: OPERATIONAL OUTPUT (title, description, users, role, and no governance label) is what a work request is made of, and is the common case; new governance item (omit _id, give title plus a governance label such as ['role'] or ['policy']); change one (_id plus the changed fields; editing a role copies its accountabilities/domains in, so it reads as a full role edit); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities/domains untouched). The part you get back has its own _id and a sourceId, the output nest underneath it; nestr_modify_tension_part takes the part _id, not the sourceId. See nestr_help('tension-processing')." + writeReturns("part", "part"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3166,7 +3186,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_modify_tension_part",
-    description: "Modify an existing proposal part. For individual accountability/domain changes, use the children tools.",
+    description: "Modify an existing proposal part. For individual accountability/domain changes, use the children tools." + writeReturns("part", "part"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3218,7 +3238,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_tension_part_child",
-    description: "Add a new accountability or domain to a proposal part. When the proposal is enacted, this creates a new accountability/domain on the role.",
+    description: "Add a new accountability or domain to a proposal part. When the proposal is enacted, this creates a new accountability/domain on the role." + writeReturns("child", "child"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3233,7 +3253,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_tension_part_child",
-    description: "Rename an accountability or domain within a proposal part. When the proposal is enacted, the original accountability/domain is updated.",
+    description: "Rename an accountability or domain within a proposal part. When the proposal is enacted, the original accountability/domain is updated." + writeReturns("child", "child"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -4239,7 +4259,7 @@ async function _handleToolCall(
             );
           }
           const nest = Array.isArray(result) ? result[0] : result;
-          return formatResult({ message: "Nest created successfully", nest });
+          return formatResult({ message: "Nest created successfully", _id: writtenId(nest), nest });
         }
 
         const nest = await client.createNest({
@@ -4254,7 +4274,7 @@ async function _handleToolCall(
           start: parsed.start,
           allDay: parsed.allDay,
         });
-        return formatResult({ message: "Nest created successfully", nest });
+        return formatResult({ message: "Nest created successfully", _id: writtenId(nest), nest });
       }
 
       case "nestr_update_nest": {
@@ -4286,7 +4306,7 @@ async function _handleToolCall(
           const nest = isCircle
             ? await client.updateCircle(parsed.workspaceId, parsed.nestId, updates)
             : await client.updateRole(parsed.workspaceId, parsed.nestId, updates);
-          return formatResult({ message: "Nest updated successfully", nest });
+          return formatResult({ message: "Nest updated successfully", _id: writtenId(nest), nest });
         }
 
         const nest = await client.updateNest(parsed.nestId, {
@@ -4303,7 +4323,7 @@ async function _handleToolCall(
           allDay: parsed.allDay,
           completed: parsed.completed,
         });
-        return formatResult({ message: "Nest updated successfully", nest });
+        return formatResult({ message: "Nest updated successfully", _id: writtenId(nest), nest });
       }
 
       case "nestr_delete_nest": {
@@ -4329,6 +4349,7 @@ async function _handleToolCall(
         const placement = commentPlacementNote(parsed.nestId, post);
         return formatResult({
           message: "Comment added successfully",
+          _id: writtenId(post),
           ...(placement ? { placement } : {}),
           post,
         });
@@ -4340,7 +4361,7 @@ async function _handleToolCall(
           title: parsed.body,
           ...(parsed.labels !== undefined ? { labels: parsed.labels } : {}),
         });
-        return formatResult({ message: "Comment updated successfully", comment: updated });
+        return formatResult({ message: "Comment updated successfully", _id: writtenId(updated), comment: updated });
       }
 
       case "nestr_delete_comment": {
@@ -4526,7 +4547,7 @@ async function _handleToolCall(
           title: parsed.title,
           description: parsed.description,
         });
-        return formatResult({ message: "Inbox item created successfully", item });
+        return formatResult({ message: "Inbox item created successfully", _id: writtenId(item), item });
       }
 
       case "nestr_get_inbox_item": {
@@ -4543,7 +4564,7 @@ async function _handleToolCall(
           completed: parsed.completed,
           data: parsed.data as Record<string, unknown> | undefined,
         });
-        return formatResult({ message: "Inbox item updated successfully", item });
+        return formatResult({ message: "Inbox item updated successfully", _id: writtenId(item), item });
       }
 
       case "nestr_reorder_inbox": {
@@ -4577,7 +4598,7 @@ async function _handleToolCall(
           color: parsed.color,
           icon: parsed.icon,
         });
-        return formatResult({ message: "Personal label created successfully", label });
+        return formatResult({ message: "Personal label created successfully", _id: writtenId(label), label });
       }
 
       // Direct messages
@@ -4804,13 +4825,13 @@ async function _handleToolCall(
           validatePrimeLabels([...(existingNest?.labels ?? []), parsed.labelId]);
         }
         const nest = await client.addLabel(parsed.nestId, parsed.labelId);
-        return formatResult({ message: `Label '${parsed.labelId}' added successfully`, nest: compactResponse(nest) });
+        return formatResult({ message: `Label '${parsed.labelId}' added successfully`, _id: writtenId(nest), nest: compactResponse(nest) });
       }
 
       case "nestr_remove_label": {
         const parsed = schemas.removeLabel.parse(args);
         const nest = await client.removeLabel(parsed.nestId, parsed.labelId);
-        return formatResult({ message: `Label '${parsed.labelId}' removed successfully`, nest: compactResponse(nest) });
+        return formatResult({ message: `Label '${parsed.labelId}' removed successfully`, _id: writtenId(nest), nest: compactResponse(nest) });
       }
 
       case "nestr_add_to_daily_plan": {
@@ -4990,7 +5011,7 @@ async function _handleToolCall(
           description: parsed.description,
           ...(Object.keys(fields).length > 0 ? { fields } : {}),
         });
-        return formatResult({ message: "Tension created successfully", tension: enrichHints(tension) });
+        return formatResult({ message: "Tension created successfully", _id: writtenId(tension), tension: enrichHints(tension) });
       }
 
       case "nestr_get_tension": {
@@ -5032,7 +5053,7 @@ async function _handleToolCall(
             ...(Object.keys(fields).length > 0 ? { fields } : {}),
           }
         );
-        return formatResult({ message: "Tension updated successfully", tension });
+        return formatResult({ message: "Tension updated successfully", _id: writtenId(tension), tension });
       }
 
       case "nestr_delete_tension": {
@@ -5064,19 +5085,19 @@ async function _handleToolCall(
             users: body.users ?? [],
             ...(body.due !== undefined ? { due: body.due } : {}),
           });
-          return formatResult({ message: "Election added to the tension successfully", part });
+          return formatResult({ message: "Election added to the tension successfully", _id: writtenId(part), part });
         } else if (body._id && removeNest === true) {
           // Propose deletion of an existing structural item.
           const part = await client.proposeTensionDeletion(nestId, tensionId, body._id);
-          return formatResult({ message: "Deletion proposal added successfully", part });
+          return formatResult({ message: "Deletion proposal added successfully", _id: writtenId(part), part });
         } else if (body._id) {
           // Propose change to existing item (existing children auto-copied if accountabilities/domains not provided)
           const part = await client.proposeTensionChange(nestId, tensionId, body);
-          return formatResult({ message: "Change proposal added successfully", part });
+          return formatResult({ message: "Change proposal added successfully", _id: writtenId(part), part });
         } else {
           // Propose new item
           const part = await client.createTensionPart(nestId, tensionId, body);
-          return formatResult({ message: "New item proposal added successfully", part });
+          return formatResult({ message: "New item proposal added successfully", _id: writtenId(part), part });
         }
       }
 
@@ -5084,7 +5105,7 @@ async function _handleToolCall(
         const parsed = schemas.modifyTensionPart.parse(args);
         const { nestId, tensionId, partId, ...data } = parsed;
         const part = await client.modifyTensionPart(nestId, tensionId, partId, data);
-        return formatResult({ message: "Tension part modified successfully", part });
+        return formatResult({ message: "Tension part modified successfully", _id: writtenId(part), part });
       }
 
       case "nestr_remove_tension_part": {
@@ -5111,7 +5132,7 @@ async function _handleToolCall(
           parsed.partId,
           { title: parsed.title, labels: parsed.labels }
         );
-        return formatResult({ message: "Child created successfully", child });
+        return formatResult({ message: "Child created successfully", _id: writtenId(child), child });
       }
 
       case "nestr_update_tension_part_child": {
@@ -5123,7 +5144,7 @@ async function _handleToolCall(
           parsed.childId,
           { title: parsed.title }
         );
-        return formatResult({ message: "Child updated successfully", child });
+        return formatResult({ message: "Child updated successfully", _id: writtenId(child), child });
       }
 
       case "nestr_delete_tension_part_child": {
