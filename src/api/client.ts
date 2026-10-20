@@ -580,7 +580,7 @@ export interface ActivityItem {
 }
 
 export interface Tension extends Nest {
-  status?: "draft" | "proposed" | "accepted" | "objected";
+  status?: "draft" | "proposed" | "accepted" | "escalated";
 }
 
 export interface TensionPart {
@@ -607,10 +607,10 @@ export interface TensionChange {
 }
 
 export interface TensionStatus {
-  status: "draft" | "proposed" | "accepted" | "objected";
+  status: "draft" | "proposed" | "accepted" | "escalated";
   responses?: Array<{
     userId: string;
-    response: "none" | "accepted" | "objected";
+    response: "none" | "accepted" | "escalated";
     votedAt?: string;
   }>;
   autoapprove?: string;

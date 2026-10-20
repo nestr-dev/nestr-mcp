@@ -405,7 +405,7 @@ Use this when you need to know what values are valid for a field, especially bef
 
 ### Field Keys
 
-- **Writing**: a key is \`<labelId>.<fieldCode>\`, e.g. \`{ "project.status": "Current" }\` or \`{ "inbox_event.source": "github" }\`. The server adds the workspace prefix. A bare code (\`{ "source": "github" }\`) is refused with a 422 whose \`detail.validKeys\` lists every key the nest accepts. A field the nest defines itself, with no defining label, is written under its own id.
+- **Writing**: a key is \`<labelId>.<fieldCode>\`, e.g. \`{ "project.status": "Current" }\` or \`{ "order.source": "webshop" }\`. The server adds the workspace prefix. A bare code (\`{ "source": "webshop" }\`) is refused with a 422 whose \`detail.validKeys\` lists every key the nest accepts. A field the nest defines itself, with no defining label, is written under its own id.
 - **Reading back**: fields from a workspace's own labels come back as \`{workspaceId}:<labelId>.<fieldCode>\`; fields from built-in labels come back bare, as \`<labelId>.<fieldCode>\` (\`project.status\`, \`role.characteristics\`). Strip the workspace prefix before matching.
 - **Codes**: a field code can contain hyphens (\`role.role-circle-admin\`), so read codes from \`fieldsMetaData\` rather than deriving them from a field's title.
 

@@ -60,6 +60,34 @@ describe("tension status", () => {
     expect(t.description).toContain("nestr_get_tension_status");
   });
 
+  // `proposed` is not always a vote: the server enacts at once when nobody else
+  // would be asked for consent.
+  it("says proposing can enact at once, and when", () => {
+    const d = tool("nestr_update_tension_status").description;
+    expect(d).toMatch(/single-member circle/i);
+    expect(d).toMatch(/only assignee/i);
+    expect(d).toContain("enacted");
+    expect(TENSION_PROCESSING_INSTRUCTIONS).toMatch(/single-member circle/i);
+  });
+
+  // The route answers { status, data: { status: "enacted", message } } when it
+  // enacted on the spot, and the tool must not report that as a mere submission.
+  it("reports an immediate enactment as such", async () => {
+    const body = { status: "success", data: { status: "enacted", message: "Proposal has been automatically enacted (single-member circle)" } };
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+    }));
+    try {
+      const client = new NestrClient({ apiKey: "t", baseUrl: "https://api.test.io/api" });
+      const result = await handleToolCall(client, "nestr_update_tension_status", { nestId: "circle-1", tensionId: "t-1", status: "proposed" });
+      const out = JSON.parse(result.content[0].text);
+      expect(out.message).toMatch(/enacted/i);
+      expect(out.message).toContain("single-member circle");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   // The REST status route reports an objection as `escalated`.
   it("the lifecycle names the states the API reports", () => {
     expect(TENSION_PROCESSING_INSTRUCTIONS).toContain("`escalated`");
@@ -80,6 +108,9 @@ describe("list_labels is a lean list", () => {
     const d = tool("nestr_list_labels").description;
     expect(d).toMatch(/only `_id` and `title`/);
     expect(d).toContain("nestr_get_label");
+    // get_label answers with `display`; there is no `properties` key.
+    expect(d).toContain("`display`");
+    expect(d).not.toMatch(/properties/);
   });
 });
 

@@ -25,17 +25,17 @@ function envelope(data: Record<string, unknown>) {
 // of them and lose the id.
 const NEST = {
   _id: "nest-new-1",
-  title: "Inbox event",
+  title: "Order received",
   parentId: "parent-1",
-  labels: ["inbox_event", "task"],
-  fields: { "ws-1:inbox_event.source": "github" },
+  labels: ["order", "task"],
+  fields: { "ws-1:order.source": "webshop" },
   data: { "mcp.lastSync": "2026-08-07" },
 };
 
 type Case = [tool: string, args: Record<string, unknown>, key: string, id: string, body: unknown];
 
 const cases: Case[] = [
-  ["nestr_create_nest", { parentId: "parent-1", title: "Inbox event", labels: ["inbox_event"] }, "nest", "nest-new-1", envelope(NEST)],
+  ["nestr_create_nest", { parentId: "parent-1", title: "Order received", labels: ["order"] }, "nest", "nest-new-1", envelope(NEST)],
   ["nestr_create_nest", { parentId: "circle-1", title: "Scribe", labels: ["role"], accountabilities: ["Take notes"], workspaceId: "ws-1" }, "nest", "role-1", envelope({ _id: "role-1", title: "Scribe", labels: ["role"] })],
   ["nestr_update_nest", { nestId: "nest-new-1", title: "Renamed" }, "nest", "nest-new-1", envelope(NEST)],
   ["nestr_add_comment", { nestId: "nest-new-1", body: "Done" }, "post", "post-1", envelope({ _id: "post-1", body: "Done", parentId: "nest-new-1" })],
@@ -82,6 +82,14 @@ describe("write tools carry the written object's _id at the top level", () => {
     body = { _id: "nest-bare-1", title: "Bare", data: { "mcp.k": "v" } };
     const result = await handleToolCall(client, "nestr_update_nest", { nestId: "nest-bare-1", title: "Bare" });
     expect(JSON.parse(result.content[0].text)._id).toBe("nest-bare-1");
+  });
+
+  // One envelope level and no further: a written object without an id must not
+  // borrow one from its own `data` store.
+  it("does not look inside the written object's own data", async () => {
+    body = { status: "success", data: { title: "No id", data: { _id: "not-the-nest" } } };
+    const result = await handleToolCall(client, "nestr_update_nest", { nestId: "nest-x", title: "No id" });
+    expect(JSON.parse(result.content[0].text)._id).toBeUndefined();
   });
 
   it.each([...new Set(cases.map(([t]) => t))].map((t) => [t]))("%s describes its response shape", (tool) => {

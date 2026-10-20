@@ -72,8 +72,8 @@ const COMPACT_FIELDS = {
   // Nest rows only (nest, role, graph). `fields` is where a status, a channel id or
   // any custom value lives. The server sends it on list rows; dropping it here made
   // every row read as "no value", so a filter on a search row starved with no error.
-  // Kept as sent, only when present. A label's `fields` is its schema and a user is
-  // not a nest, so those rows leave it out.
+  // Kept as sent, only when present, minus text tab bodies (see withoutTextTabs). A
+  // label's `fields` is its schema and a user is not a nest, so those rows leave it out.
   nest: ["fields"],
   // Additional fields for roles
   role: ["accountabilities", "domains"],
@@ -123,12 +123,28 @@ export function compactResponse<T>(
   return data.map((item) => {
     const compact: Partial<T> = {};
     for (const key of Object.keys(item as object)) {
-      if (allowedFields.has(key)) {
-        (compact as Record<string, unknown>)[key] = (item as Record<string, unknown>)[key];
+      if (!allowedFields.has(key)) continue;
+      const value = (item as Record<string, unknown>)[key];
+      if (key === "fields") {
+        const fields = withoutTextTabs(value);
+        if (fields) (compact as Record<string, unknown>).fields = fields;
+      } else {
+        (compact as Record<string, unknown>)[key] = value;
       }
     }
     return compact;
   });
+}
+
+// The server copies each text tab's body into `fields` as `<tabId>_texttab`: meeting
+// notes or a spec, as long as it was written. Fine on one nest, a document per row on
+// a list. Undefined when nothing else is left.
+function withoutTextTabs(fields: unknown): unknown {
+  if (!fields || typeof fields !== "object" || Array.isArray(fields)) return fields;
+  const kept = Object.fromEntries(
+    Object.entries(fields).filter(([key]) => { return !key.endsWith("_texttab"); }),
+  );
+  return Object.keys(kept).length > 0 ? kept : undefined;
 }
 
 // URL-to-tool mapping for hint enrichment.
@@ -640,14 +656,20 @@ export function translateEndpoint(endpoint: ApiHintEndpoint): EnrichedToolCall |
 // The id of the object a write tool just created or updated. REST writes answer
 // { status, data: <object> }, a few client methods unwrap that, and the
 // self-organization routes can answer with a list, so look in each place, and only
-// there: a nest's own `data` store and its `fields` hold objects too, and a peel
-// that took the first object it found would land in one of them.
+// there: one envelope level down and no further. A nest's own `data` store and its
+// `fields` hold objects too, and a peel that kept descending would land in one of them.
 export function writtenId(result: unknown): string | undefined {
-  if (Array.isArray(result)) return writtenId(result[0]);
-  if (!result || typeof result !== "object") return undefined;
-  const obj = result as { _id?: unknown; data?: unknown };
-  if (typeof obj._id === "string") return obj._id;
-  return obj.data && typeof obj.data === "object" ? writtenId(obj.data) : undefined;
+  const own = idOf(result);
+  if (own !== undefined) return own;
+  const top = Array.isArray(result) ? result[0] : result;
+  return top && typeof top === "object" ? idOf((top as { data?: unknown }).data) : undefined;
+}
+
+function idOf(value: unknown): string | undefined {
+  const obj = Array.isArray(value) ? value[0] : value;
+  if (!obj || typeof obj !== "object") return undefined;
+  const id = (obj as { _id?: unknown })._id;
+  return typeof id === "string" ? id : undefined;
 }
 
 // Nestr re-points a comment aimed at a message inside a DM onto the conversation, since
@@ -1151,6 +1173,10 @@ const CLEAN_TEXT_DESC =
   "true (default): descriptions come back as plain text, which flattens paragraphs and line "
   + "breaks and drops markup. false: descriptions come back as the stored HTML, so line breaks, "
   + "lists and code blocks survive. Use false when the layout of a description matters.";
+
+// A text tab's body sits in `fields` under `<tabId>_texttab`: a page of notes per row.
+const LIST_TEXT_TAB_NOTE =
+  " Rows leave out text tab bodies (`fields` keys ending in `_texttab`); read those with nestr_get_nest.";
 
 const SORT_DESCRIPTION =
   "Sort field: title, createdAt, updatedAt, due, activityAt, order. Prefix '-' to reverse. For 'recently active' use '-activityAt' (includes children), not '-updatedAt' (own edits only).";
@@ -2030,7 +2056,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_search",
-    description: "Search nests in a workspace. Supports operators like label:, assignee:, createdby:, completed:, in:, sort:. createdby: accepts me, an email address, or a user id. Always use completed:false for active work. See nestr_help('search') for full syntax. Results carry user ids; when presenting to a person, show names and/or emails. Pass `linkedUsers: true` to get them all resolved in the same request rather than calling nestr_get_user per id.",
+    description: "Search nests in a workspace. Supports operators like label:, assignee:, createdby:, completed:, in:, sort:. createdby: accepts me, an email address, or a user id. Always use completed:false for active work. See nestr_help('search') for full syntax. Results carry user ids; when presenting to a person, show names and/or emails. Pass `linkedUsers: true` to get them all resolved in the same request rather than calling nestr_get_user per id." + LIST_TEXT_TAB_NOTE,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2089,7 +2115,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_nest_children",
-    description: "Get children of a nest, or just the ones you want. Pass `search` with the full operator syntax to ask for a subset rather than fetching everything and filtering: `search: 'label:role'` returns a circle's roles in one call. Paginated at 50 per page; read meta.total for the match count.",
+    description: "Get children of a nest, or just the ones you want. Pass `search` with the full operator syntax to ask for a subset rather than fetching everything and filtering: `search: 'label:role'` returns a circle's roles in one call. Paginated at 50 per page; read meta.total for the match count." + LIST_TEXT_TAB_NOTE,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2528,7 +2554,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_labels",
-    description: "List available labels in a workspace. Each row carries only `_id` and `title`: for a label's fields, properties and autoComplete call nestr_get_label. Response includes meta.total showing total matching count. The list does not carry autoComplete, so it mixes labels a person can pick with internal machinery they cannot. Call nestr_get_label before offering a label as a choice to somebody.",
+    description: "List available labels in a workspace. Each row carries only `_id` and `title`: for a label's fields, its `display` settings and autoComplete call nestr_get_label. Response includes meta.total showing total matching count. The list does not carry autoComplete, so it mixes labels a person can pick with internal machinery they cannot. Call nestr_get_label before offering a label as a choice to somebody.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2543,7 +2569,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_projects",
-    description: "List all projects in a workspace. Check fields['project.status'] for status (Future/Current/Waiting/Done). Paginated.",
+    description: "List all projects in a workspace. Check fields['project.status'] for status (Future/Current/Waiting/Done). Paginated." + LIST_TEXT_TAB_NOTE,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3114,7 +3140,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_tensions",
-    description: "List tensions for a circle or role. Supports search filtering.",
+    description: "List tensions for a circle or role. Supports search filtering." + LIST_TEXT_TAB_NOTE,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3322,7 +3348,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_tension_status",
-    description: "Submit a tension for voting ('proposed') or retract to 'draft'. Submitting notifies circle members. Resolving or enacting a tension is not done here: that happens in a governance meeting or in the Nestr app. To observe the outcome, read nestr_get_tension_status, which reports `accepted` once the tension is resolved and `escalated` when someone objected.",
+    description: "Submit a tension for consent ('proposed') or retract it to 'draft'. Proposing asks every other member of the circle to consent and notifies them. When there is nobody else to ask, the server enacts the tension at once and answers `status: \"enacted\"`: a governance proposal in a single-member circle, or a work request with no output or whose requester is its only assignee. Otherwise resolution happens through those consent votes, in a governance meeting or in the Nestr app, not through this tool. To observe the outcome, read nestr_get_tension_status, which reports `accepted` once the tension is resolved and `escalated` when someone objected.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -5194,7 +5220,12 @@ async function _handleToolCall(
           parsed.tensionId,
           parsed.status
         );
-        return formatResult({ message: `Tension status updated to '${parsed.status}'`, status });
+        // Proposing with nobody else to ask enacts on the spot: { status, data: { status: "enacted", message } }.
+        const outcome = (status as { data?: { status?: string; message?: string } } | null)?.data;
+        const message = outcome?.status === "enacted"
+          ? `Tension enacted at once, not submitted for consent: ${outcome.message ?? "there was nobody else to ask"}`
+          : `Tension status updated to '${parsed.status}'`;
+        return formatResult({ message, status });
       }
 
       // Graph link tools

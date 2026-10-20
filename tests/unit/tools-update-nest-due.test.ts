@@ -5,7 +5,7 @@ import { NestrClient } from "../../src/api/client.js";
 // A due date, once set, could not be removed through the MCP: `due` was a plain
 // string, so `due: null` failed validation before any request was made, and the
 // date could only be cleared in the app. start and allDay already took null.
-// The server side of clearing is its own change; this pins what the MCP sends.
+// This pins what the MCP sends; the server clears the date on null.
 describe("nestr_update_nest clears due with null", () => {
   let client: NestrClient;
   let sentBody: Record<string, unknown>;
@@ -25,6 +25,26 @@ describe("nestr_update_nest clears due with null", () => {
     const result = await handleToolCall(client, "nestr_update_nest", { nestId: "n1", due: null });
     expect(result.isError).toBeFalsy();
     // null and absent are different requests: absent leaves the date alone.
+    expect("due" in sentBody).toBe(true);
+    expect(sentBody.due).toBeNull();
+  });
+
+  // Inline accountabilities route update_nest to the role/circle endpoint, a
+  // separate request built from its own field list.
+  it("sends due: null on the role path too", async () => {
+    const result = await handleToolCall(client, "nestr_update_nest", {
+      nestId: "n1", workspaceId: "ws-1", accountabilities: ["Keep notes"], due: null,
+    });
+    expect(result.isError).toBeFalsy();
+    expect("due" in sentBody).toBe(true);
+    expect(sentBody.due).toBeNull();
+  });
+
+  it("sends due: null from nestr_update_occurrence", async () => {
+    const result = await handleToolCall(client, "nestr_update_occurrence", {
+      nestId: "n1", instant: "2026-09-01T09:00:00.000Z", due: null,
+    });
+    expect(result.isError).toBeFalsy();
     expect("due" in sentBody).toBe(true);
     expect(sentBody.due).toBeNull();
   });
