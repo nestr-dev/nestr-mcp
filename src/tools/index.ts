@@ -5628,11 +5628,14 @@ function formatBytes(bytes: number): string {
   return `${size.toFixed(1)} ${units[unit]}`;
 }
 
-/** The `before` cursor out of a paging link, or null when there is no next page. */
+/**
+ * The `before` cursor out of a paging link, or null when there is no next page.
+ * The base lets a relative link parse too; it is ignored for an absolute one.
+ */
 export function nextCursorOf(nextLink: string | undefined): string | null {
   if (!nextLink) return null;
   try {
-    return new URL(nextLink).searchParams.get("before");
+    return new URL(nextLink, "http://localhost").searchParams.get("before");
   } catch {
     return null;
   }

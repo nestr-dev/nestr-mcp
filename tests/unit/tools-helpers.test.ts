@@ -728,6 +728,10 @@ describe("nextCursorOf", () => {
     expect(nextCursorOf("https://app.nestr.io/api/nests/n1/activity?limit=2&before=eyJkIjoiMjAyNiJ9")).toBe("eyJkIjoiMjAyNiJ9");
   });
 
+  it("reads it out of a relative link as well", () => {
+    expect(nextCursorOf("/api/nests/n1/activity?limit=2&before=abc")).toBe("abc");
+  });
+
   it("is null without a next link, and for a link that carries no cursor", () => {
     expect(nextCursorOf(undefined)).toBeNull();
     expect(nextCursorOf("not a url")).toBeNull();
