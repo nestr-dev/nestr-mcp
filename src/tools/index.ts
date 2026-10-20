@@ -1111,6 +1111,14 @@ const HINTS_DESC =
 const STRIP_DESCRIPTION =
   "Strip description fields to shrink the response. Use for bulk or index reads.";
 
+// Descriptions are stored as HTML. Plain text is the cheaper default, but it flattens
+// paragraphs and line breaks and drops markup, so a code block or anything else whose
+// layout carries meaning needs the stored form.
+const CLEAN_TEXT_DESC =
+  "true (default): descriptions come back as plain text, which flattens paragraphs and line "
+  + "breaks and drops markup. false: descriptions come back as the stored HTML, so line breaks, "
+  + "lists and code blocks survive. Use false when the layout of a description matters.";
+
 const SORT_DESCRIPTION =
   "Sort field: title, createdAt, updatedAt, due, activityAt, order. Prefix '-' to reverse. For 'recently active' use '-activityAt' (includes children), not '-updatedAt' (own edits only).";
 
@@ -1217,6 +1225,7 @@ export const schemas = {
     sort: z.string().optional().describe(`${SORT_DESCRIPTION} Takes precedence over sort:/sort-order: operators in the query.`),
     limit: z.number().optional().describe("Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page."),
     page: z.number().optional().describe("Page number (1-indexed) for pagination"),
+    cleanText: z.boolean().optional().describe(CLEAN_TEXT_DESC),
     _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Marketing projects\", \"Overdue tasks\"). Omit for default."),
   }),
 
@@ -1229,6 +1238,7 @@ export const schemas = {
     rights: z.boolean().optional().describe("Single-nest only. Include the caller's composed rights on the nest plus a deny trace naming the profiles that block each op."),
     forUser: z.string().optional().describe("Single nest, with rights=true. Rights for this user id instead of the caller. Caller must be a nest admin."),
     whoCan: z.string().optional().describe("Single-nest only. Comma-separated ops (read,update,delete,create) to list who can perform each on this nest."),
+    cleanText: z.boolean().optional().describe(CLEAN_TEXT_DESC),
   }),
   explainNest: z.object({
     nestId: z.string().describe("The nest to diagnose (a single id)."),
@@ -1245,6 +1255,7 @@ export const schemas = {
     hints: hintLevelSchema.describe("Contextual hints: 'summary' (default on a listing), 'full', or false. A listing at 'full' repeats the same teaching prose once per row."),
     ...hintFilterSchemas,
     linkedUsers: linkedUsersSchema,
+    cleanText: z.boolean().optional().describe(CLEAN_TEXT_DESC),
     _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Tasks for Website Redesign\"). Omit for default."),
   }),
 
@@ -1366,6 +1377,7 @@ export const schemas = {
     limit: z.number().optional().describe("Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page."),
     page: z.number().optional().describe("Page number for pagination"),
     linkedUsers: linkedUsersSchema,
+    cleanText: z.boolean().optional().describe(CLEAN_TEXT_DESC),
     _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Engineering projects\"). Omit for default."),
   }),
 
@@ -1997,6 +2009,7 @@ export const toolDefinitions = [
         limit: { type: "number", description: "Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page." },
         page: { type: "number", description: "Page number (1-indexed) for fetching additional pages" },
         stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
+        cleanText: { type: "boolean", description: CLEAN_TEXT_DESC },
         _listTitle: { type: "string", description: "Short title for the list UI header, 2-4 words, e.g. Marketing projects. Say what is shown, not the query." },
       },
       required: ["workspaceId", "query"],
@@ -2017,6 +2030,7 @@ export const toolDefinitions = [
         hintTypes: { type: "array", items: { type: "string" }, description: "Keep only these hint types." },
         minSeverity: { type: "string", enum: ["info", "suggestion", "warning", "alert"], description: "Drop hints below this severity." },
         stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
+        cleanText: { type: "boolean", description: CLEAN_TEXT_DESC },
         provenance: { type: "boolean", description: "Single nest. Which label and circle context defines each field and property, e.g. why a role has a given icon." },
         rights: { type: "boolean", description: "Single nest. The caller's composed rights (self read/update/delete) plus a deny trace naming what blocks each op, and why." },
         forUser: { type: "string", description: "Single nest, with rights=true. Rights for this user id instead of the caller. Caller must be a nest admin." },
@@ -2056,6 +2070,7 @@ export const toolDefinitions = [
         minSeverity: { type: "string", enum: ["info", "suggestion", "warning", "alert"], description: "Drop hints below this severity." },
         linkedUsers: { type: "boolean", description: "Resolve every user id in the results to a full user, returned once in `linked.users`. One request instead of one per id." },
         stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
+        cleanText: { type: "boolean", description: CLEAN_TEXT_DESC },
         _listTitle: { type: "string", description: "Short descriptive title for the list UI header (e.g., \"Tasks for Website Redesign\", \"API project sub-tasks\"). Include the parent name for context." },
       },
       required: ["nestId"],
@@ -2504,6 +2519,7 @@ export const toolDefinitions = [
         limit: { type: "number", description: "Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page." },
         page: { type: "number", description: "Page number (1-indexed)" },
         stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
+        cleanText: { type: "boolean", description: CLEAN_TEXT_DESC },
         _listTitle: { type: "string", description: "Short descriptive title for the list UI header (e.g., \"Engineering projects\", \"All projects\"). Omit for default." },
         linkedUsers: { type: "boolean", description: "Resolve every user id in the results to a full user, returned once in `linked.users`. One request instead of one per id." },
       },
@@ -4117,7 +4133,7 @@ async function _handleToolCall(
             sort: parsed.sort ?? directives.sort,
             limit: parsed.limit ?? directives.limit,
             page: parsed.page,
-            cleanText: true,
+            cleanText: parsed.cleanText ?? true,
             linkedUsers: parsed.linkedUsers,
           }
         );
@@ -4127,7 +4143,7 @@ async function _handleToolCall(
       case "nestr_get_nest": {
         const parsed = schemas.getNest.parse(args);
         const nest = await client.getNest(parsed.nestId, {
-          cleanText: true,
+          cleanText: parsed.cleanText ?? true,
           fieldsMetaData: parsed.fieldsMetaData,
           hints: resolveHintLevel(parsed.hints, "full"),
           hintTypes: parsed.hintTypes,
@@ -4161,7 +4177,7 @@ async function _handleToolCall(
           sort: parsed.sort,
           limit: parsed.limit,
           page: parsed.page,
-          cleanText: true,
+          cleanText: parsed.cleanText ?? true,
           hints: resolveHintLevel(parsed.hints, "summary"),
           hintTypes: parsed.hintTypes,
           minSeverity: parsed.minSeverity,
@@ -4425,7 +4441,7 @@ async function _handleToolCall(
           sort: parsed.sort,
           limit: parsed.limit,
           page: parsed.page,
-          cleanText: true,
+          cleanText: parsed.cleanText ?? true,
           linkedUsers: parsed.linkedUsers,
         });
         return formatResult(completableResponse(compactResponse(projects), "projects", parsed._listTitle || "Projects"));
