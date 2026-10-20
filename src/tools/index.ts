@@ -1042,7 +1042,8 @@ const ALL_DAY_DESC =
   + "yyyy-mm-dd dates imply true.";
 const DUE_DESC =
   "Due date (ISO 8601, or yyyy-mm-dd). With a start it is the END of the item (a meeting's finish, the last "
-  + "day of a span); without one it is the deadline. For roles: re-election date.";
+  + "day of a span); without one it is the deadline. For roles: re-election date. null clears it; "
+  + "omitting it leaves it unchanged.";
 
 // The editable fields of PATCH /nests/:id, shared by nestr_update_nest and
 // nestr_update_occurrence so the two cannot drift apart.
@@ -1055,7 +1056,7 @@ const nestUpdateFieldSchemas = {
   fields: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Field updates (e.g., { 'project.status': 'Current' })"),
   users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign"),
   data: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead."),
-  due: z.string().optional().describe(DUE_DESC),
+  due: z.string().nullable().optional().describe(DUE_DESC),
   start: z.string().nullable().optional().describe(START_DESC),
   allDay: z.boolean().nullable().optional().describe(ALL_DAY_DESC),
   completed: z.boolean().optional().describe("Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead."),
@@ -1085,7 +1086,7 @@ const NEST_UPDATE_FIELD_PROPERTIES = {
     description: "Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead.",
   },
   due: {
-    type: "string",
+    type: ["string", "null"],
     description: DUE_DESC,
   },
   start: {

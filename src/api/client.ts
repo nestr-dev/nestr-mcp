@@ -300,7 +300,8 @@ export type NestUpdates = Partial<{
   fields: Record<string, unknown>;
   users: string[];
   data: Record<string, unknown>;
-  due: string;
+  /** ISO 8601 or yyyy-mm-dd; null clears. */
+  due: string | null;
   /** ISO 8601 or yyyy-mm-dd; null clears. */
   start: string | null;
   allDay: boolean | null;
@@ -1244,7 +1245,7 @@ export class NestrClient {
       users?: string[];
       fields?: Record<string, unknown>;
       data?: Record<string, unknown>;
-      due?: string;
+      due?: string | null;
       accountabilities?: string[];
       domains?: string[];
     }
@@ -1275,7 +1276,7 @@ export class NestrClient {
       users?: string[];
       fields?: Record<string, unknown>;
       data?: Record<string, unknown>;
-      due?: string;
+      due?: string | null;
       accountabilities?: string[];
       domains?: string[];
     }
