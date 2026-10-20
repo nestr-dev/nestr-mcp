@@ -8,6 +8,7 @@ import {
   addNestUrls,
   containingTabHash,
   extractSearchDirectives,
+  nextCursorOf,
   schemas,
   toolDefinitions,
   commentPlacementNote,
@@ -719,5 +720,17 @@ describe("commentPlacementNote", () => {
 
   it("is silent when the response carries no parentId", () => {
     expect(commentPlacementNote("nest1", { _id: "c1", body: "hi" } as never)).toBeNull();
+  });
+});
+
+describe("nextCursorOf", () => {
+  it("reads the before cursor out of a paging link", () => {
+    expect(nextCursorOf("https://app.nestr.io/api/nests/n1/activity?limit=2&before=eyJkIjoiMjAyNiJ9")).toBe("eyJkIjoiMjAyNiJ9");
+  });
+
+  it("is null without a next link, and for a link that carries no cursor", () => {
+    expect(nextCursorOf(undefined)).toBeNull();
+    expect(nextCursorOf("not a url")).toBeNull();
+    expect(nextCursorOf("https://app.nestr.io/api/nests/n1/activity?limit=2")).toBeNull();
   });
 });
