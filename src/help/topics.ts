@@ -386,7 +386,7 @@ To discover the actual field schema (including available options), add \`fieldsM
 GET /nests/{nestId}?fieldsMetaData=true
 \`\`\`
 
-This adds a \`fieldsMetaData\` object to the response showing field definitions and options:
+This adds a \`fieldsMetaData\` object to the response holding the declared schema of every label on the nest, including fields that hold no value on this nest, with their definitions and options:
 
 \`\`\`json
 {
@@ -402,6 +402,12 @@ This adds a \`fieldsMetaData\` object to the response showing field definitions 
 \`\`\`
 
 Use this when you need to know what values are valid for a field, especially before updating.
+
+### Field Keys
+
+- **Writing**: a key is \`<labelId>.<fieldCode>\`, e.g. \`{ "project.status": "Current" }\` or \`{ "order.source": "webshop" }\`. The server adds the workspace prefix. A bare code (\`{ "source": "webshop" }\`) is refused with a 422 whose \`detail.validKeys\` lists every key the nest accepts. A field the nest defines itself, with no defining label, is written under its own id.
+- **Reading back**: fields from a workspace's own labels come back as \`{workspaceId}:<labelId>.<fieldCode>\`; fields from built-in labels come back bare, as \`<labelId>.<fieldCode>\` (\`project.status\`, \`role.characteristics\`). Strip the workspace prefix before matching.
+- **Codes**: a field code can contain hyphens (\`role.role-circle-admin\`), so read codes from \`fieldsMetaData\` rather than deriving them from a field's title.
 
 **Example**: A workspace might customize the global \`project\` label to add a \`project.department\` field, and a sub-circle might further customize it to add \`project.sprint\` - both would appear on projects within that sub-circle.
 
@@ -642,7 +648,7 @@ To discover the actual field schema (including available options), add \`fieldsM
 GET /nests/{nestId}?fieldsMetaData=true
 \`\`\`
 
-This adds a \`fieldsMetaData\` object to the response showing field definitions and options:
+This adds a \`fieldsMetaData\` object to the response holding the declared schema of every label on the nest, including fields that hold no value on this nest, with their definitions and options:
 
 \`\`\`json
 {
