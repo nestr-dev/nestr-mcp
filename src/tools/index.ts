@@ -65,13 +65,16 @@ const COMPACT_FIELDS = {
   // has no answer in the data and a model fills the gap by guessing. It costs a short
   // id array per item and it is the difference between an answer and a fabrication.
   // `start`/`allDay` with `due` are the schedule: without them a span reads as a bare deadline.
-  // `fields` is where a status, a channel id or any custom value lives. The server
-  // sends it on list rows; dropping it here made every row read as "no value", so a
-  // filter on a search row starved with no error. Kept as sent, only when present.
   base: [
     "_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description",
-    "due", "start", "allDay", "users", "hints", "fields",
+    "due", "start", "allDay", "users", "hints",
   ],
+  // Nest rows only (nest, role, graph). `fields` is where a status, a channel id or
+  // any custom value lives. The server sends it on list rows; dropping it here made
+  // every row read as "no value", so a filter on a search row starved with no error.
+  // Kept as sent, only when present. A label's `fields` is its schema and a user is
+  // not a nest, so those rows leave it out.
+  nest: ["fields"],
   // Additional fields for roles
   role: ["accountabilities", "domains"],
   // Additional fields for users. `bot` and `assistant` are not optional trim:
@@ -110,6 +113,7 @@ export function compactResponse<T>(
 
   const allowedFields = new Set([
     ...COMPACT_FIELDS.base,
+    ...(type === "label" || type === "user" ? [] : COMPACT_FIELDS.nest),
     ...(type === "role" ? COMPACT_FIELDS.role : []),
     ...(type === "user" ? COMPACT_FIELDS.user : []),
     ...(type === "label" ? COMPACT_FIELDS.label : []),
@@ -633,9 +637,6 @@ export function translateEndpoint(endpoint: ApiHintEndpoint): EnrichedToolCall |
   return null;
 }
 
-// Nestr re-points a comment aimed at a message inside a DM onto the conversation, since
-// DM threads are flat. The created post carries the parent it actually landed on, so say
-// so when it differs from the id the caller passed.
 // The id of the object a write tool just created or updated. REST writes answer
 // { status, data: <object> }, a few client methods unwrap that, and the
 // self-organization routes can answer with a list, so look in each place, and only
@@ -649,6 +650,9 @@ export function writtenId(result: unknown): string | undefined {
   return obj.data && typeof obj.data === "object" ? writtenId(obj.data) : undefined;
 }
 
+// Nestr re-points a comment aimed at a message inside a DM onto the conversation, since
+// DM threads are flat. The created post carries the parent it actually landed on, so say
+// so when it differs from the id the caller passed.
 export function commentPlacementNote(
   requestedNestId: string,
   post: { parentId?: string; data?: { parentId?: string } } | null | undefined

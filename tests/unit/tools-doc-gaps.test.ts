@@ -85,14 +85,14 @@ describe("list_labels is a lean list", () => {
 
 // The text above says list rows are lean, and list_labels runs through the same
 // compactResponse allowlist that now keeps `fields`. The REST list projects only
-// these keys and translateLabel deletes a label's `fields`, so this is the row
-// as sent; it pins that keeping `fields` on nest rows did not widen label rows.
-describe("nestr_list_labels rows on the real response", () => {
+// these keys and translateLabel deletes a label's `fields`. The row here carries
+// `fields` anyway, so the test pins the MCP's own allowlist rather than the server.
+describe("nestr_list_labels rows", () => {
   it("stay _id and title", async () => {
     const body = {
       status: "success",
       meta: { total: 1 },
-      data: [{ _id: "agent", title: "Agent", workspaceId: "ws-1", createdAt: "2026-07-01T00:00:00.000Z", updatedAt: "2026-07-02T00:00:00.000Z" }],
+      data: [{ _id: "agent", title: "Agent", workspaceId: "ws-1", fields: { "agent.model": { type: "text" } }, createdAt: "2026-07-01T00:00:00.000Z", updatedAt: "2026-07-02T00:00:00.000Z" }],
     };
     vi.stubGlobal("fetch", vi.fn(async () => {
       return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };

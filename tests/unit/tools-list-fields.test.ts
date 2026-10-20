@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { handleToolCall } from "../../src/tools/index.js";
+import { handleToolCall, compactResponse } from "../../src/tools/index.js";
 import { NestrClient } from "../../src/api/client.js";
 
 // The REST list routes (search, children, projects, tensions) run every row
@@ -87,5 +87,14 @@ describe("list rows keep the fields the server sent", () => {
   it("still drops keys outside the compact set", async () => {
     const out = await call("nestr_search", { workspaceId: "ws-1", query: "label:program" });
     expect(out.items[0]).not.toHaveProperty("updatedAt");
+  });
+});
+
+// `fields` is kept for nest rows only. A label's `fields` is its field schema and a
+// user is not a nest, so neither row type may widen because nest rows did.
+describe("label and user rows still drop fields", () => {
+  it.each(["label", "user"] as const)("%s rows", (type) => {
+    const rows = compactResponse([{ _id: "x", title: "X", username: "x", fields: { code: { type: "text" } } }], type) as Record<string, unknown>[];
+    expect(rows[0]).not.toHaveProperty("fields");
   });
 });
