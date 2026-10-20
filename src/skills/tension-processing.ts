@@ -174,12 +174,12 @@ nestr_create_tension(salesLeadRoleId, {
 
 ### Status Lifecycle
 
-\`draft\` → \`proposed\` → \`accepted\` or \`objected\`
+\`draft\` → \`proposed\` → \`accepted\` or \`escalated\`
 
 - **draft**: Parts can be added/modified/removed.
 - **proposed**: Circle members vote. Can retract to \`draft\`.
-- **accepted**: Changes applied to governance.
-- **objected**: Requires integration and resubmission.
+- **accepted**: Resolved, and its changes applied to governance. Resolution happens in a governance meeting or in the Nestr app, not through \`nestr_update_tension_status\`.
+- **escalated**: Someone objected. Requires integration and resubmission.
 
 Use \`nestr_get_tension_status\` to check state and votes. Use \`nestr_update_tension_status\` to advance lifecycle.
 

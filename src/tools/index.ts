@@ -1059,6 +1059,14 @@ const DUE_DESC =
   + "day of a span); without one it is the deadline. For roles: re-election date. null clears it; "
   + "omitting it leaves it unchanged.";
 
+// A bare code is refused, and a field key cannot be guessed from a title, so the
+// key rule has to be stated where the key is written.
+const FIELD_KEYS_DESC =
+  "Keys are <labelId>.<fieldCode>, e.g. 'project.status'; the server adds the workspace prefix. A bare "
+  + "code ('status') is refused with a 422 whose detail.validKeys lists the keys this nest accepts. Codes "
+  + "can contain hyphens; read them from fieldsMetaData rather than deriving them from a title. See "
+  + "nestr_help('nest-model') for how keys read back.";
+
 // The editable fields of PATCH /nests/:id, shared by nestr_update_nest and
 // nestr_update_occurrence so the two cannot drift apart.
 const nestUpdateFieldSchemas = {
@@ -1067,7 +1075,7 @@ const nestUpdateFieldSchemas = {
   purpose: z.string().optional().describe(PURPOSE_DESC),
   parentId: z.string().optional().describe("New parent ID (move nest to different location, e.g., move inbox item to a role or project)"),
   labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to set (e.g., ['project'] to convert an item into a project)"),
-  fields: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Field updates (e.g., { 'project.status': 'Current' })"),
+  fields: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe(`Field updates (e.g., { 'project.status': 'Current' }). ${FIELD_KEYS_DESC}`),
   users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign"),
   data: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead."),
   due: z.string().nullable().optional().describe(DUE_DESC),
@@ -1088,7 +1096,7 @@ const NEST_UPDATE_FIELD_PROPERTIES = {
   },
   fields: {
     type: "object",
-    description: "Field updates (e.g., { 'project.status': 'Current' })",
+    description: `Field updates (e.g., { 'project.status': 'Current' }). ${FIELD_KEYS_DESC}`,
   },
   users: {
     type: "array",
@@ -1252,7 +1260,7 @@ export const schemas = {
 
   getNest: z.object({
     nestId: z.string().describe("Nest ID. Supports comma-separated IDs to fetch multiple nests in one call (e.g., 'id1,id2,id3') — returns an array instead of a single object. Keep total URL under 2000 chars to avoid HTTP limits."),
-    fieldsMetaData: z.boolean().optional().describe("Set to true to include field schema metadata (e.g., available options for project.status)"),
+    fieldsMetaData: z.boolean().optional().describe("Set to true to include the declared field schema of every label on the nest (type, title, code, options, conditions), including fields that hold no value on this nest. nestr_get_label reads the same declarations off the label itself."),
     hints: hintLevelSchema.describe("Contextual hints: 'full' (default on a single read), 'summary', or false. 'summary' keeps type, severity, count, url and the sibling query, and drops the teaching prose and endpoints. Hints surface signals like unassigned roles, stale projects or unread comments."),
     ...hintFilterSchemas,
     provenance: z.boolean().optional().describe("Single-nest only. Include field/property provenance: which label (and circle context) defines each field and property."),
@@ -1298,7 +1306,7 @@ export const schemas = {
     description: z.string().optional().describe("The primary content field — use for project details, task context, acceptance criteria, Definition of Done, and any detailed information. Supports Markdown and HTML."),
     purpose: z.string().optional().describe(PURPOSE_DESC),
     labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to apply"),
-    fields: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call."),
+    fields: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe(`Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call. ${FIELD_KEYS_DESC}`),
     users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
     start: z.string().optional().describe(START_DESC),
     allDay: z.boolean().optional().describe(ALL_DAY_DESC),
@@ -2041,12 +2049,12 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_nest",
-    description: "Get nest details. Supports comma-separated IDs for batch fetch. Add hints=true for contextual signals, fieldsMetaData=true for field schemas. For a single nest you can also diagnose it: provenance, rights, and whoCan (see explain_nest for a one-shot diagnosis). The users array holds user ids; when presenting to a person, resolve them to names and/or emails via nestr_get_user or nestr_list_users.",
+    description: "Get nest details. Supports comma-separated IDs for batch fetch. Add hints=true for contextual signals, fieldsMetaData=true for the declared field schema of every label on the nest, including fields with no value. For a single nest you can also diagnose it: provenance, rights, and whoCan (see explain_nest for a one-shot diagnosis). The users array holds user ids; when presenting to a person, resolve them to names and/or emails via nestr_get_user or nestr_list_users.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID, or comma-separated IDs for a batch (e.g. 'id1,id2'). Keep the URL under 2000 chars." },
-        fieldsMetaData: { type: "boolean", description: "Set to true to include field schema metadata (available options, field types)" },
+        fieldsMetaData: { type: "boolean", description: "Set to true to include the declared field schema of every label on the nest (type, title, code, options, conditions), including fields that hold no value on this nest. nestr_get_label reads the same declarations off the label itself." },
         hints: { type: ["string", "boolean"], enum: ["summary", "full", true, false], description: `${HINTS_DESC} Defaults to 'full' on a single read, which is what you want when you asked about one nest.` },
         hintTypes: { type: "array", items: { type: "string" }, description: "Keep only these hint types." },
         minSeverity: { type: "string", enum: ["info", "suggestion", "warning", "alert"], description: "Drop hints below this severity." },
@@ -2129,7 +2137,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_nest",
-    description: `Create a nest under a parent. Labels define the type, e.g. ['project'], ['role']. ${PRIME_LABEL_RULE} Sprint/epic/milestone never pair; stories link to those via graph relations. In established workspaces prefer the tension flow for governance. Meetings attach to a circle that ALREADY exists — the workspace anchor circle counts, and is the right parent when no sub-circle fits. Never create a circle to hold a meeting. Use \`['meeting','circle-meeting']\` for a tactical meeting, \`['meeting','governance']\` for a governance meeting, and set \`due\` to the start time. See nestr_help('labels') and nestr_help('meetings').${writeReturns("nest", "nest")}`,
+    description: `Create a nest under a parent. Labels define the type, e.g. ['project'], ['role']. ${PRIME_LABEL_RULE} Sprint/epic/milestone never pair; stories link to those via graph relations. In established workspaces prefer the tension flow for governance. Meetings attach to a circle that ALREADY exists — the workspace anchor circle counts, and is the right parent when no sub-circle fits. Never create a circle to hold a meeting. Use \`['meeting','circle-meeting']\` for a tactical meeting, \`['meeting','governance']\` for a governance meeting, and set \`due\` to the start time. The server adds a \`task\` label to every nest that can be completed, alongside the labels you pass, unless one of them pairs with task (as \`project\` does) or declares \`autoTaskLabel: false\`: expect \`task\` in the labels you read back, and do not write it back as if you had chosen it. See nestr_help('labels') and nestr_help('meetings').${writeReturns("nest", "nest")}`,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2144,7 +2152,7 @@ export const toolDefinitions = [
         },
         fields: {
           type: "object",
-          description: "Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call.",
+          description: `Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call. ${FIELD_KEYS_DESC}`,
         },
         users: {
           type: "array",
@@ -2516,7 +2524,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_labels",
-    description: "List available labels in a workspace. Response includes meta.total showing total matching count. The list does not carry autoComplete, so it mixes labels a person can pick with internal machinery they cannot. Call nestr_get_label before offering a label as a choice to somebody.",
+    description: "List available labels in a workspace. Each row carries only `_id` and `title`: for a label's fields, properties and autoComplete call nestr_get_label. Response includes meta.total showing total matching count. The list does not carry autoComplete, so it mixes labels a person can pick with internal machinery they cannot. Call nestr_get_label before offering a label as a choice to somebody.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3310,7 +3318,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_tension_status",
-    description: "Submit a tension for voting ('proposed') or retract to 'draft'. Submitting notifies circle members.",
+    description: "Submit a tension for voting ('proposed') or retract to 'draft'. Submitting notifies circle members. Resolving or enacting a tension is not done here: that happens in a governance meeting or in the Nestr app. To observe the outcome, read nestr_get_tension_status, which reports `accepted` once the tension is resolved and `escalated` when someone objected.",
     inputSchema: {
       type: "object" as const,
       properties: {
