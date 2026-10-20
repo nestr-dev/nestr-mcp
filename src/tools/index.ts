@@ -65,9 +65,12 @@ const COMPACT_FIELDS = {
   // has no answer in the data and a model fills the gap by guessing. It costs a short
   // id array per item and it is the difference between an answer and a fabrication.
   // `start`/`allDay` with `due` are the schedule: without them a span reads as a bare deadline.
+  // `fields` is where a status, a channel id or any custom value lives. The server
+  // sends it on list rows; dropping it here made every row read as "no value", so a
+  // filter on a search row starved with no error. Kept as sent, only when present.
   base: [
     "_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description",
-    "due", "start", "allDay", "users", "hints",
+    "due", "start", "allDay", "users", "hints", "fields",
   ],
   // Additional fields for roles
   role: ["accountabilities", "domains"],
