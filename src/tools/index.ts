@@ -651,9 +651,10 @@ export function writtenId(result: unknown): string | undefined {
 
 export function commentPlacementNote(
   requestedNestId: string,
-  post: { parentId?: string } | null | undefined
+  post: { parentId?: string; data?: { parentId?: string } } | null | undefined
 ): string | null {
-  const landedOn = post?.parentId;
+  // POST /nests/:id/posts answers { status, data: <post> }; a bare post is accepted too.
+  const landedOn = post?.data?.parentId ?? post?.parentId;
   if (!landedOn || landedOn === requestedNestId) return null;
   return (
     `Placed on ${landedOn}, not the ${requestedNestId} you passed. ` +

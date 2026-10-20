@@ -89,3 +89,26 @@ describe("write tools carry the written object's _id at the top level", () => {
     expect(def?.description).toMatch(/Returns \{ message, _id, /);
   });
 });
+
+// A comment aimed at a message inside a direct message lands on the conversation,
+// and add_comment says so with a `placement` note. The note read `parentId` off
+// the bare post, but the route answers with the envelope, so on a real response
+// it never fired and the caller kept replying to an id the comment was not on.
+describe("nestr_add_comment placement note on the real response", () => {
+  let client: NestrClient;
+
+  beforeEach(() => {
+    const body = envelope({ _id: "post-2", body: "Reply", parentId: "conv-1" });
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+    }));
+    client = new NestrClient({ apiKey: "t", baseUrl: "https://api.test.io/api" });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("says where the comment landed when it was moved", async () => {
+    const result = await handleToolCall(client, "nestr_add_comment", { nestId: "msg-1", body: "Reply" });
+    const out = JSON.parse(result.content[0].text);
+    expect(out.placement).toContain("conv-1");
+  });
+});
