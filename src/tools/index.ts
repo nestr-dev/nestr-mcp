@@ -1534,6 +1534,16 @@ export const schemas = {
     limit: z.number().optional().describe("Max activity items to return (default 50, max 200)."),
   }),
 
+  // A nest's activity, with its subtree by default
+  nestActivity: z.object({
+    nestId: z.string().describe("The nest whose activity to fetch. Pass a circle or workspace ID to read everything that happened beneath it."),
+    depth: z.union([z.number(), z.literal("all")]).optional().describe("How far below the nest to look. Omit or 'all' for the nest and everything beneath it (what the Activity tab shows); 0 for the nest itself only; N for N levels down, measured from this nest."),
+    userId: z.string().optional().describe("Only what this user did here, including what an assistant did on their behalf."),
+    limit: z.number().optional().describe("Entries per page, newest first (default 50, max 200)."),
+    before: z.string().optional().describe("The next_cursor from the previous page. Omit for the newest entries."),
+    linkedUsers: z.boolean().optional().describe("Set true to get a linked.users list resolving every userId and agentUserId on the page. Use it whenever the result goes in front of a person."),
+  }),
+
   // User tension tools (requires OAuth token)
   listMyTensions: z.object({
     context: z.string().optional().describe("Optional context filter (e.g., workspace ID or circle ID)"),
@@ -2876,6 +2886,27 @@ export const toolDefinitions = [
         limit: { type: "number", description: "Max activity items to return (default 50, max 200)." },
       },
       required: ["userId"],
+    },
+    ...readOnly,
+  },
+  // A nest's activity feed (the Activity tab over the API)
+  {
+    name: "nestr_get_nest_activity",
+    description: "What happened on a nest and, by default, everything beneath it, newest first: the Activity tab over the API. Each entry carries who did it (userId, agentUserId when an assistant acted), the sentence the app shows, and the same change as data in `changes`: one row per field with its value before and after, named as nestr_get_nest names them (title, users, parentId, data.<key>, fields.<label>.<code>). Agent runs appear as considerations with their summary, tools and outcome. Use depth to narrow (0 for the nest alone, N for N levels) and userId for one person's work. Paging is by cursor: read `has_more` and pass `next_cursor` back as `before`; there is no total. Pass a circle or workspace ID with the default depth to review everything that happened in it.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The nest whose activity to fetch. Pass a circle or workspace ID to read everything that happened beneath it." },
+        depth: {
+          oneOf: [{ type: "number" }, { type: "string", enum: ["all"] }],
+          description: "How far below the nest to look. Omit or 'all' for the nest and everything beneath it; 0 for the nest itself only; N for N levels down, measured from this nest.",
+        },
+        userId: { type: "string", description: "Only what this user did here, including what an assistant did on their behalf." },
+        limit: { type: "number", description: "Entries per page, newest first (default 50, max 200)." },
+        before: { type: "string", description: "The next_cursor from the previous page. Omit for the newest entries." },
+        linkedUsers: { type: "boolean", description: "Set true to get a linked.users list resolving every userId and agentUserId on the page." },
+      },
+      required: ["nestId"],
     },
     ...readOnly,
   },
@@ -4808,6 +4839,25 @@ async function _handleToolCall(
         return formatResult({ count: activity.length, activity });
       }
 
+      case "nestr_get_nest_activity": {
+        const parsed = schemas.nestActivity.parse(args);
+        const page = await client.getNestActivity(parsed.nestId, {
+          depth: parsed.depth,
+          userId: parsed.userId,
+          limit: parsed.limit,
+          before: parsed.before,
+          linkedUsers: parsed.linkedUsers,
+        });
+        // The API hands the next page as a URL carrying `before`; the model needs
+        // only the cursor, to pass straight back into this tool.
+        return formatResult({
+          ...page.meta,
+          next_cursor: nextCursorOf(page.links?.next),
+          ...(page.linked ? { linked: page.linked } : {}),
+          activity: page.data,
+        });
+      }
+
       // Current user identity and workspace context
       case "nestr_get_me": {
         const parsed = schemas.getMe.parse(args);
@@ -5655,6 +5705,19 @@ function formatBytes(bytes: number): string {
     unit++;
   }
   return `${size.toFixed(1)} ${units[unit]}`;
+}
+
+/**
+ * The `before` cursor out of a paging link, or null when there is no next page.
+ * The base lets a relative link parse too; it is ignored for an absolute one.
+ */
+export function nextCursorOf(nextLink: string | undefined): string | null {
+  if (!nextLink) return null;
+  try {
+    return new URL(nextLink, "http://localhost").searchParams.get("before");
+  } catch {
+    return null;
+  }
 }
 
 function formatResult(data: unknown): ToolResult {

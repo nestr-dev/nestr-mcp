@@ -285,6 +285,7 @@ The server exposes these tools to AI assistants:
 | `nestr_update_comment` | `PATCH /nests/{id}` (comment body) |
 | `nestr_delete_comment` | `DELETE /nests/{id}` (comment) |
 | `nestr_get_comments` | `GET /nests/{id}/posts` |
+| `nestr_get_nest_activity` | `GET /nests/{id}/activity` |
 | `nestr_list_circles` | `GET /workspaces/{id}/circles` |
 | `nestr_get_circle` | `GET /workspaces/{id}/circles/{cid}` |
 | `nestr_get_circle_roles` | `GET /workspaces/{id}/circles/{cid}/roles` |

@@ -534,23 +534,35 @@ export interface AgentConnectorReach {
 }
 
 /**
- * One entry in the authenticated user's cross-workspace activity feed
- * (GET /users/me/activity). Newest first.
+ * One entry of an activity feed: a nest's (GET /nests/:id/activity) or a
+ * user's (GET /users/me/activity, GET /users/:userId/activity). Newest first.
  *
  * Two shapes share this type, discriminated by `type`:
  * - Agent internal considerations: `type: "consideration"` with `summary`,
  *   `tools`, `outcome`, `considerationCount`, `dm`, and `redacted` when the
  *   substance was withheld (DM privacy — see getMyActivity's withUser option).
- * - Everything else: `type: <verb>` with a human-readable `description`.
+ * - Everything else: `type: <verb>` with a human-readable `description` and
+ *   the same change as data in `changes`.
  */
 export interface ActivityItem {
+  id?: string;
   date: string;
+  /** Who did it. "SYSTEM" when the server itself wrote it. */
+  userId?: string;
+  /** The agent that wrote it on the user's behalf, when an assistant did. */
+  agentUserId?: string;
   workspaceId: string;
   nestId: string;
   nestTitle: string;
   type: string;
   /** Human-readable line for non-consideration activity. */
   description?: string;
+  /**
+   * The entry as data: one row per changed field, named as GET /nests/:id names
+   * it (title, users, parentId, data.<key>, fields.<label>.<code>). Empty for
+   * uploads, label edits and considerations.
+   */
+  changes?: TensionChange[];
   /** consideration: short summary of what the agent considered/did. */
   summary?: string;
   /** consideration: tool names invoked during the run. */
@@ -574,6 +586,16 @@ export interface TensionPart {
   _id: string;
   title?: string;
   items?: Array<Record<string, unknown>>;
+}
+
+/** The page GET /nests/:id/activity answers with. */
+export interface NestActivityEnvelope {
+  status: string;
+  meta: { depth: number | "all"; limit: number; count: number; has_more: boolean };
+  /** `next` is the request URL with the next page's `before` cursor set. */
+  links?: { next?: string };
+  linked?: { users?: User[] };
+  data: ActivityItem[];
 }
 
 export interface TensionChange {
@@ -2476,6 +2498,35 @@ export class NestrClient {
       `/users/${encodeURIComponent(userId)}/activity${query ? `?${query}` : ""}`
     );
     return response.data.activity;
+  }
+
+  /**
+   * A nest's activity and, by default, everything beneath it, newest first.
+   * Wraps GET /nests/:id/activity. Paging is a cursor: the response's
+   * `links.next` carries the next page's `before`, and `meta.has_more` says
+   * whether there is one. There is no total.
+   */
+  async getNestActivity(
+    nestId: string,
+    options?: {
+      depth?: number | "all";
+      userId?: string;
+      limit?: number;
+      before?: string;
+      linkedUsers?: boolean;
+    }
+  ): Promise<NestActivityEnvelope> {
+    const params = new URLSearchParams();
+    if (options?.depth !== undefined) params.set("depth", options.depth.toString());
+    if (options?.userId) params.set("userId", options.userId);
+    if (options?.limit !== undefined) params.set("limit", options.limit.toString());
+    if (options?.before) params.set("before", options.before);
+    if (options?.linkedUsers) params.set("linkedUsers", "true");
+
+    const query = params.toString();
+    return this.fetch<NestActivityEnvelope>(
+      `/nests/${encodeURIComponent(nestId)}/activity${query ? `?${query}` : ""}`
+    );
   }
 
   /**
