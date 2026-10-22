@@ -9,7 +9,7 @@
  * exact internal topic match first, then article search/fetch.
  */
 
-import { modelImageMimeType, normalizeMimeType } from "../util/image-types.js";
+import { isImageMimeType, modelImageMimeType, normalizeMimeType } from "../util/image-types.js";
 
 const SITEMAP_URL = "https://nestr.io/sitemap.xml";
 const HELP_ARTICLE_PREFIX = "https://nestr.io/help/articles/";
@@ -503,7 +503,10 @@ export async function fetchImageAsBase64(url: string): Promise<{ data: string; m
     const contentType = normalizeMimeType(res.headers?.get?.("content-type"));
     // Only a type the model accepts as an image: anything else (SVG chrome and
     // icons, but also BMP/AVIF/HEIC) is a 400 on the agent's forwarding call.
-    const sourceMime = modelImageMimeType(contentType) ?? mimeFromExtension(url);
+    // The extension is a fallback for a server that typed the body as something
+    // other than an image, never a second opinion on one that did: an AVIF
+    // served from a .png URL would otherwise be relabelled as PNG it isn't.
+    const sourceMime = isImageMimeType(contentType) ? modelImageMimeType(contentType) : mimeFromExtension(url);
     if (!sourceMime) return null;
     const declaredLength = Number(res.headers?.get?.("content-length") || 0);
     if (declaredLength > MAX_IMAGE_BYTES) return null;
