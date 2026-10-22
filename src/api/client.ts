@@ -462,6 +462,30 @@ export interface Connection {
 }
 
 /** A binding as the workspace listing reports it, with who holds a credential. */
+/**
+ * A scheduled run waiting for someone in a role connector's audience to approve the role's
+ * latest instructions (GET /workspaces/:id/connections/list, per row). Nestr holds the
+ * connector back on runs nobody started until then; manual runs still get it.
+ */
+export interface PendingInstructionApproval {
+  /** The nest the ask was posted on: the role, or a task the role's agent ran on. */
+  nestId: string;
+  nestTitle?: string;
+  connectionId?: string;
+  connectorName?: string;
+  askedAt: string | null;
+  agentUserId?: string | null;
+  roleNestId?: string | null;
+  skillIds?: string[];
+  commentId?: string | null;
+  /** App path of the ask comment, `/n/{nestId}?comment={commentId}`: a page for a person. */
+  commentPath?: string | null;
+  commentUrl?: string | null;
+  approvers?: string[];
+  /** Whether the CALLER is someone the connector is shared with, and so may approve. */
+  canApprove?: boolean;
+}
+
 export interface ConnectionListing {
   connectionId: string;
   connectorId: string | null;
@@ -487,6 +511,8 @@ export interface ConnectionListing {
     authorizedBy: string | null;
     authorizedByName: string | null;
   }>;
+  /** Scheduled runs this connector is held back on, pending instruction approval. */
+  pendingInstructionApprovals?: PendingInstructionApproval[];
 }
 
 /**
