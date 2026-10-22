@@ -647,6 +647,14 @@ Some text
       expect(await fetchImageAsBase64("https://cdn.prod.website-files.com/x/page")).toBeNull();
     });
 
+    it.each(["image/svg+xml", "image/bmp", "image/avif", "image/heic", "image/x-icon"])(
+      "returns null for %s, which the model API rejects as an image",
+      async (contentType) => {
+        mockFetch.mockResolvedValueOnce(imageResponse(Buffer.from("x"), contentType));
+        expect(await fetchImageAsBase64("https://cdn.prod.website-files.com/x/asset")).toBeNull();
+      },
+    );
+
     it("returns null on a network error rather than throwing", async () => {
       mockFetch.mockRejectedValueOnce(new Error("boom"));
       expect(await fetchImageAsBase64(PNG)).toBeNull();
