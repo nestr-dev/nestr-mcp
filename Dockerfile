@@ -1,7 +1,8 @@
 # Nestr MCP Server - Production Dockerfile
 # Serves the hosted MCP service at mcp.nestr.io
 
-FROM node:22-alpine AS builder
+# Node pinned to an exact patched release; bump it deliberately in both stages
+FROM node:22.23.4-alpine3.24 AS builder
 
 WORKDIR /app
 
@@ -19,7 +20,7 @@ COPY src/ ./src/
 RUN npm run build
 
 # Production stage
-FROM node:22-alpine
+FROM node:22.23.4-alpine3.24
 
 WORKDIR /app
 
