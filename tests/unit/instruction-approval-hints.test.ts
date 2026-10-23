@@ -57,6 +57,14 @@ function mockResponse(status: number, body: unknown) {
 }
 
 describe("connector_awaiting_instruction_approval on a nest read", () => {
+  it("makes a relative hint url clickable too", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const enriched: any = enrichHints({
+      _id: "role1", ancestors: ["ws1"], hints: [{ ...awaitingHint(), url: "/n/role1?unblock=1" }],
+    });
+    expect(enriched.hints[0].url).toMatch(/^https?:\/\/[^/]+\/n\/role1\?unblock=1$/);
+  });
+
   it("passes the connectors through and adds guidance that survives summary level", () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     const enriched: any = enrichHints({ _id: "role1", ancestors: ["ws1"], hints: [awaitingHint()] });
@@ -65,6 +73,8 @@ describe("connector_awaiting_instruction_approval on a nest read", () => {
       name: "Gmail", approvers: ["A teammate"], reconnectApproves: "when-in-audience",
     });
     expect(hint.url).toBe("https://app.nestr.io/n/role1?comment=c1");
+    // The API sends the per-connector link as an app path; it reaches the model clickable.
+    expect(hint.connectors[0].commentUrl).toMatch(/^https?:\/\/[^/]+\/n\/role1\?comment=c1$/);
     expect(hint.guidance).toBe(HINT_TYPE_GUIDANCE.connector_awaiting_instruction_approval);
     // The page link is for a person: no tool call is invented, and it is not logged as a gap.
     expect(hint.toolCall).toBeUndefined();

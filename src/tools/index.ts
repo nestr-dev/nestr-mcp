@@ -739,6 +739,19 @@ export const INSTRUCTION_APPROVAL_NOTE =
   + "re-runs the paused run. canApprove says whether you, the caller, are in its audience; an agent "
   + "cannot approve on a person's behalf, so tell the person you are helping and give them the link.";
 
+// A page path made a link a person can click; anything already absolute is left as it is.
+function absoluteWebUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  return path.startsWith("/") ? `${NESTR_WEB_BASE}${path}` : path;
+}
+
+// The instruction-approval hints tell the model to hand over these links, so they must be clickable
+// whether the API sent them absolute or as app paths.
+const INSTRUCTION_APPROVAL_HINT_TYPES = new Set([
+  "connector_awaiting_instruction_approval",
+  "connector_paused_by_instruction_edit",
+]);
+
 // Each pending approval's ask-comment path made absolute, so it is a link to hand over, and
 // the note above added to every row that has any. Rows without are returned untouched.
 export function withInstructionApprovalNotes<T>(connections: T): T {
@@ -750,9 +763,7 @@ export function withInstructionApprovalNotes<T>(connections: T): T {
       ...row,
       instructionApprovalNote: INSTRUCTION_APPROVAL_NOTE,
       pendingInstructionApprovals: pending.map((entry: PendingInstructionApproval) => {
-        const path = entry.commentUrl || entry.commentPath;
-        const commentUrl = path && path.startsWith("/") ? `${NESTR_WEB_BASE}${path}` : path || null;
-        return { ...entry, commentUrl };
+        return { ...entry, commentUrl: absoluteWebUrl(entry.commentUrl || entry.commentPath) };
       }),
     };
   }) as T;
@@ -974,6 +985,18 @@ export function enrichHints<T>(data: T): T {
 
       const guidance = HINT_TYPE_GUIDANCE[hint.type];
       if (guidance) enriched.guidance = guidance;
+
+      if (INSTRUCTION_APPROVAL_HINT_TYPES.has(hint.type)) {
+        if (typeof enriched.url === "string") enriched.url = absoluteWebUrl(enriched.url) || enriched.url;
+        const connectors = (enriched as { connectors?: unknown }).connectors;
+        if (Array.isArray(connectors)) {
+          (enriched as { connectors?: unknown }).connectors = connectors.map((entry) => {
+            if (!entry || typeof entry !== "object" || !("commentUrl" in entry)) return entry;
+            const link = (entry as { commentUrl?: string | null }).commentUrl;
+            return { ...entry, commentUrl: absoluteWebUrl(link) };
+          });
+        }
+      }
 
       // New: endpoints[] → toolCalls[]. Each endpoint becomes one tool-call
       // suggestion; unmapped routes are dropped silently (no invented tools).

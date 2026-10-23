@@ -461,7 +461,6 @@ export interface Connection {
   updatedAt?: string;
 }
 
-/** A binding as the workspace listing reports it, with who holds a credential. */
 /**
  * A scheduled run waiting for someone in a role connector's audience to approve the role's
  * latest instructions (GET /workspaces/:id/connections/list, per row). Nestr holds the
@@ -486,6 +485,7 @@ export interface PendingInstructionApproval {
   canApprove?: boolean;
 }
 
+/** A binding as the workspace listing reports it, with who holds a credential. */
 export interface ConnectionListing {
   connectionId: string;
   connectorId: string | null;
