@@ -7,6 +7,7 @@ import { z } from "zod";
 import { NestrApiError, tokenFingerprint, unwrapList, type NestrClient, type Nest, type ToolError, type ErrorCode, type ListEnvelope, type MaybeListEnvelope, type ConnectionListing, type PendingInstructionApproval } from "../api/client.js";
 import { appResources } from "../apps/index.js";
 import { getCorrelationId } from "../util/request-context.js";
+import { MODEL_IMAGE_MIME_TYPES, isImageMimeType, modelImageMimeType, normalizeMimeType } from "../util/image-types.js";
 import { VERSION } from "../version.js";
 import type { DiagnoseSnapshot } from "../util/diagnose.js";
 import { PRIME_LABELS, PrimeLabelConflictError, validatePrimeLabels, ensureMeetingModifier } from "./validation.js";
@@ -3858,7 +3859,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_nest_files",
-    description: "List a nest's file attachments. Images pasted into the nest's text are deliberately excluded — they belong to the text that references them; the inline_images hint counts those and their ids come from the references in the content. A comment ID works too — files are keyed by nestId, so pass a comment ID to see files attached to that comment. Returns each file's id, name, contentType and size. Use nestr_read_file with a returned id to read one (images come back as viewable image content). Auth: any valid token with access to the nest.",
+    description: "List a nest's file attachments. Images pasted into the nest's text are deliberately excluded — they belong to the text that references them; the inline_images hint counts those and their ids come from the references in the content. A comment ID works too — files are keyed by nestId, so pass a comment ID to see files attached to that comment. Returns each file's id, name, contentType and size. Use nestr_read_file with a returned id to read one (JPEG/PNG/GIF/WebP come back as viewable image content; SVG comes back as its markup). Auth: any valid token with access to the nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3870,7 +3871,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_read_file",
-    description: "Read a single file attachment on a nest (or comment). Branches on contentType: images (image/*) return as viewable image content so you can see them (very large images return metadata only); JSON and text (application/json, text/*) return as decoded UTF-8 text (large text is truncated); PDFs and other types return their metadata only (cannot be inlined yet). Get file ids from nestr_get_nest_files, or, for an image pasted into a nest's text, from the ![name](/file/download?id=FILE_ID&name=NAME) reference in its content — those are not listed by nestr_get_nest_files but are readable here. A comment ID works as the nestId. Auth: any valid token with access to the nest.",
+    description: "Read a single file attachment on a nest (or comment). Branches on contentType: JPEG, PNG, GIF and WebP return as viewable image content so you can see them (very large images return metadata only); JSON, XML and text (application/json, text/*, and SVG, which is markup) return as decoded UTF-8 text (large text is truncated); PDFs, other image formats and everything else return their metadata only (cannot be inlined). Get file ids from nestr_get_nest_files, or, for an image pasted into a nest's text, from the ![name](/file/download?id=FILE_ID&name=NAME) reference in its content — those are not listed by nestr_get_nest_files but are readable here. A comment ID works as the nestId. Auth: any valid token with access to the nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -5748,12 +5749,17 @@ async function _handleToolCall(
         const parsed = schemas.readFile.parse(args);
         const file = await client.getNestFile(parsed.nestId, parsed.fileId);
         const contentType = file.contentType || "application/octet-stream";
+        const baseType = normalizeMimeType(contentType);
 
-        // Images: return as a viewable image content item (mirrors nestr_help).
-        // Guard the size first — an image over MAX_IMAGE_INLINE_BYTES exceeds the
+        // Images the model can actually take: return as a viewable image content
+        // item (mirrors nestr_help). Gated on modelImageMimeType, not an `image/`
+        // prefix — an unsupported type (SVG, BMP, AVIF, HEIC) is a 400 that fails
+        // the agent's whole request, not just this block.
+        // Guard the size too — an image over MAX_IMAGE_INLINE_BYTES exceeds the
         // per-image limit of the model API the agent forwards it to, so inlining
         // the base64 would just make that call fail. Degrade to a metadata note.
-        if (contentType.startsWith("image/")) {
+        const imageMime = modelImageMimeType(contentType);
+        if (imageMime) {
           // Not `??`: size can legitimately be 0 when a legacy file's metadata was
           // lost (the API descriptor falls back to 0), and there we want the real
           // byte length so the cap still applies. `> 0` recomputes on a zero/missing
@@ -5772,15 +5778,20 @@ async function _handleToolCall(
           return {
             content: [
               { type: "text", text: `File: ${file.name} (${contentType}, ${formatBytes(file.size)})` },
-              { type: "image", data: file.dataBase64, mimeType: contentType },
+              { type: "image", data: file.dataBase64, mimeType: imageMime },
             ],
           };
         }
 
-        // JSON / text / CSV: decode to UTF-8 and return as a text block.
+        // JSON / text / CSV / SVG: decode to UTF-8 and return as a text block.
+        // SVG is markup, so its source is the useful form anyway — and it is the
+        // one image type an agent asked to work with brand assets reaches for.
         if (
-          contentType.startsWith("text/") ||
-          contentType.startsWith("application/json")
+          baseType.startsWith("text/") ||
+          baseType === "application/json" ||
+          baseType.endsWith("+json") ||
+          baseType.endsWith("+xml") ||
+          baseType === "application/xml"
         ) {
           const decoded = Buffer.from(file.dataBase64, "base64").toString("utf-8");
           const { text: body, truncated } = capText(decoded);
@@ -5794,13 +5805,17 @@ async function _handleToolCall(
           };
         }
 
-        // PDFs and everything else: metadata only. The ToolResult content type
-        // supports text + image blocks, so a non-image binary can't be inlined yet.
+        // PDFs, unsupported image formats and everything else: metadata only.
+        // The ToolResult content type supports text + image blocks, so a binary
+        // the model cannot read as an image can't be inlined yet.
+        const why = isImageMimeType(contentType)
+          ? `Models only accept ${MODEL_IMAGE_MIME_TYPES.join(", ")} as images; convert it to one of those and attach that.`
+          : `Only images (returned as viewable image content) and text/JSON/XML (returned as decoded text) can be inlined.`;
         return {
           content: [
             {
               type: "text",
-              text: `File: ${file.name}\nContent type: ${contentType}\nSize: ${formatBytes(file.size)}\n\nThis file type can't be inlined yet — only images (returned as viewable image content) and text/JSON (returned as decoded text) are supported.`,
+              text: `File: ${file.name}\nContent type: ${contentType}\nSize: ${formatBytes(file.size)}\n\nThis file type can't be inlined. ${why}`,
             },
           ],
         };
