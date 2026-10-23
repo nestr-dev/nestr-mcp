@@ -4,7 +4,7 @@
  */
 
 import { z } from "zod";
-import { NestrApiError, tokenFingerprint, unwrapList, type NestrClient, type Nest, type ToolError, type ErrorCode, type ListEnvelope, type MaybeListEnvelope } from "../api/client.js";
+import { NestrApiError, tokenFingerprint, unwrapList, type NestrClient, type Nest, type ToolError, type ErrorCode, type ListEnvelope, type MaybeListEnvelope, type ConnectionListing, type PendingInstructionApproval } from "../api/client.js";
 import { appResources } from "../apps/index.js";
 import { getCorrelationId } from "../util/request-context.js";
 import { MODEL_IMAGE_MIME_TYPES, isImageMimeType, modelImageMimeType, normalizeMimeType } from "../util/image-types.js";
@@ -316,6 +316,34 @@ const HINT_TYPE_TOOL_CALLS: Record<
   },
 };
 
+// Guidance for hints where the label says WHAT happened but a model reliably gets the
+// follow-up wrong. Added to the hint as `guidance` by enrichHints.
+//
+// The instruction-approval pair is the case that earned this. A role connector held back
+// on scheduled runs looks, from the outside, like a broken connection, and the obvious
+// moves are all wrong: reconnecting as the wrong person, changing the connector's or the
+// tool's own settings, or the agent trying to approve for someone. What releases it is a
+// person in the connector's audience approving, and saying that once here is cheaper than
+// every caller rediscovering it. Kept short: a listing carries one copy per nest.
+export const HINT_TYPE_GUIDANCE: Record<string, string> = {
+  connector_awaiting_instruction_approval:
+    "The credential is fine and changing the connector's or the tool's own settings will not help: "
+    + "Nestr withholds it on scheduled runs (runs nobody started) because this role's instructions were "
+    + "edited by someone outside the connector's audience, or by an author Nestr cannot name. Manual runs "
+    + "still get it. Only a PERSON releases it: someone the connector is shared with, or a workspace admin, "
+    + "presses Approve on the request comment (`url`, or `connectors[].commentUrl`) or on the role page; a "
+    + "reconnect by someone it is shared with also counts as approving (a reconnect by anyone else does "
+    + "not). Approving re-runs the paused run. You cannot approve on anyone's behalf: tell the person you "
+    + "are helping, name `connectors[].approvers` as who can, and give them the link.",
+  connector_paused_by_instruction_edit:
+    "Your edit was saved. Tell the person you are helping, once, in this reply: the connectors named here "
+    + "will now be withheld on scheduled runs of these roles until someone they are shared with, or a "
+    + "workspace admin, approves the new instructions. Manual runs still work. The next scheduled run posts "
+    + "an Approve request on the item; approving there or on the role page, or a reconnect by someone it is "
+    + "shared with, releases it. You cannot approve it yourself, and changing the connector's settings does "
+    + "not help.",
+};
+
 /**
  * Single endpoint object the API returns inside hint.endpoints.
  * `body_example` is intentionally snake_case — it's a passthrough from the API.
@@ -344,6 +372,14 @@ interface Hint {
   severity: string;
   count?: number;
   url?: string;
+  detail?: string;
+  helpTopic?: string;
+  // Carried by the instruction-approval hints: which role connectors are held back, where
+  // each was asked about, and (on the read-side hint) who can approve it. Passed through.
+  connectors?: Array<Record<string, unknown>>;
+  // Added here, not by Nestr: what the model should do with a hint whose label alone
+  // does not say it. Survives `hints: 'summary'`, which drops `detail`.
+  guidance?: string;
   endpoints?: ApiHintEndpoint[];
   lastPost?: string;
   readAt?: string;
@@ -654,6 +690,86 @@ export function translateEndpoint(endpoint: ApiHintEndpoint): EnrichedToolCall |
   return null;
 }
 
+// Hints a write route put on its response ENVELOPE ({ status, data, hints }), lifted out and
+// enriched so a model sees them beside the write's message rather than buried in `nest`.
+// PUT/PATCH nests/:id answers this way when an edit to instructions (title, description,
+// purpose) changes what a role's agents may use; that is advice about the write the model
+// has to pass on now, not something to find later. `rest` is the response without them.
+export function writeEnvelopeHints(result: unknown): { hints?: Hint[]; rest: unknown; tellThePerson?: string } {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return { rest: result };
+  const envelope = result as Record<string, unknown>;
+  // Only an envelope: a bare nest's own `hints` are about the nest, and stay on it.
+  if (!("data" in envelope) || !Array.isArray(envelope.hints) || envelope.hints.length === 0) {
+    return { rest: result };
+  }
+  const { hints: raw, ...rest } = envelope;
+  const hints = (enrichHints({ hints: raw }) as { hints: Hint[] }).hints;
+  const paused = hints.filter((hint) => { return hint.type === "connector_paused_by_instruction_edit"; });
+  return {
+    hints,
+    rest,
+    ...(paused.length
+      ? { tellThePerson: paused.map((hint) => { return hint.label; }).join(" ") }
+      : {}),
+  };
+}
+
+// The result of an update, with any write-time hints lifted to the top (see above).
+function updatedNestResult(nest: unknown): Record<string, unknown> {
+  const { hints, rest, tellThePerson } = writeEnvelopeHints(nest);
+  return {
+    message: tellThePerson
+      ? "Nest updated successfully. Before anything else, tell the person you are helping what this edit paused (see tellThePerson)."
+      : "Nest updated successfully",
+    _id: writtenId(nest),
+    ...(tellThePerson ? { tellThePerson } : {}),
+    ...(hints ? { hints } : {}),
+    nest: rest,
+  };
+}
+
+// What a connection row with pendingInstructionApprovals means, said once per row that has
+// them. The row's `health` still reads as working, because manual runs do work, so without
+// this the one thing wrong with the connector is an array a model has to interpret.
+export const INSTRUCTION_APPROVAL_NOTE =
+  "Held back on scheduled runs until someone this connector is shared with, or a workspace admin, "
+  + "approves the role's latest instructions (they were edited by someone outside its audience, or by an "
+  + "author Nestr cannot name). The credential is fine, manual runs still work, and changing the "
+  + "connector's settings will not release it. To release it, a person opens commentUrl and presses "
+  + "Approve (or uses Approve on the role page), or someone it is shared with reconnects it. Approving "
+  + "re-runs the paused run. canApprove says whether you, the caller, are in its audience; an agent "
+  + "cannot approve on a person's behalf, so tell the person you are helping and give them the link.";
+
+// A page path made a link a person can click; anything already absolute is left as it is.
+function absoluteWebUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  return path.startsWith("/") ? `${NESTR_WEB_BASE}${path}` : path;
+}
+
+// The instruction-approval hints tell the model to hand over these links, so they must be clickable
+// whether the API sent them absolute or as app paths.
+const INSTRUCTION_APPROVAL_HINT_TYPES = new Set([
+  "connector_awaiting_instruction_approval",
+  "connector_paused_by_instruction_edit",
+]);
+
+// Each pending approval's ask-comment path made absolute, so it is a link to hand over, and
+// the note above added to every row that has any. Rows without are returned untouched.
+export function withInstructionApprovalNotes<T>(connections: T): T {
+  if (!Array.isArray(connections)) return connections;
+  return connections.map((row) => {
+    const pending = row && (row as ConnectionListing).pendingInstructionApprovals;
+    if (!Array.isArray(pending) || pending.length === 0) return row;
+    return {
+      ...row,
+      instructionApprovalNote: INSTRUCTION_APPROVAL_NOTE,
+      pendingInstructionApprovals: pending.map((entry: PendingInstructionApproval) => {
+        return { ...entry, commentUrl: absoluteWebUrl(entry.commentUrl || entry.commentPath) };
+      }),
+    };
+  }) as T;
+}
+
 // The id of the object a write tool just created or updated. REST writes answer
 // { status, data: <object> }, a few client methods unwrap that, and the
 // self-organization routes can answer with a list, so look in each place, and only
@@ -851,8 +967,11 @@ export function enrichHints<T>(data: T): T {
         rawUrl = rawUrl.replace(/^\/api(?=\/)/, "");
         const [path, queryString] = rawUrl.split("?");
         const searchParams = new URLSearchParams(queryString || "");
-        let matched = false;
-        for (const { pattern, tool, params } of HINT_URL_PATTERNS) {
+        // `/n/...` is a page a PERSON opens (the instruction-approval hint points at its
+        // ask comment this way), not a route: there is no call to map it to, and logging
+        // it as unrecognised would make a deliberate link look like a gap.
+        let matched = /^\/n\//.test(path);
+        for (const { pattern, tool, params } of matched ? [] : HINT_URL_PATTERNS) {
           const match = path.match(pattern);
           if (match) {
             enriched.toolCall = { tool, params: params(match, searchParams, workspaceId) };
@@ -862,6 +981,21 @@ export function enrichHints<T>(data: T): T {
         }
         if (!matched) {
           console.error(`[nestr-mcp] Unrecognized hint URL pattern: "${hint.url}" (hint type: ${hint.type})`);
+        }
+      }
+
+      const guidance = HINT_TYPE_GUIDANCE[hint.type];
+      if (guidance) enriched.guidance = guidance;
+
+      if (INSTRUCTION_APPROVAL_HINT_TYPES.has(hint.type)) {
+        if (typeof enriched.url === "string") enriched.url = absoluteWebUrl(enriched.url) || enriched.url;
+        const connectors = (enriched as { connectors?: unknown }).connectors;
+        if (Array.isArray(connectors)) {
+          (enriched as { connectors?: unknown }).connectors = connectors.map((entry) => {
+            if (!entry || typeof entry !== "object" || !("commentUrl" in entry)) return entry;
+            const link = (entry as { commentUrl?: string | null }).commentUrl;
+            return { ...entry, commentUrl: absoluteWebUrl(link) };
+          });
         }
       }
 
@@ -2102,7 +2236,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_explain_nest",
-    description: "Diagnose a single nest: WHY it looks and behaves as it does. Returns field/property provenance (which label and circle defines each field, value, and property such as the icon), the caller's composed rights with a deny trace (why a field is read-only, why you cannot edit), and — when whoCan is given — who can perform an op and who to contact. Use this when a user asks 'why can't I ...', 'why is this read-only', 'where does this field come from', 'why does this role have a different icon', or 'who can change this'. For connection/auth errors use nestr_diagnose instead.",
+    description: "Diagnose a single nest: WHY it looks and behaves as it does. Returns field/property provenance (which label and circle defines each field, value, and property such as the icon), the caller's composed rights with a deny trace (why a field is read-only, why you cannot edit), and — when whoCan is given — who can perform an op and who to contact. Use this when a user asks 'why can't I ...', 'why is this read-only', 'where does this field come from', 'why does this role have a different icon', or 'who can change this'. When a role connector is held back on scheduled runs pending approval of the role's instructions, it says so in a connector_awaiting_instruction_approval hint with who can approve and where. For connection/auth errors use nestr_diagnose instead.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3589,7 +3723,7 @@ export const toolDefinitions = [
   {
     name: "nestr_list_connections",
     ...readOnly,
-    description: "List who has access to what in this workspace: each binding's connector, its owner (a role's domain, a person, an agent, or the whole workspace), and who holds a credential on it. Shows when an agent is using a person's account, and never returns a secret. Use it to check whether access already exists before giving more, and to find the connectionId for nestr_get_connect_link.",
+    description: "List who has access to what in this workspace: each binding's connector, its owner (a role's domain, a person, an agent, or the whole workspace), and who holds a credential on it. Shows when an agent is using a person's account, and never returns a secret. Use it to check whether access already exists before giving more, and to find the connectionId for nestr_get_connect_link. A row with pendingInstructionApprovals is held back on scheduled runs until a person in its audience approves the role's latest instructions; its instructionApprovalNote says who can release it and how.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -4221,7 +4355,10 @@ async function _handleToolCall(
         const nest = await client.getNest(parsed.nestId, {
           cleanText: true,
           fieldsMetaData: true,
-          hints: false,
+          // The one hint that answers "why does this role's agent not have Gmail on its
+          // scheduled runs": it is not a rights question, so the rights trace cannot say it.
+          hints: "full",
+          hintTypes: ["connector_awaiting_instruction_approval"],
           provenance: true,
           rights: true,
           forUser: parsed.forUser,
@@ -4346,7 +4483,7 @@ async function _handleToolCall(
           const nest = isCircle
             ? await client.updateCircle(parsed.workspaceId, parsed.nestId, updates)
             : await client.updateRole(parsed.workspaceId, parsed.nestId, updates);
-          return formatResult({ message: "Nest updated successfully", _id: writtenId(nest), nest });
+          return formatResult(updatedNestResult(nest));
         }
 
         const nest = await client.updateNest(parsed.nestId, {
@@ -4363,7 +4500,7 @@ async function _handleToolCall(
           allDay: parsed.allDay,
           completed: parsed.completed,
         });
-        return formatResult({ message: "Nest updated successfully", _id: writtenId(nest), nest });
+        return formatResult(updatedNestResult(nest));
       }
 
       case "nestr_delete_nest": {
@@ -5422,7 +5559,7 @@ async function _handleToolCall(
         const connections = await client.listConnections(parsed.workspaceId, {
           includeDisabled: parsed.includeDisabled,
         });
-        return formatResult(connections);
+        return formatResult(withInstructionApprovalNotes(connections));
       }
 
       case "nestr_remove_connection": {
