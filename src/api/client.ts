@@ -1792,6 +1792,67 @@ export class NestrClient {
     );
   }
 
+  // ============ DATASERIES ============
+
+  private seriesPointsPath(nestId: string, series: string, seriesId?: string): string {
+    const key = [series, seriesId].filter(Boolean).map((part) => encodeURIComponent(part as string)).join("/");
+    return `/nests/${nestId}/series/${key}/points`;
+  }
+
+  /** GET /nests/:id/series. Kept enveloped: each series carries its key, current point and endpoints. */
+  async listSeries(nestId: string): Promise<unknown> {
+    return this.fetch<unknown>(`/nests/${nestId}/series`);
+  }
+
+  /** Kept enveloped, so meta.has_more survives. */
+  async getSeriesPoints(
+    nestId: string,
+    series: string,
+    options?: { seriesId?: string; from?: string | number; to?: string | number; limit?: number; order?: "asc" | "desc" }
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (options?.from !== undefined) params.set("from", String(options.from));
+    if (options?.to !== undefined) params.set("to", String(options.to));
+    if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.order) params.set("order", options.order);
+    const query = params.toString();
+    return this.fetch<unknown>(
+      `${this.seriesPointsPath(nestId, series, options?.seriesId)}${query ? `?${query}` : ""}`
+    );
+  }
+
+  /** Always sent as an array, so the response is one result per point. */
+  async addSeriesPoints(
+    nestId: string,
+    series: string,
+    points: Array<{ date: string | number; value: number }>,
+    seriesId?: string
+  ): Promise<unknown> {
+    return this.fetch<unknown>(this.seriesPointsPath(nestId, series, seriesId), {
+      method: "POST",
+      body: JSON.stringify(points),
+    });
+  }
+
+  async updateSeriesPoint(
+    nestId: string,
+    series: string,
+    pointId: string,
+    change: { date?: string | number; value?: number },
+    seriesId?: string
+  ): Promise<unknown> {
+    return this.fetch<unknown>(`${this.seriesPointsPath(nestId, series, seriesId)}/${pointId}`, {
+      method: "PATCH",
+      body: JSON.stringify(change),
+    });
+  }
+
+  async deleteSeriesPoint(nestId: string, series: string, pointId: string, seriesId?: string): Promise<unknown> {
+    return this.fetch<unknown>(`${this.seriesPointsPath(nestId, series, seriesId)}/${pointId}`, {
+      method: "DELETE",
+    });
+  }
+
   // ============ APPS ============
 
   async getWorkspaceApps(workspaceId: string): Promise<WorkspaceApp[]> {
