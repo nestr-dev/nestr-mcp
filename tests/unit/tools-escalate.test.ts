@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { handleToolCall } from "../../src/tools/index.js";
+import { handleToolCall, toolDefinitions } from "../../src/tools/index.js";
 import { NestrClient } from "../../src/api/client.js";
 
 function mockResponse(status: number, body: unknown) {
@@ -62,5 +62,19 @@ describe("nestr_escalate_to_support", () => {
   it("still says nothing more is needed for a thread already in the queue", async () => {
     const parsed = await escalate({ queueKey: "support", alreadyQueued: true, statusMessagePosted: false });
     expect(parsed.message).toContain("Already with a human");
+  });
+});
+
+// Escalating unasked queued threads a colleague then found already solved. Only an explicit
+// request for a human skips the offer; everything else waits for the person's yes.
+describe("nestr_escalate_to_support description", () => {
+  const description = toolDefinitions.find((t) => t.name === "nestr_escalate_to_support")!.description;
+
+  it("escalates unasked only when the person asks for a human", () => {
+    expect(description).toContain("straight away only when the person explicitly asks for a human");
+  });
+
+  it("otherwise offers first and waits for a yes", () => {
+    expect(description).toContain("OFFER to bring someone in and call this only after they say yes");
   });
 });

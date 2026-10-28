@@ -2675,7 +2675,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_escalate_to_support",
-    description: "Bring a human from Nestr support into a Nestradamus conversation. Use it when the person asks for a human, when you have answered the wrong question more than once, or when something needs Nestr staff to look at their account. Find the thread with nestr_list_dms({withUser:'nestr_support'}). Safe to call twice; a thread already waiting stays as it is. Only works on a conversation Nestradamus is in.",
+    description: "Bring a human from Nestr support into a Nestradamus conversation. Call it straight away only when the person explicitly asks for a human. Otherwise, when you do not know, have answered the wrong question more than once, or something needs Nestr staff to look at their account, OFFER to bring someone in and call this only after they say yes. Never escalate on a hunch that they are struggling. Find the thread with nestr_list_dms({withUser:'nestr_support'}). Safe to call twice; a thread already waiting stays as it is. Only works on a conversation Nestradamus is in.",
     inputSchema: {
       type: "object" as const,
       properties: {
