@@ -48,6 +48,8 @@ export interface NestrMcpServerConfig {
   isReadOnly?: boolean;
   /** Stdio only: nestr_upload_file may read filePath from the local disk. Never set on the hosted server. */
   allowLocalFiles?: boolean;
+  /** Folders filePath may read from; defaults to the working directory plus NESTR_UPLOAD_DIRS. */
+  localFileRoots?: string[];
 }
 
 // Server instructions provide context to AI assistants about what Nestr is and how to use it
@@ -165,6 +167,7 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
         isPublic: config.isPublic,
         isReadOnly: config.isReadOnly,
         allowLocalFiles: config.allowLocalFiles,
+        localFileRoots: config.localFileRoots,
       });
 
       // Track successful tool call

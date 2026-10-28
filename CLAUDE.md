@@ -80,6 +80,7 @@ tests/
 | `NESTR_OAUTH_TOKEN` | OAuth Bearer token from Nestr OAuth flow (recommended) | Yes* |
 | `NESTR_API_KEY` | Nestr API key from workspace settings | Yes* |
 | `NESTR_API_BASE` | API base URL (default: `https://app.nestr.io/api`) | No |
+| `NESTR_UPLOAD_DIRS` | Stdio only: extra folders `filePath` may read from (path-delimiter separated, `~` expanded). The working directory is always allowed unless it is `/`; hidden files and folders never are. | No |
 | `NESTR_OAUTH_CLIENT_ID` | OAuth client ID (for registered clients) | No |
 | `NESTR_OAUTH_CLIENT_SECRET` | OAuth client secret (for registered clients) | No |
 | `MCP_RESOURCE_URL` | MCP resource identifier (default: `https://mcp.nestr.io/mcp`) | No |
