@@ -3,7 +3,9 @@
  * Defines all available tools and their handlers
  */
 
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, delimiter, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { NestrApiError, tokenFingerprint, unwrapList, type NestrClient, type Nest, type ToolError, type ErrorCode, type ListEnvelope, type MaybeListEnvelope, type ConnectionListing, type PendingInstructionApproval } from "../api/client.js";
 import { appResources } from "../apps/index.js";
@@ -4192,19 +4194,61 @@ export interface ToolCallContext {
   isReadOnly?: boolean;
   /** True only in the stdio build, which runs on the caller's machine and may read its disk. */
   allowLocalFiles?: boolean;
+  /** Folders filePath may read from. Defaults to localUploadRoots() at call time. */
+  localFileRoots?: string[];
+}
+
+// The working directory, unless it is the filesystem root or the home folder, plus NESTR_UPLOAD_DIRS.
+export function localUploadRoots(env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): string[] {
+  const extra = (env.NESTR_UPLOAD_DIRS || "")
+    .split(delimiter)
+    .map((dir) => dir.trim())
+    .filter(Boolean)
+    .map((dir) => resolve(dir === "~" || dir.startsWith(`~${sep}`) || dir.startsWith("~/") ? homedir() + dir.slice(1) : dir));
+  return parse(cwd).root === cwd || resolve(cwd) === resolve(homedir()) ? extra : [cwd, ...extra];
 }
 
 // Well above the server's own cap (default 10MB), which still applies; this only keeps a
 // huge file from being read into memory and base64-encoded before the API can refuse it.
 export const LOCAL_FILE_MAX_BYTES = 100 * 1024 * 1024;
 
-async function localFileRefusal(filePath: string): Promise<string | null> {
-  const info = await stat(filePath);
-  if (!info.isFile()) return `${filePath} is not a regular file.`;
-  if (info.size > LOCAL_FILE_MAX_BYTES) {
-    return `${filePath} is ${info.size} bytes, far over the upload limit (10MB by default), so it was not read.`;
+// A missing path resolved through its deepest existing folder, so a symlinked folder still counts.
+async function realpathOfMissing(filePath: string): Promise<string> {
+  const absolute = resolve(filePath);
+  const parent = dirname(absolute);
+  if (parent === absolute) return absolute;
+  const realParent = await realpath(parent).catch(() => realpathOfMissing(parent));
+  return join(realParent, basename(absolute));
+}
+
+const isInside = (root: string, target: string): boolean => {
+  const rel = relative(root, target);
+  return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+};
+
+// Planted text in a workspace can ask the model to upload a secret, so filePath only
+// reaches allowed folders, never a hidden file or folder, and is checked after symlinks.
+async function resolveLocalFile(filePath: string, roots: string[]): Promise<{ path: string } | { refusal: string }> {
+  const allowed = roots.length ? roots.join(", ") : "none";
+  // A missing path is judged as written, so outside the folders it is refused like an existing one.
+  const real = await realpath(filePath).catch(() => null);
+  const target = real ?? await realpathOfMissing(filePath);
+  const realRoots = (await Promise.all(roots.map((root) => realpath(root).catch(() => null))))
+    .filter((root): root is string => root !== null);
+  const root = realRoots.find((r) => isInside(r, target));
+  if (!root) {
+    return { refusal: `${filePath} is outside the folders this server may read from (${allowed}). Ask the person to move the file into one of them, or to add its folder to NESTR_UPLOAD_DIRS in the MCP server's environment.` };
   }
-  return null;
+  if (relative(root, target).split(sep).some((segment) => segment.startsWith("."))) {
+    return { refusal: `${filePath} is a hidden file or sits in a hidden folder, where credentials and keys usually live, so it is never uploaded.` };
+  }
+  if (real === null) return { refusal: `${filePath} does not exist.` };
+  const info = await stat(real);
+  if (!info.isFile()) return { refusal: `${filePath} is not a regular file.` };
+  if (info.size > LOCAL_FILE_MAX_BYTES) {
+    return { refusal: `${filePath} is ${info.size} bytes, far over the upload limit (10MB by default), so it was not read.` };
+  }
+  return { path: real };
 }
 
 type ToolDefinition = { name: string; description: string; inputSchema: { properties?: Record<string, unknown> } };
@@ -4215,7 +4259,7 @@ export function withLocalFileTools<T extends ToolDefinition>(definitions: readon
     if (def.name !== "nestr_upload_file") return def;
     return {
       ...def,
-      description: `${def.description} Running locally, filePath reads a file from this machine directly, which is the simplest way to attach a binary file.`,
+      description: `${def.description} Running locally, filePath reads a file from this machine directly, which is the simplest way to attach a binary file. It must be inside the server's working directory or a folder listed in NESTR_UPLOAD_DIRS, and hidden files and folders are always refused.`,
       inputSchema: {
         ...def.inputSchema,
         properties: {
@@ -6062,21 +6106,23 @@ async function _handleToolCall(
             correlationId: getCorrelationId(),
           });
         }
+        let localPath: string | undefined;
         if (parsed.filePath !== undefined) {
-          const refusal = await localFileRefusal(parsed.filePath);
-          if (refusal) {
+          const local = await resolveLocalFile(parsed.filePath, context?.localFileRoots ?? localUploadRoots());
+          if ("refusal" in local) {
             return formatError({
               error: true,
               code: "VALIDATION",
-              message: refusal,
+              message: local.refusal,
               retryable: false,
               correlationId: getCorrelationId(),
             });
           }
+          localPath = local.path;
         }
         // The REST API takes base64 bytes; encode here so the model never has to.
-        const dataBase64 = parsed.filePath !== undefined
-          ? (await readFile(parsed.filePath)).toString("base64")
+        const dataBase64 = localPath !== undefined
+          ? (await readFile(localPath)).toString("base64")
           : parsed.dataBase64 ?? Buffer.from(parsed.content ?? "", "utf-8").toString("base64");
         const file = await client.createNestFile(parsed.nestId, {
           name: parsed.name,

@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, truncateSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  handleToolCall, toolDefinitions, withLocalFileTools, READONLY_TOOL_NAMES, LOCAL_FILE_MAX_BYTES,
+  handleToolCall, toolDefinitions, withLocalFileTools, localUploadRoots, READONLY_TOOL_NAMES, LOCAL_FILE_MAX_BYTES,
 } from "../../src/tools/index.js";
 import { NestrClient } from "../../src/api/client.js";
 
@@ -419,6 +419,8 @@ describe("file attachment tools", () => {
 
   describe("filePath", () => {
     let dir: string;
+    // Only the test's own folder is readable, as the working directory would be.
+    const local = () => ({ allowLocalFiles: true, localFileRoots: [dir] });
     // Every byte value, so any text decoding or re-encoding on the way shows up.
     const bytes = Buffer.from(Array.from({ length: 512 }, (_, i) => i % 256));
 
@@ -436,7 +438,7 @@ describe("file attachment tools", () => {
       );
       const result = await handleToolCall(client, "nestr_upload_file", {
         nestId: "nest-1", name: "shot.png", contentType: "image/png", filePath: join(dir, "shot.png"),
-      }, { allowLocalFiles: true });
+      }, local());
       expect(result.isError).toBeFalsy();
 
       const [url, opts] = mockFetch.mock.calls[0];
@@ -459,15 +461,53 @@ describe("file attachment tools", () => {
     it("rejects filePath together with content", async () => {
       const result = await handleToolCall(client, "nestr_upload_file", {
         nestId: "nest-1", name: "x.txt", contentType: "text/plain", content: "hi", filePath: join(dir, "shot.png"),
-      }, { allowLocalFiles: true });
+      }, local());
       expect(result.isError).toBe(true);
       expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("refuses a missing file outside the folders exactly like an existing one, so existence never leaks", async () => {
+      const elsewhere = mkdtempSync(join(tmpdir(), "nestr-mcp-elsewhere-"));
+      try {
+        writeFileSync(join(elsewhere, "credentials"), "key");
+        const existing = await refusalOf(join(elsewhere, "credentials"));
+        const missing = await refusalOf(join(elsewhere, "nope"));
+        expect(existing).toContain("outside the folders");
+        expect(missing.replace("nope", "credentials")).toBe(existing);
+      } finally {
+        rmSync(elsewhere, { recursive: true, force: true });
+      }
+    });
+
+    it("refuses a missing hidden file exactly like an existing one", async () => {
+      writeFileSync(join(dir, ".env"), "SECRET=1");
+      const existing = await refusalOf(join(dir, ".env"));
+      const missing = await refusalOf(join(dir, ".npmrc"));
+      expect(missing.replace(".npmrc", ".env")).toBe(existing);
+    });
+
+    it("refuses a missing file reached through a symlinked folder like an existing one", async () => {
+      const elsewhere = mkdtempSync(join(tmpdir(), "nestr-mcp-elsewhere-"));
+      try {
+        writeFileSync(join(elsewhere, "credentials"), "key");
+        symlinkSync(elsewhere, join(dir, "out"));
+        const existing = await refusalOf(join(dir, "out", "credentials"));
+        const missing = await refusalOf(join(dir, "out", "nope", "deeper"));
+        expect(existing).toContain("outside the folders");
+        expect(missing.replace(join("nope", "deeper"), "credentials")).toBe(existing);
+      } finally {
+        rmSync(elsewhere, { recursive: true, force: true });
+      }
+    });
+
+    it("says a missing file inside an allowed folder does not exist", async () => {
+      expect(await refusalOf(join(dir, "nope.png"))).toContain("does not exist");
     });
 
     it("reports a missing file as an error", async () => {
       const result = await handleToolCall(client, "nestr_upload_file", {
         nestId: "nest-1", name: "x.png", contentType: "image/png", filePath: join(dir, "nope.png"),
-      }, { allowLocalFiles: true });
+      }, local());
       expect(result.isError).toBe(true);
       expect(mockFetch).not.toHaveBeenCalled();
     });
@@ -479,7 +519,7 @@ describe("file attachment tools", () => {
       truncateSync(big, LOCAL_FILE_MAX_BYTES + 1);
       const result = await handleToolCall(client, "nestr_upload_file", {
         nestId: "nest-1", name: "big.bin", contentType: "application/octet-stream", filePath: big,
-      }, { allowLocalFiles: true });
+      }, local());
       expect(result.isError).toBe(true);
       const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
       expect(parsed.code).toBe("VALIDATION");
@@ -491,11 +531,87 @@ describe("file attachment tools", () => {
       mkdirSync(join(dir, "folder"));
       const result = await handleToolCall(client, "nestr_upload_file", {
         nestId: "nest-1", name: "folder", contentType: "application/octet-stream", filePath: join(dir, "folder"),
-      }, { allowLocalFiles: true });
+      }, local());
       const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
       expect(parsed.code).toBe("VALIDATION");
       expect(parsed.message).toContain("not a regular file");
       expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    // ─── which files filePath may read ───
+
+    const refusalOf = async (filePath: string) => {
+      const result = await handleToolCall(client, "nestr_upload_file", {
+        nestId: "nest-1", name: "x", contentType: "application/octet-stream", filePath,
+      }, local());
+      expect(result.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+      const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+      expect(parsed.code).toBe("VALIDATION");
+      return parsed.message as string;
+    };
+
+    it("refuses a file outside the allowed folders and says how to allow it", async () => {
+      const elsewhere = mkdtempSync(join(tmpdir(), "nestr-mcp-elsewhere-"));
+      try {
+        writeFileSync(join(elsewhere, "doc.pdf"), "x");
+        const message = await refusalOf(join(elsewhere, "doc.pdf"));
+        expect(message).toContain("outside the folders");
+        expect(message).toContain("NESTR_UPLOAD_DIRS");
+      } finally {
+        rmSync(elsewhere, { recursive: true, force: true });
+      }
+    });
+
+    it("refuses a ../ path that climbs out of an allowed folder", async () => {
+      mkdirSync(join(dir, "inner"));
+      writeFileSync(join(dir, "outside.png"), bytes);
+      const result = await handleToolCall(client, "nestr_upload_file", {
+        nestId: "nest-1", name: "x.png", contentType: "image/png", filePath: join(dir, "inner", "..", "outside.png"),
+      }, { allowLocalFiles: true, localFileRoots: [join(dir, "inner")] });
+      const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+      expect(parsed.message).toContain("outside the folders");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("refuses a hidden file inside an allowed folder", async () => {
+      writeFileSync(join(dir, ".env"), "SECRET=1");
+      expect(await refusalOf(join(dir, ".env"))).toContain("hidden");
+    });
+
+    it("refuses a file inside a hidden folder", async () => {
+      mkdirSync(join(dir, ".ssh"));
+      writeFileSync(join(dir, ".ssh", "id_ed25519"), "key");
+      expect(await refusalOf(join(dir, ".ssh", "id_ed25519"))).toContain("hidden");
+    });
+
+    it("follows symlinks, so a link to a file outside the folders is refused", async () => {
+      const elsewhere = mkdtempSync(join(tmpdir(), "nestr-mcp-elsewhere-"));
+      try {
+        writeFileSync(join(elsewhere, "id_rsa"), "key");
+        symlinkSync(join(elsewhere, "id_rsa"), join(dir, "innocent.png"));
+        expect(await refusalOf(join(dir, "innocent.png"))).toContain("outside the folders");
+      } finally {
+        rmSync(elsewhere, { recursive: true, force: true });
+      }
+    });
+
+    it("follows symlinks, so a link to a hidden file is refused", async () => {
+      writeFileSync(join(dir, ".env"), "SECRET=1");
+      symlinkSync(join(dir, ".env"), join(dir, "notes.txt"));
+      expect(await refusalOf(join(dir, "notes.txt"))).toContain("hidden");
+    });
+
+    it("reads from a folder in a subfolder of an allowed folder", async () => {
+      mkdirSync(join(dir, "shots"));
+      writeFileSync(join(dir, "shots", "a.png"), bytes);
+      mockFetch.mockResolvedValue(
+        mockResponse(200, { status: "success", data: { id: "f2", name: "a.png", contentType: "image/png", size: 512 } })
+      );
+      const result = await handleToolCall(client, "nestr_upload_file", {
+        nestId: "nest-1", name: "a.png", contentType: "image/png", filePath: join(dir, "shots", "a.png"),
+      }, local());
+      expect(result.isError).toBeFalsy();
     });
 
     it("is advertised only by the local build", () => {
@@ -505,6 +621,26 @@ describe("file attachment tools", () => {
       };
       expect(props(toolDefinitions)).not.toContain("filePath");
       expect(props(withLocalFileTools(toolDefinitions))).toContain("filePath");
+    });
+  });
+
+  describe("localUploadRoots", () => {
+    it("allows the working directory by default", () => {
+      expect(localUploadRoots({}, "/work/project")).toEqual(["/work/project"]);
+    });
+
+    it("leaves out a working directory that is the filesystem root", () => {
+      expect(localUploadRoots({}, "/")).toEqual([]);
+    });
+
+    it("leaves out a working directory that is the home folder, unless it is listed", () => {
+      expect(localUploadRoots({}, homedir())).toEqual([]);
+      expect(localUploadRoots({ NESTR_UPLOAD_DIRS: "~" }, homedir())).toEqual([homedir()]);
+    });
+
+    it("adds NESTR_UPLOAD_DIRS, expanding ~ to the home folder", () => {
+      const env = { NESTR_UPLOAD_DIRS: ["~/Desktop", "/srv/shared", " "].join(":") };
+      expect(localUploadRoots(env, "/work")).toEqual(["/work", join(homedir(), "Desktop"), "/srv/shared"]);
     });
   });
 
