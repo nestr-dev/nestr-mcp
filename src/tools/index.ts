@@ -1623,8 +1623,8 @@ export const schemas = {
     nestId: z.string().describe("Nest ID"),
     series: z.string().describe("The series `key` from nestr_list_series"),
     seriesId: z.string().optional().describe("Series id, on a multi-series field"),
-    from: z.string().optional().describe("Earliest date, inclusive (ISO date or epoch milliseconds)"),
-    to: z.string().optional().describe("Latest date, inclusive (ISO date or epoch milliseconds)"),
+    from: z.union([z.string(), z.number()]).optional().describe("Earliest date, inclusive (ISO date or epoch milliseconds)"),
+    to: z.union([z.string(), z.number()]).optional().describe("Latest date, inclusive (ISO date or epoch milliseconds)"),
     limit: z.number().optional().describe("At most this many points (default 500, max 5000)"),
     order: z.enum(["asc", "desc"]).optional().describe("Date order, asc by default"),
   }),
@@ -1633,10 +1633,10 @@ export const schemas = {
     nestId: z.string().describe("Nest ID"),
     series: z.string().describe("The series `key` from nestr_list_series"),
     seriesId: z.string().optional().describe("Series id, on a multi-series field"),
-    points: z.array(z.object({
+    points: coerceFromJson(z.array(z.object({
       date: z.union([z.string(), z.number()]).describe("ISO date or epoch milliseconds, kept exactly"),
       value: z.number().describe("Any finite number"),
-    })).min(1).max(500).describe("Up to 500 points"),
+    })).min(1).max(500)).describe("Up to 500 points"),
   }),
 
   updateSeriesPoint: z.object({
@@ -2881,8 +2881,8 @@ export const toolDefinitions = [
         nestId: { type: "string", description: "Nest ID" },
         series: { type: "string", description: "The series `key` from nestr_list_series (a field code, or a field id when a code is shared)" },
         seriesId: { type: "string", description: "Series id, only on a multi-series field" },
-        from: { type: "string", description: "Earliest date, inclusive (ISO date or epoch milliseconds)" },
-        to: { type: "string", description: "Latest date, inclusive (ISO date or epoch milliseconds)" },
+        from: { type: ["string", "number"], description: "Earliest date, inclusive (ISO date or epoch milliseconds)" },
+        to: { type: ["string", "number"], description: "Latest date, inclusive (ISO date or epoch milliseconds)" },
         limit: { type: "number", description: "At most this many points (default 500, max 5000)" },
         order: { type: "string", enum: ["asc", "desc"], description: "Date order, asc by default" },
       },

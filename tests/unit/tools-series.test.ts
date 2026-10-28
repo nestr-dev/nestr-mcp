@@ -83,6 +83,27 @@ describe("dataseries tools", () => {
     expect(result.content[0].text).toContain("\"failed\": 1");
   });
 
+  it("nestr_add_series_points accepts points sent as a JSON string, as some clients send arrays", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", meta: { created: 1, failed: 0 }, data: [] }));
+    const points = [{ date: "2026-01-05", value: 3 }];
+    const result = await handleToolCall(client, "nestr_add_series_points", {
+      nestId: "n1", series: "metric-data", points: JSON.stringify(points),
+    });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual(points);
+  });
+
+  it("nestr_get_series_points accepts from/to as epoch milliseconds", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: [] }));
+    const result = await handleToolCall(client, "nestr_get_series_points", {
+      nestId: "n1", series: "metric-data", from: 1767225600000, to: 1769904000000,
+    });
+    expect(result.isError).toBeFalsy();
+    const url = new URL(mockFetch.mock.calls[0][0]);
+    expect(url.searchParams.get("from")).toBe("1767225600000");
+    expect(url.searchParams.get("to")).toBe("1769904000000");
+  });
+
   it("nestr_update_series_point PATCHes only what is given", async () => {
     mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: { id: "p1", value: 9 } }));
     await handleToolCall(client, "nestr_update_series_point", {

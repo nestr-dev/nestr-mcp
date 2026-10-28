@@ -1808,11 +1808,11 @@ export class NestrClient {
   async getSeriesPoints(
     nestId: string,
     series: string,
-    options?: { seriesId?: string; from?: string; to?: string; limit?: number; order?: "asc" | "desc" }
+    options?: { seriesId?: string; from?: string | number; to?: string | number; limit?: number; order?: "asc" | "desc" }
   ): Promise<unknown> {
     const params = new URLSearchParams();
-    if (options?.from) params.set("from", options.from);
-    if (options?.to) params.set("to", options.to);
+    if (options?.from !== undefined) params.set("from", String(options.from));
+    if (options?.to !== undefined) params.set("to", String(options.to));
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.order) params.set("order", options.order);
     const query = params.toString();
