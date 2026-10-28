@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { handleToolCall } from "../../src/tools/index.js";
+import { mkdtempSync, mkdirSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  handleToolCall, toolDefinitions, withLocalFileTools, READONLY_TOOL_NAMES, LOCAL_FILE_MAX_BYTES,
+} from "../../src/tools/index.js";
 import { NestrClient } from "../../src/api/client.js";
 
 function mockResponse(status: number, body: unknown) {
@@ -408,6 +413,135 @@ describe("file attachment tools", () => {
       nestId: "nest-1", name: "big.bin", contentType: "application/octet-stream", dataBase64: "AAAA",
     });
     expect(result.isError).toBe(true);
+  });
+
+  // ─── nestr_upload_file with filePath (stdio only) ───────────────
+
+  describe("filePath", () => {
+    let dir: string;
+    // Every byte value, so any text decoding or re-encoding on the way shows up.
+    const bytes = Buffer.from(Array.from({ length: 512 }, (_, i) => i % 256));
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "nestr-mcp-upload-"));
+      writeFileSync(join(dir, "shot.png"), bytes);
+    });
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("reads the local file and sends its exact bytes when local files are allowed", async () => {
+      mockFetch.mockResolvedValue(
+        mockResponse(200, { status: "success", data: { id: "f1", name: "shot.png", contentType: "image/png", size: 512 } })
+      );
+      const result = await handleToolCall(client, "nestr_upload_file", {
+        nestId: "nest-1", name: "shot.png", contentType: "image/png", filePath: join(dir, "shot.png"),
+      }, { allowLocalFiles: true });
+      expect(result.isError).toBeFalsy();
+
+      const [url, opts] = mockFetch.mock.calls[0];
+      expect(url).toBe("https://api.test.io/api/nests/nest-1/files");
+      const sent = JSON.parse(opts.body as string);
+      expect(Buffer.from(sent.dataBase64, "base64").equals(bytes)).toBe(true);
+    });
+
+    it("is refused on the hosted server, without reading the disk or calling the API", async () => {
+      const result = await handleToolCall(client, "nestr_upload_file", {
+        nestId: "nest-1", name: "shot.png", contentType: "image/png", filePath: join(dir, "shot.png"),
+      });
+      expect(result.isError).toBe(true);
+      const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+      expect(parsed.code).toBe("VALIDATION");
+      expect(parsed.hint).toContain("nestr_get_upload_url");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("rejects filePath together with content", async () => {
+      const result = await handleToolCall(client, "nestr_upload_file", {
+        nestId: "nest-1", name: "x.txt", contentType: "text/plain", content: "hi", filePath: join(dir, "shot.png"),
+      }, { allowLocalFiles: true });
+      expect(result.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("reports a missing file as an error", async () => {
+      const result = await handleToolCall(client, "nestr_upload_file", {
+        nestId: "nest-1", name: "x.png", contentType: "image/png", filePath: join(dir, "nope.png"),
+      }, { allowLocalFiles: true });
+      expect(result.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("refuses a file far over the limit without reading it", async () => {
+      // Sparse, so the test writes no real bytes.
+      const big = join(dir, "big.bin");
+      writeFileSync(big, "");
+      truncateSync(big, LOCAL_FILE_MAX_BYTES + 1);
+      const result = await handleToolCall(client, "nestr_upload_file", {
+        nestId: "nest-1", name: "big.bin", contentType: "application/octet-stream", filePath: big,
+      }, { allowLocalFiles: true });
+      expect(result.isError).toBe(true);
+      const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+      expect(parsed.code).toBe("VALIDATION");
+      expect(parsed.message).toContain("was not read");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("refuses a directory with a clear message", async () => {
+      mkdirSync(join(dir, "folder"));
+      const result = await handleToolCall(client, "nestr_upload_file", {
+        nestId: "nest-1", name: "folder", contentType: "application/octet-stream", filePath: join(dir, "folder"),
+      }, { allowLocalFiles: true });
+      const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+      expect(parsed.code).toBe("VALIDATION");
+      expect(parsed.message).toContain("not a regular file");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("is advertised only by the local build", () => {
+      const props = (defs: ReadonlyArray<{ name: string; inputSchema: unknown }>) => {
+        const def = defs.find((d) => d.name === "nestr_upload_file");
+        return Object.keys((def?.inputSchema as { properties: Record<string, unknown> }).properties);
+      };
+      expect(props(toolDefinitions)).not.toContain("filePath");
+      expect(props(withLocalFileTools(toolDefinitions))).toContain("filePath");
+    });
+  });
+
+  // ─── nestr_get_upload_url ───────────────────────────────────────
+
+  it("nestr_get_upload_url POSTs name and contentType and returns the URL and curl line", async () => {
+    const upload = {
+      url: "https://app.test.io/api/file-uploads/nest-1/tok",
+      method: "POST",
+      expiresAt: "2026-10-28T10:10:00.000Z",
+      maxBytes: 10485760,
+      curl: "curl --data-binary @<path-to-file> 'https://app.test.io/api/file-uploads/nest-1/tok'",
+    };
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: upload }));
+
+    const result = await handleToolCall(client, "nestr_get_upload_url", {
+      nestId: "nest-1", name: "shot.png", contentType: "image/png",
+    });
+    expect(result.isError).toBeFalsy();
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/nest-1/files/upload-url");
+    expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body as string)).toEqual({ name: "shot.png", contentType: "image/png" });
+
+    const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+    expect(parsed).toMatchObject(upload);
+  });
+
+  it("nestr_get_upload_url requires name and contentType", async () => {
+    const result = await handleToolCall(client, "nestr_get_upload_url", { nestId: "nest-1" });
+    expect(result.isError).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("nestr_get_upload_url is a write, so the read-only surface leaves it out", () => {
+    expect(READONLY_TOOL_NAMES.has("nestr_get_upload_url")).toBe(false);
   });
 
   // ─── nestr_delete_file ──────────────────────────────────────────

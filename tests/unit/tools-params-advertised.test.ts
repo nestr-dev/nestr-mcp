@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { toolDefinitions, schemas } from "../../src/tools/index.js";
+import { toolDefinitions, schemas, withLocalFileTools } from "../../src/tools/index.js";
 
 // A tool is described to the model twice: by the JSON Schema in `toolDefinitions`, which
 // is what tools/list advertises, and by the zod object the handler parses with. Only the
@@ -24,7 +24,8 @@ const camel = (name: string) =>
 const INTENTIONALLY_UNADVERTISED: Record<string, string> = {};
 
 describe("every zod parameter is advertised", () => {
-  const pairs = toolDefinitions
+  // The local build advertises the most (filePath on nestr_upload_file), so sweep that list.
+  const pairs = withLocalFileTools(toolDefinitions)
     .map((tool) => ({ tool, schema: (schemas as Record<string, unknown>)[camel(tool.name)] }))
     .filter((p): p is { tool: typeof toolDefinitions[number]; schema: { shape: Record<string, unknown> } } =>
       !!p.schema && typeof (p.schema as { shape?: unknown }).shape === "object");

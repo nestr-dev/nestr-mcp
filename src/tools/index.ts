@@ -3,6 +3,7 @@
  * Defines all available tools and their handlers
  */
 
+import { readFile, stat } from "node:fs/promises";
 import { z } from "zod";
 import { NestrApiError, tokenFingerprint, unwrapList, type NestrClient, type Nest, type ToolError, type ErrorCode, type ListEnvelope, type MaybeListEnvelope, type ConnectionListing, type PendingInstructionApproval } from "../api/client.js";
 import { appResources } from "../apps/index.js";
@@ -1615,6 +1616,46 @@ export const schemas = {
     workspaceId: z.string().describe("Workspace ID"),
   }),
 
+  listSeries: z.object({
+    nestId: z.string().describe("Nest ID (a metric, goal, sprint or any nest with a dataseries field)"),
+  }),
+
+  getSeriesPoints: z.object({
+    nestId: z.string().describe("Nest ID"),
+    series: z.string().describe("The series `key` from nestr_list_series"),
+    seriesId: z.string().optional().describe("Series id, on a multi-series field"),
+    from: z.union([z.string(), z.number()]).optional().describe("Earliest date, inclusive (ISO date or epoch milliseconds)"),
+    to: z.union([z.string(), z.number()]).optional().describe("Latest date, inclusive (ISO date or epoch milliseconds)"),
+    limit: z.number().optional().describe("At most this many points (default 500, max 5000)"),
+    order: z.enum(["asc", "desc"]).optional().describe("Date order, asc by default"),
+  }),
+
+  addSeriesPoints: z.object({
+    nestId: z.string().describe("Nest ID"),
+    series: z.string().describe("The series `key` from nestr_list_series"),
+    seriesId: z.string().optional().describe("Series id, on a multi-series field"),
+    points: coerceFromJson(z.array(z.object({
+      date: z.union([z.string(), z.number()]).describe("ISO date or epoch milliseconds, kept exactly"),
+      value: z.number().describe("Any finite number"),
+    })).min(1).max(500)).describe("Up to 500 points"),
+  }),
+
+  updateSeriesPoint: z.object({
+    nestId: z.string().describe("Nest ID"),
+    series: z.string().describe("The series `key` from nestr_list_series"),
+    seriesId: z.string().optional().describe("Series id, on a multi-series field"),
+    pointId: z.string().describe("Point id from nestr_get_series_points"),
+    date: z.union([z.string(), z.number()]).optional().describe("New date (ISO or epoch milliseconds)"),
+    value: z.number().optional().describe("New value"),
+  }),
+
+  deleteSeriesPoint: z.object({
+    nestId: z.string().describe("Nest ID"),
+    series: z.string().describe("The series `key` from nestr_list_series"),
+    seriesId: z.string().optional().describe("Series id, on a multi-series field"),
+    pointId: z.string().describe("Point id from nestr_get_series_points"),
+  }),
+
   workspaceDocs: z.object({
     workspaceId: z.string().optional(),
     search: z.string().optional(),
@@ -2079,8 +2120,15 @@ export const schemas = {
     contentType: z.string().describe('MIME type of the file (e.g. "text/markdown", "text/csv", "image/png")'),
     content: z.string().optional().describe("File content as UTF-8 text. Use for text-native files you author directly (.md, .txt, .csv, .json, .html, .svg, code). Stored verbatim. Provide this OR dataBase64, not both."),
     dataBase64: z.string().optional().describe("File bytes, base64-encoded. Use for binary content you already hold as base64. Provide this OR content, not both."),
-  }).refine((v) => (v.content !== undefined) !== (v.dataBase64 !== undefined), {
-    message: "Provide exactly one of content (UTF-8 text) or dataBase64 (base64 bytes).",
+    filePath: z.string().optional().describe("Path to a file on this machine. Only when the server runs locally (npx @nestr/mcp)."),
+  }).refine((v) => [v.content, v.dataBase64, v.filePath].filter((x) => x !== undefined).length === 1, {
+    message: "Provide exactly one of content (UTF-8 text), dataBase64 (base64 bytes) or filePath (a local file).",
+  }),
+
+  getUploadUrl: z.object({
+    nestId: z.string().describe("Nest or comment ID to attach the file to"),
+    name: z.string().describe('File name including extension (e.g. "screenshot.png")'),
+    contentType: z.string().describe('MIME type of the file (e.g. "image/png", "application/pdf")'),
   }),
 
   deleteFile: z.object({
@@ -2806,7 +2854,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_insight_history",
-    description: "Get historical data points for a metric over time. Use from/to for date range. Requires Insights app.",
+    description: "Get historical data points for a Nestr usage metric (a metricId from nestr_get_insights) over time. Use from/to for date range. Requires Insights app. The history of a metric nest, goal, sprint or other dataseries field is not here: use nestr_list_series and nestr_get_series_points.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2819,6 +2867,94 @@ export const toolDefinitions = [
       required: ["workspaceId", "metricId"],
     },
     ...readOnly,
+  },
+  {
+    name: "nestr_list_series",
+    description: "List the dataseries on a nest: a metric's history, a goal's progress, a burndown. Each has the `key` to pass as `series` to the other series tools, its dataType (point_in_time or cumulative), `hidden` (not in use on this nest: readable, writes refused), `trackedField` (the nestr_update_nest field key whose value follows the newest point at or before now) and `current` (that point). Setting a tracked value with nestr_update_nest records only one point, now; to load past values or correct history, use nestr_add_series_points.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest ID (a metric, goal, sprint or any nest with a dataseries field)" },
+      },
+      required: ["nestId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_get_series_points",
+    description: "Read the dated points of one dataseries, oldest first. Narrow with from/to (inclusive), cap with limit (default 500, max 5000), order=desc for newest first. When meta.has_more is true, narrow the range to read the rest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest ID" },
+        series: { type: "string", description: "The series `key` from nestr_list_series (a field code, or a field id when a code is shared)" },
+        seriesId: { type: "string", description: "Series id, only on a multi-series field" },
+        from: { type: ["string", "number"], description: "Earliest date, inclusive (ISO date or epoch milliseconds)" },
+        to: { type: ["string", "number"], description: "Latest date, inclusive (ISO date or epoch milliseconds)" },
+        limit: { type: "number", description: "At most this many points (default 500, max 5000)" },
+        order: { type: "string", enum: ["asc", "desc"], description: "Date order, asc by default" },
+      },
+      required: ["nestId", "series"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_add_series_points",
+    description: "Add up to 500 dated points to a dataseries, e.g. to backfill weekly values. Each point is { date, value }: date is kept exactly (several points may share a day), value is any finite number with no range check. Returns one result per point, `created` or `error`, so one bad point does not stop the rest. Afterwards the tracked value field follows the newest point at or before now; a future-dated point does not become the current value. A hidden series cannot be written. Auth: update rights on the nest; refused for a read-only key.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest ID" },
+        series: { type: "string", description: "The series `key` from nestr_list_series (a field code, or a field id when a code is shared)" },
+        seriesId: { type: "string", description: "Series id, only on a multi-series field" },
+        points: {
+          type: "array",
+          description: "Up to 500 points",
+          items: {
+            type: "object",
+            properties: {
+              date: { type: ["string", "number"], description: "ISO date or epoch milliseconds" },
+              value: { type: "number", description: "Any finite number" },
+            },
+            required: ["date", "value"],
+          },
+        },
+      },
+      required: ["nestId", "series", "points"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_update_series_point",
+    description: "Change a dataseries point's date, value, or both. The tracked value field re-syncs afterwards. Auth: update rights on the nest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest ID" },
+        series: { type: "string", description: "The series `key` from nestr_list_series (a field code, or a field id when a code is shared)" },
+        seriesId: { type: "string", description: "Series id, only on a multi-series field" },
+        pointId: { type: "string", description: "Point id from nestr_get_series_points" },
+        date: { type: ["string", "number"], description: "New date (ISO or epoch milliseconds)" },
+        value: { type: "number", description: "New value" },
+      },
+      required: ["nestId", "series", "pointId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_delete_series_point",
+    description: "Remove a dataseries point. The tracked value field re-syncs to the newest point left at or before now; removing every point leaves the field as it is. Auth: update rights on the nest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest ID" },
+        series: { type: "string", description: "The series `key` from nestr_list_series (a field code, or a field id when a code is shared)" },
+        seriesId: { type: "string", description: "Series id, only on a multi-series field" },
+        pointId: { type: "string", description: "Point id from nestr_get_series_points" },
+      },
+      required: ["nestId", "series", "pointId"],
+    },
+    ...destructive,
   },
   {
     name: "nestr_get_workspace_apps",
@@ -3884,7 +4020,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_upload_file",
-    description: "Upload a file and attach it to a nest (or comment; files are keyed by nestId, so a comment ID attaches the file to that comment). Provide the file one of two ways: content (UTF-8 text, for text-native files you author directly such as .md, .csv, .json, .html, .svg, or code) or dataBase64 (base64-encoded bytes you already have). Any content type is accepted; the upload is rejected if it exceeds the server's maximum size (default 10MB). Returns the new file's descriptor (id, name, contentType, size). Auth: a token with write access to the nest.",
+    description: "Upload a file and attach it to a nest (or comment; files are keyed by nestId, so a comment ID attaches the file to that comment). Provide the file one of two ways: content (UTF-8 text, for text-native files you author directly such as .md, .csv, .json, .html, .svg, or code) or dataBase64 (base64-encoded bytes you already have). For a binary file on disk (an image, a PDF) when you can run shell commands, use nestr_get_upload_url instead: writing the bytes out as base64 is slow, costly, and one wrong character corrupts the file. Any content type is accepted; the upload is rejected if it exceeds the server's maximum size (default 10MB). Returns the new file's descriptor (id, name, contentType, size). Auth: a token with write access to the nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3893,6 +4029,20 @@ export const toolDefinitions = [
         contentType: { type: "string", description: 'MIME type (e.g. "text/markdown", "text/csv", "image/png")' },
         content: { type: "string", description: "File content as UTF-8 text (for text-native files: .md, .txt, .csv, .json, .html, .svg, code). Stored verbatim. Provide this OR dataBase64." },
         dataBase64: { type: "string", description: "File bytes, base64-encoded. Provide this OR content." },
+      },
+      required: ["nestId", "name", "contentType"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_get_upload_url",
+    description: "Get a single-use URL for attaching a file on disk to a nest (or comment) as raw bytes, with no base64. Use this instead of nestr_upload_file's dataBase64 for any binary file (an image, a PDF, an archive) when you can run shell commands. Then run the returned curl command with the real file path, e.g. curl --data-binary @screenshot.png '<url>'. The upload needs no API key and stores the file under the name and contentType given here; its response is the new file's descriptor. The URL works once and expires after about 10 minutes, and a body over maxBytes is refused. A refused upload (too large, empty, not allowed) leaves the URL usable for a retry. Auth: a token with write access to the nest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest or comment ID to attach the file to" },
+        name: { type: "string", description: 'File name including extension (e.g. "screenshot.png")' },
+        contentType: { type: "string", description: 'MIME type (e.g. "image/png", "application/pdf")' },
       },
       required: ["nestId", "name", "contentType"],
     },
@@ -4040,6 +4190,41 @@ export interface ToolCallContext {
    * permitted. Anything that could change state is refused.
    */
   isReadOnly?: boolean;
+  /** True only in the stdio build, which runs on the caller's machine and may read its disk. */
+  allowLocalFiles?: boolean;
+}
+
+// Well above the server's own cap (default 10MB), which still applies; this only keeps a
+// huge file from being read into memory and base64-encoded before the API can refuse it.
+export const LOCAL_FILE_MAX_BYTES = 100 * 1024 * 1024;
+
+async function localFileRefusal(filePath: string): Promise<string | null> {
+  const info = await stat(filePath);
+  if (!info.isFile()) return `${filePath} is not a regular file.`;
+  if (info.size > LOCAL_FILE_MAX_BYTES) {
+    return `${filePath} is ${info.size} bytes, far over the upload limit (10MB by default), so it was not read.`;
+  }
+  return null;
+}
+
+type ToolDefinition = { name: string; description: string; inputSchema: { properties?: Record<string, unknown> } };
+
+// The stdio build advertises filePath on nestr_upload_file; the hosted server never does.
+export function withLocalFileTools<T extends ToolDefinition>(definitions: readonly T[]): T[] {
+  return definitions.map((def): T => {
+    if (def.name !== "nestr_upload_file") return def;
+    return {
+      ...def,
+      description: `${def.description} Running locally, filePath reads a file from this machine directly, which is the simplest way to attach a binary file.`,
+      inputSchema: {
+        ...def.inputSchema,
+        properties: {
+          ...def.inputSchema.properties,
+          filePath: { type: "string", description: "Path to a file on this machine. Provide this OR content OR dataBase64." },
+        },
+      },
+    };
+  });
 }
 
 export async function handleToolCall(
@@ -4701,6 +4886,50 @@ async function _handleToolCall(
           }
         );
         return formatResult(history);
+      }
+
+      case "nestr_list_series": {
+        const parsed = schemas.listSeries.parse(args);
+        return formatResult(await client.listSeries(parsed.nestId));
+      }
+
+      case "nestr_get_series_points": {
+        const parsed = schemas.getSeriesPoints.parse(args);
+        return formatResult(await client.getSeriesPoints(parsed.nestId, parsed.series, {
+          seriesId: parsed.seriesId,
+          from: parsed.from,
+          to: parsed.to,
+          limit: parsed.limit,
+          order: parsed.order,
+        }));
+      }
+
+      case "nestr_add_series_points": {
+        const parsed = schemas.addSeriesPoints.parse(args);
+        return formatResult(await client.addSeriesPoints(parsed.nestId, parsed.series, parsed.points, parsed.seriesId));
+      }
+
+      case "nestr_update_series_point": {
+        const parsed = schemas.updateSeriesPoint.parse(args);
+        const change: { date?: string | number; value?: number } = {};
+        if (parsed.date !== undefined) change.date = parsed.date;
+        if (parsed.value !== undefined) change.value = parsed.value;
+        if (Object.keys(change).length === 0) {
+          return formatError({
+            error: true,
+            code: "VALIDATION",
+            message: "Send a date or a value to change.",
+            retryable: false,
+          });
+        }
+        return formatResult(await client.updateSeriesPoint(
+          parsed.nestId, parsed.series, parsed.pointId, change, parsed.seriesId
+        ));
+      }
+
+      case "nestr_delete_series_point": {
+        const parsed = schemas.deleteSeriesPoint.parse(args);
+        return formatResult(await client.deleteSeriesPoint(parsed.nestId, parsed.series, parsed.pointId, parsed.seriesId));
       }
 
       case "nestr_get_workspace_apps": {
@@ -5823,9 +6052,32 @@ async function _handleToolCall(
 
       case "nestr_upload_file": {
         const parsed = schemas.uploadFile.parse(args);
-        // The REST API takes base64 bytes; base64-encode the text convenience here
-        // so the model can hand over content it authored without encoding it itself.
-        const dataBase64 = parsed.dataBase64 ?? Buffer.from(parsed.content ?? "", "utf-8").toString("base64");
+        if (parsed.filePath !== undefined && !context?.allowLocalFiles) {
+          return formatError({
+            error: true,
+            code: "VALIDATION",
+            message: "filePath only works when the Nestr MCP server runs on your machine (npx @nestr/mcp). This server cannot read your disk.",
+            retryable: false,
+            hint: "Call nestr_get_upload_url and upload the file with the curl command it returns, or send content or dataBase64.",
+            correlationId: getCorrelationId(),
+          });
+        }
+        if (parsed.filePath !== undefined) {
+          const refusal = await localFileRefusal(parsed.filePath);
+          if (refusal) {
+            return formatError({
+              error: true,
+              code: "VALIDATION",
+              message: refusal,
+              retryable: false,
+              correlationId: getCorrelationId(),
+            });
+          }
+        }
+        // The REST API takes base64 bytes; encode here so the model never has to.
+        const dataBase64 = parsed.filePath !== undefined
+          ? (await readFile(parsed.filePath)).toString("base64")
+          : parsed.dataBase64 ?? Buffer.from(parsed.content ?? "", "utf-8").toString("base64");
         const file = await client.createNestFile(parsed.nestId, {
           name: parsed.name,
           contentType: parsed.contentType,
@@ -5834,6 +6086,18 @@ async function _handleToolCall(
         return formatResult({
           message: `Uploaded ${file.name} (${formatBytes(file.size)}) to ${parsed.nestId}.`,
           file,
+        });
+      }
+
+      case "nestr_get_upload_url": {
+        const parsed = schemas.getUploadUrl.parse(args);
+        const upload = await client.createNestFileUploadUrl(parsed.nestId, {
+          name: parsed.name,
+          contentType: parsed.contentType,
+        });
+        return formatResult({
+          message: `Upload URL for ${parsed.name} on ${parsed.nestId}. Run the curl command with the real file path before ${upload.expiresAt}; it works once.`,
+          ...upload,
         });
       }
 

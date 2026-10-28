@@ -51,7 +51,8 @@ async function main() {
     process.exit(1);
   }
 
-  const server = createServer();
+  // Runs on the caller's machine, so it may read files they point it at.
+  const server = createServer({ allowLocalFiles: true });
   const transport = new StdioServerTransport();
 
   await server.connect(transport);
