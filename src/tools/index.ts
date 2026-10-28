@@ -4198,14 +4198,14 @@ export interface ToolCallContext {
   localFileRoots?: string[];
 }
 
-// The working directory, unless it is the filesystem root, plus NESTR_UPLOAD_DIRS.
+// The working directory, unless it is the filesystem root or the home folder, plus NESTR_UPLOAD_DIRS.
 export function localUploadRoots(env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): string[] {
   const extra = (env.NESTR_UPLOAD_DIRS || "")
     .split(delimiter)
     .map((dir) => dir.trim())
     .filter(Boolean)
     .map((dir) => resolve(dir === "~" || dir.startsWith(`~${sep}`) || dir.startsWith("~/") ? homedir() + dir.slice(1) : dir));
-  return parse(cwd).root === cwd ? extra : [cwd, ...extra];
+  return parse(cwd).root === cwd || resolve(cwd) === resolve(homedir()) ? extra : [cwd, ...extra];
 }
 
 // Well above the server's own cap (default 10MB), which still applies; this only keeps a
@@ -4220,17 +4220,20 @@ const isInside = (root: string, target: string): boolean => {
 // Planted text in a workspace can ask the model to upload a secret, so filePath only
 // reaches allowed folders, never a hidden file or folder, and is checked after symlinks.
 async function resolveLocalFile(filePath: string, roots: string[]): Promise<{ path: string } | { refusal: string }> {
-  const real = await realpath(filePath);
+  const allowed = roots.length ? roots.join(", ") : "none";
+  // A missing path is judged as written, so outside the folders it is refused like an existing one.
+  const real = await realpath(filePath).catch(() => null);
+  const target = real ?? resolve(filePath);
   const realRoots = (await Promise.all(roots.map((root) => realpath(root).catch(() => null))))
     .filter((root): root is string => root !== null);
-  const root = realRoots.find((r) => isInside(r, real));
+  const root = realRoots.find((r) => isInside(r, target));
   if (!root) {
-    const allowed = roots.length ? roots.join(", ") : "none";
     return { refusal: `${filePath} is outside the folders this server may read from (${allowed}). Ask the person to move the file into one of them, or to add its folder to NESTR_UPLOAD_DIRS in the MCP server's environment.` };
   }
-  if (relative(root, real).split(sep).some((segment) => segment.startsWith("."))) {
+  if (relative(root, target).split(sep).some((segment) => segment.startsWith("."))) {
     return { refusal: `${filePath} is a hidden file or sits in a hidden folder, where credentials and keys usually live, so it is never uploaded.` };
   }
+  if (real === null) return { refusal: `${filePath} does not exist.` };
   const info = await stat(real);
   if (!info.isFile()) return { refusal: `${filePath} is not a regular file.` };
   if (info.size > LOCAL_FILE_MAX_BYTES) {

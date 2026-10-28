@@ -246,7 +246,7 @@ API keys provide full workspace access and work with the local npm package. See 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `NESTR_API_BASE` | API base URL | `https://app.nestr.io/api` |
-| `NESTR_UPLOAD_DIRS` | Extra folders `nestr_upload_file` may read a `filePath` from, separated by `:` (`;` on Windows). `~` is your home folder. Hidden files and folders are always refused. | The working directory only |
+| `NESTR_UPLOAD_DIRS` | Extra folders `nestr_upload_file` may read a `filePath` from, separated by `:` (`;` on Windows). `~` is your home folder. Hidden files and folders are always refused. | The working directory only, unless it is `/` or your home folder |
 
 ### Hosting/Server (HTTP transport only)
 

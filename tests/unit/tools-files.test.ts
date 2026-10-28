@@ -466,6 +466,30 @@ describe("file attachment tools", () => {
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
+    it("refuses a missing file outside the folders exactly like an existing one, so existence never leaks", async () => {
+      const elsewhere = mkdtempSync(join(tmpdir(), "nestr-mcp-elsewhere-"));
+      try {
+        writeFileSync(join(elsewhere, "credentials"), "key");
+        const existing = await refusalOf(join(elsewhere, "credentials"));
+        const missing = await refusalOf(join(elsewhere, "nope"));
+        expect(existing).toContain("outside the folders");
+        expect(missing.replace("nope", "credentials")).toBe(existing);
+      } finally {
+        rmSync(elsewhere, { recursive: true, force: true });
+      }
+    });
+
+    it("refuses a missing hidden file exactly like an existing one", async () => {
+      writeFileSync(join(dir, ".env"), "SECRET=1");
+      const existing = await refusalOf(join(dir, ".env"));
+      const missing = await refusalOf(join(dir, ".npmrc"));
+      expect(missing.replace(".npmrc", ".env")).toBe(existing);
+    });
+
+    it("says a missing file inside an allowed folder does not exist", async () => {
+      expect(await refusalOf(join(dir, "nope.png"))).toContain("does not exist");
+    });
+
     it("reports a missing file as an error", async () => {
       const result = await handleToolCall(client, "nestr_upload_file", {
         nestId: "nest-1", name: "x.png", contentType: "image/png", filePath: join(dir, "nope.png"),
@@ -593,6 +617,11 @@ describe("file attachment tools", () => {
 
     it("leaves out a working directory that is the filesystem root", () => {
       expect(localUploadRoots({}, "/")).toEqual([]);
+    });
+
+    it("leaves out a working directory that is the home folder, unless it is listed", () => {
+      expect(localUploadRoots({}, homedir())).toEqual([]);
+      expect(localUploadRoots({ NESTR_UPLOAD_DIRS: "~" }, homedir())).toEqual([homedir()]);
     });
 
     it("adds NESTR_UPLOAD_DIRS, expanding ~ to the home folder", () => {
