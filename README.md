@@ -96,12 +96,23 @@ Ask your AI assistant things like:
 | `nestr_add_label` | Add a label to a nest |
 | `nestr_remove_label` | Remove a label from a nest |
 
+### Recurrence
+
+| Tool | Description |
+|------|-------------|
+| `nestr_set_recurrence` | Set or remove a task, project or meeting's recurrence rule |
+| `nestr_list_occurrences` | List a series' occurrences, virtual and materialized, each with the `instant` the tools below take |
+| `nestr_skip_occurrence` | Skip one occurrence without ending the series, or with `scope: "following"` delete it and every later one |
+| `nestr_update_occurrence` | Edit one occurrence, materializing it first if it is still virtual |
+| `nestr_delete_series` | Delete a whole series, past occurrences included |
+
 ### Comments & Discussion
 
 | Tool | Description |
 |------|-------------|
 | `nestr_add_comment` | Add a comment to a nest |
 | `nestr_get_comments` | Get comments/discussion on a nest |
+| `nestr_get_nest_activity` | What happened on a nest and beneath it, with each change as data |
 | `nestr_update_comment` | Update a comment |
 | `nestr_delete_comment` | Delete a comment |
 
@@ -115,7 +126,7 @@ Ask your AI assistant things like:
 | `nestr_list_roles` | List all roles |
 | `nestr_list_users` | List workspace members |
 | `nestr_get_user` | Get user details |
-| `nestr_add_workspace_user` | Add a user to the workspace |
+| `nestr_add_workspace_user` | Add a user to the workspace and email them an invite (API provisioning needs a verified domain; the in-app invite does not) |
 
 ### Tensions
 
@@ -292,10 +303,32 @@ npm run inspect
 
 ## Security
 
+[SECURITY.md](SECURITY.md) is the full policy: how to report a vulnerability, what
+the three authorisation surfaces reach, and what this server does and does not
+store. The essentials:
+
 - Never commit your API key or OAuth token to version control
 - OAuth tokens respect user permissions and are recommended
 - API keys provide full workspace access - use OAuth for granular permissions
-- Rotate credentials if you suspect they've been compromised
+- Use `/mcp/readonly` for any integration that only needs to read
+
+### Credential lifetime and rotation
+
+**OAuth tokens** expire and are refreshed for you. The server holds the refresh
+token with the session and renews the access token as it nears expiry, so a
+long-lived client keeps working without re-authorising. Revoke a session from
+Nestr and the next refresh fails - access stops there. Nothing to rotate by hand.
+
+**API keys do not expire.** A workspace API key stays valid until a workspace
+admin revokes it in Nestr under Settings > Integrations > Workspace API access.
+That makes rotation your job rather than the server's:
+
+- Rotate when anyone with access to a key leaves, and on a schedule you set
+- Revoke dormant keys rather than leaving them in place - an unused key is still
+  a live workspace-wide credential
+- Rotate immediately if a key may have been exposed
+- Issue a read-only key, and point it at `/mcp/readonly`, whenever the
+  integration only reads
 
 ## Resources
 

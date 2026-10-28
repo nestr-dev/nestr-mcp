@@ -149,6 +149,114 @@ describe("help articles", () => {
       // "scu" is too short to rescue and isn't a substring of any haystack.
       expect(searchArticleIndex(entries, "scu")).toEqual([]);
     });
+
+  // Operator names live in article bodies, which the index never reads. Without
+  // curated keywords a user searching the exact operator got nothing back, and
+  // at least one agent read that emptiness as proof the operator did not exist.
+  describe("searchArticleIndex — operator and view vocabulary", () => {
+    const entries = [
+      { slug: "nestr-search", url: "https://nestr.io/help/articles/nestr-search" },
+      { slug: "customising-views", url: "https://nestr.io/help/articles/customising-views" },
+      { slug: "customising-tabs", url: "https://nestr.io/help/articles/customising-tabs" },
+      { slug: "custom-fields", url: "https://nestr.io/help/articles/custom-fields" },
+      { slug: "getting-started-with-nestr", url: "https://nestr.io/help/articles/getting-started-with-nestr" },
+    ];
+
+    it("finds the search article by operator name", () => {
+      for (const q of ["groupby", "groupbycol", "operator", "syntax"]) {
+        expect(searchArticleIndex(entries, q).map(h => h.slug)).toContain("nestr-search");
+      }
+    });
+
+    it("finds the view and tab articles for column and board vocabulary", () => {
+      const columns = searchArticleIndex(entries, "columns").map(h => h.slug);
+      expect(columns).toContain("customising-views");
+      const tabs = searchArticleIndex(entries, "tab").map(h => h.slug);
+      expect(tabs).toContain("customising-tabs");
+    });
+
+    it("finds the custom fields article for dropdown vocabulary", () => {
+      expect(searchArticleIndex(entries, "dropdown").map(h => h.slug)).toContain("custom-fields");
+    });
+
+    // A workspace admin asked the assistant to "extend our membership by one person" and
+    // was told to email support: the words she used reached no article at all, so there
+    // was nothing to answer from. Seats and membership are two articles' worth of answer
+    // (how to add someone, and what it costs), so both should surface.
+    it("finds the seat and membership articles from the words people use", () => {
+      const seatEntries = [
+        { slug: "pricing-plans-what-you-pay-for", url: "x/pricing-plans-what-you-pay-for" },
+        { slug: "managing-users-invitations-permissions", url: "x/managing-users-invitations-permissions" },
+        { slug: "getting-started-with-nestr", url: "x/getting-started-with-nestr" },
+      ];
+      for (const q of ["seat", "seats", "membership", "extend our membership by one person"]) {
+        const hits = searchArticleIndex(seatEntries, q).map(h => h.slug);
+        expect(hits, q).toContain("pricing-plans-what-you-pay-for");
+        expect(hits, q).toContain("managing-users-invitations-permissions");
+      }
+      expect(searchArticleIndex(seatEntries, "invoice").map(h => h.slug))
+        .toContain("pricing-plans-what-you-pay-for");
+    });
+
+    // Neither customisation article carried any ordering vocabulary, and an
+    // assistant asked how to move a tab described a numeric order field that
+    // does not exist rather than reading either one.
+    it("finds the tab and field articles from ordering vocabulary", () => {
+      for (const q of ["reorder", "order", "move tab to the left", "rearrange fields"]) {
+        const hits = searchArticleIndex(entries, q).map(h => h.slug);
+        expect(hits, q).toEqual(expect.arrayContaining([expect.stringMatching(/^custom(ising-tabs|-fields)$/)]));
+      }
+      expect(searchArticleIndex(entries, "drag a tab").map(h => h.slug)).toContain("customising-tabs");
+    });
+
+    // Support runs Spanish and Italian queues. Before folding, an accented
+    // question reached no customisation article at all.
+    it("answers a Spanish ordering question, accents and all", () => {
+      const hits = searchArticleIndex(entries, "como cambiar el orden de las pestañas").map(h => h.slug);
+      expect(hits[0]).toBe("customising-tabs");
+      // Folding is symmetric: the unaccented spelling reaches the accented keyword.
+      expect(searchArticleIndex(entries, "pestanas").map(h => h.slug)).toContain("customising-tabs");
+    });
+
+    // Deleted items are findable and restorable from search, but the slug only
+    // says "recovering", "deleted" and "undo". Every other word for the same
+    // thing scored zero, and an empty result reads to an agent as "Nestr cannot
+    // do this" — which is now flatly wrong.
+    it("finds the deleted-items article from restore and trash vocabulary", () => {
+      const deletedEntries = [
+        { slug: "recovering-deleted-items-undo-activity-stream", url: "x/recovering-deleted-items-undo-activity-stream" },
+        { slug: "tensions-and-governance-proposals", url: "x/tensions-and-governance-proposals" },
+        { slug: "managing-users-invitations-permissions", url: "x/managing-users-invitations-permissions" },
+        { slug: "getting-started-with-nestr", url: "x/getting-started-with-nestr" },
+      ];
+      for (const q of ["restore", "undelete", "where is the trash", "recycle bin", "how do I restore a deleted item", "restaurar un elemento eliminado"]) {
+        expect(searchArticleIndex(deletedEntries, q)[0]?.slug, q)
+          .toBe("recovering-deleted-items-undo-activity-stream");
+      }
+    });
+
+    // The recovery keywords must not swallow the governance vocabulary: removing
+    // a role or circle is a proposal, not a delete button, and that distinction
+    // is the whole point of the tensions-and-governance-proposals keywords.
+    it("leaves role and circle removal questions with the governance article", () => {
+      const removalEntries = [
+        { slug: "recovering-deleted-items-undo-activity-stream", url: "x/recovering-deleted-items-undo-activity-stream" },
+        { slug: "tensions-and-governance-proposals", url: "x/tensions-and-governance-proposals" },
+        { slug: "building-your-org-structure-roles-circles", url: "x/building-your-org-structure-roles-circles" },
+      ];
+      for (const q of ["remove a circle", "convert a role to a circle", "dissolve a circle"]) {
+        expect(searchArticleIndex(removalEntries, q)[0]?.slug, q)
+          .toBe("tensions-and-governance-proposals");
+      }
+    });
+
+    it("does not shred an accented word into noise tokens", () => {
+      // Pre-fold, "pestañas" split on the tilde into "pesta" + "as", and "as"
+      // substring-matched unrelated slugs. Nothing unrelated may match now.
+      expect(searchArticleIndex(entries, "pestañas").map(h => h.slug))
+        .toEqual(["customising-tabs"]);
+    });
+  });
   });
 
   // ─── Article body extraction ──────────────────────────────────────────────
@@ -537,6 +645,21 @@ Some text
     it("returns null when the content can't be typed as an image", async () => {
       mockFetch.mockResolvedValueOnce(imageResponse(Buffer.from("x"), "text/html"));
       expect(await fetchImageAsBase64("https://cdn.prod.website-files.com/x/page")).toBeNull();
+    });
+
+    it.each(["image/svg+xml", "image/bmp", "image/avif", "image/heic", "image/x-icon"])(
+      "returns null for %s, which the model API rejects as an image",
+      async (contentType) => {
+        mockFetch.mockResolvedValueOnce(imageResponse(Buffer.from("x"), contentType));
+        expect(await fetchImageAsBase64("https://cdn.prod.website-files.com/x/asset")).toBeNull();
+      },
+    );
+
+    it("does not relabel an unsupported type from the URL extension", async () => {
+      // A CDN negotiating AVIF on a .png URL: taking the extension would send
+      // AVIF bytes labelled image/png, which the model API rejects just the same.
+      mockFetch.mockResolvedValueOnce(imageResponse(Buffer.from("avif-bytes"), "image/avif"));
+      expect(await fetchImageAsBase64("https://cdn.prod.website-files.com/x/logo.png")).toBeNull();
     });
 
     it("returns null on a network error rather than throwing", async () => {

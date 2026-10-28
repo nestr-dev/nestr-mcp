@@ -87,6 +87,8 @@ export interface StoredMcpSession {
   userId?: string;
   userName?: string;
   isApiKey: boolean;
+  /** Read-only (authenticated) session — real bearer, but only READONLY_TOOL_NAMES are permitted. */
+  isReadOnly?: boolean;
   wantsJsonOnly: boolean;
   hasStoredOAuthSession: boolean;
   createdAt: number;

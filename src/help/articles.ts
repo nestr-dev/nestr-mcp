@@ -9,6 +9,8 @@
  * exact internal topic match first, then article search/fetch.
  */
 
+import { isImageMimeType, modelImageMimeType, normalizeMimeType } from "../util/image-types.js";
+
 const SITEMAP_URL = "https://nestr.io/sitemap.xml";
 const HELP_ARTICLE_PREFIX = "https://nestr.io/help/articles/";
 const INDEX_TTL_MS = 15 * 60 * 1000;
@@ -87,19 +89,66 @@ export async function loadArticleIndex(): Promise<ArticleIndexEntry[]> {
  * slug; merged into the search haystack alongside the slug-as-words. This is
  * the synonym layer — keep it focused on real user vocabulary that the slug
  * itself omits.
+ *
+ * A few entries carry non-English terms. Support runs Spanish and Italian
+ * queues, and a question asked in Spanish otherwise matches nothing here: the
+ * slugs are English and so is every other keyword. This is a targeted synonym
+ * set for the vocabulary that has actually cost us a ticket, not a full
+ * localisation. Accents are folded on both sides (see `fold`), so writing
+ * "pestañas" also answers "pestanas".
  */
 const ARTICLE_KEYWORDS: Record<string, string[]> = {
   "scrum-agile-app": ["sprint", "sprints", "kanban", "backlog", "burndown", "epic", "epics", "milestone", "milestones", "iteration", "userstory", "story", "stories", "standup", "velocity", "board"],
-  "running-meetings-in-nestr": ["tactical", "governance", "standup", "retro", "retrospective", "facilitation", "facilitator", "agenda"],
-  "tensions-and-governance-proposals": ["proposal", "proposals", "holacracy", "sociocracy", "amend", "amendment", "objection"],
+  "running-meetings-in-nestr": ["meeting", "meetings", "schedule", "scheduling", "recurring", "tactical", "governance", "standup", "retro", "retrospective", "facilitation", "facilitator", "agenda", "minutes", "notes", "pdf", "download", "export", "report", "outcome", "outcomes", "checkin", "check-in", "election", "elections"],
+  // Removing or converting a role, circle or policy is not a delete button anywhere
+  // in the app: it is a toggle under "Advanced options" on a governance proposal
+  // part, so "how do I delete a role" has to land here rather than on the
+  // deleted-items or user-management articles. Hence the role/circle/policy nouns
+  // alongside the remove/convert/restructure verbs.
+  "tensions-and-governance-proposals": ["proposal", "proposals", "holacracy", "sociocracy", "amend", "amendment", "objection", "consent", "role", "roles", "circle", "circles", "policy", "policies", "remove", "removing", "removal", "delete", "deleting", "restructure", "restructuring", "reorganise", "reorganize", "convert", "conversion", "dissolve", "disband", "advanced options", "electable"],
+  // The slug already carries "recovering", "deleted" and "undo", so those verbs
+  // score on their own. What scored zero was every other way people ask: restore,
+  // undelete, and the nouns for where they think things go (trash, bin, recycle
+  // bin). Deleted items are now findable and restorable from search, so those
+  // questions have a real answer and must reach this article. Deliberately NOT
+  // listed: "delete" and "remove". Deleting a role, circle or policy is a
+  // governance proposal, and tensions-and-governance-proposals owns that
+  // vocabulary; adding it here would steal those queries on the alphabetical
+  // tiebreak.
+  "recovering-deleted-items-undo-activity-stream": ["restore", "restoring", "restored", "recovery", "undelete", "trash", "bin", "recycle bin", "lost", "missing", "gone", "disappeared", "bring back", "get back", "accidentally", "mistake", "deleted filter", "include-deleted", "restaurar", "recuperar", "papelera", "eliminado", "ripristinare", "recuperare", "cestino", "eliminato"],
   "nestr-the-power-of-labels": ["tag", "tags", "tagging"],
   "building-your-org-structure-roles-circles": ["hierarchy", "department", "team", "org", "orgchart", "chart", "accountability", "accountabilities"],
   "giving-or-requesting-feedback-in-nestr": ["review", "praise", "kudos", "appraisal"],
   "projects-and-todos-creating-tracking-managing-work": ["task", "tasks", "todo", "todos", "project", "projects", "checklist", "deadline"],
   "nestr-mcp-connect-ai-assistants-to-your-workspace": ["mcp", "assistant", "assistants", "claude", "cursor", "llm", "agent"],
   "chat-channels-and-communication-in-nestr": ["chat", "message", "messaging", "channel", "channels", "notification", "notifications", "mention", "comment"],
-  "managing-users-invitations-permissions": ["invite", "invitation", "permission", "permissions", "member", "members", "user", "users", "access"],
-  "pricing-plans-what-you-pay-for": ["pricing", "price", "plan", "plans", "billing", "subscription", "cost", "payment"],
+  "managing-users-invitations-permissions": ["invite", "invitation", "permission", "permissions", "member", "members", "user", "users", "access", "seat", "seats", "membership", "onboard", "offboard", "deactivate", "remove", "join", "team"],
+  // A prospect asked what Nestr costs and was told "starter: environ 99 EUR/mois"
+  // and "pro: environ 199 EUR/mois" — flat tiers that do not exist, roughly seven
+  // times the real per-seat price. The execution record shows that run made no
+  // tool calls at all: it never searched, so no amount of indexing here would
+  // have caught it (the retrieval trigger is a skill problem, see the `pricing`
+  // topic). What the incident did expose, when the rest of the vocabulary was
+  // measured afterwards, is that only 4 of 19 natural phrasings reached this
+  // article at all — "how much does nestr cost" lost to getting-started-with-nestr
+  // on the word "nestr" alone. So this list closes the English vocabulary the slug
+  // omits, and nothing more.
+  //
+  // Deliberately NOT translated into every language the queues run in. Every help
+  // query issued in production so far has arrived in English — the model already
+  // translates before it searches — so per-language keyword sets would be an
+  // unbounded maintenance cost against a problem that is not happening. The
+  // safety net for a query that does arrive in another language is the
+  // empty-result message, which tells the caller the corpus is English and to
+  // retry; that covers every article at once instead of this one by hand.
+  "pricing-plans-what-you-pay-for": ["pricing", "price", "prices", "plan", "plans", "billing", "bill", "subscription", "subscribe", "cost", "costs", "how much", "expensive", "cheap", "payment", "pay", "paid", "seat", "seats", "per user", "per seat", "per month", "monthly", "annual", "annually", "yearly", "membership", "invoice", "invoices", "upgrade", "downgrade", "renew", "renewal", "quantity", "licence", "license", "free", "free plan", "trial", "tier", "tiers", "credit", "credits", "ai credit", "ai credits", "top up", "topup", "quote", "budget"],
+  "nestr-search": ["operator", "operators", "syntax", "query", "queries", "search", "find", "filter", "filters", "groupby", "groupbycol", "grouping", "column", "columns", "board", "kanban", "sort", "sorting", "saved"],
+  "customising-views": ["view", "views", "layout", "list", "lists", "column", "columns", "board", "kanban", "group", "groupby", "groupbycol", "grouping", "filter", "filters", "sort", "sorting", "display"],
+  "customising-tabs": ["tab", "tabs", "saved", "search", "section", "sections", "subtab", "board", "kanban", "column", "columns", "groupbycol", "customise", "customize", "order", "reorder", "ordering", "sort", "position", "move", "arrange", "rearrange", "drag", "left", "right", "first", "last", "pestaña", "pestañas", "scheda", "schede", "orden", "ordenar", "reordenar", "ordine", "ordinare", "mover", "spostare", "izquierda", "sinistra"],
+  "customising-your-nestr-workspace": ["customise", "customize", "customisation", "customization", "configure", "tailor", "adapt"],
+  "custom-fields": ["field", "fields", "custom field", "notes", "dropdown", "drop down", "status", "select", "options", "checkbox", "currency", "percentage", "formula", "slider", "range", "date field", "text field", "property", "properties", "attribute", "metadata", "schema", "tagalong", "capture", "record", "order", "reorder", "ordering", "sort", "position", "move", "arrange", "rearrange", "drag", "campo", "campos", "campi", "orden", "ordenar", "reordenar", "ordine", "ordinare"],
+  "okrs-app": ["okr", "okrs", "objective", "objectives", "key result", "keyresult", "goal", "goals", "gauge", "target"],
+  "rights-management": ["rights", "role rights", "restrict", "restriction", "view only", "viewonly", "read only", "edit rights"],
 };
 
 /**
@@ -129,6 +178,53 @@ function levenshtein(a: string, b: string): number {
 }
 
 /**
+ * Strip diacritics so an accented query token can match an unaccented keyword
+ * and the reverse. Without this the tokenizer's `[^a-z0-9]+` split treats every
+ * accent as a separator, shredding "pestañas" into "pesta" + "as" — and "as"
+ * then substring-matches half the corpus, which is worse than no match at all.
+ */
+function fold(value: string): string {
+  return value.toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+}
+
+/**
+ * Grammar, not topic. Dropped from a query before scoring — see the note in
+ * searchArticleIndex for why these actively mislead rather than merely add
+ * nothing. Already folded (no diacritics), and only words of two characters or
+ * more, since shorter tokens never reach the scorer anyway.
+ */
+const STOP_TOKENS = new Set([
+  // the product itself
+  "nestr",
+  // en
+  "the", "an", "and", "or", "of", "in", "on", "at", "to", "for", "with", "from", "by",
+  "is", "are", "am", "be", "been", "was", "were", "do", "does", "did", "can", "could",
+  "will", "would", "should", "have", "has", "had", "it", "its", "this", "that", "these",
+  "those", "my", "me", "we", "our", "you", "your", "us", "he", "she", "they", "them",
+  "what", "which", "who", "when", "where", "why", "there", "here", "if", "so", "as",
+  "not", "no", "any", "all", "some", "get", "want", "need", "please",
+  // fr
+  "le", "la", "les", "un", "une", "des", "du", "de", "et", "ou", "est", "sont", "que",
+  "qui", "quel", "quels", "quelle", "quelles", "je", "vous", "nous", "il", "elle",
+  "pour", "avec", "dans", "sur", "au", "aux", "ce", "cette", "mon", "ma", "mes",
+  // es
+  "el", "los", "las", "una", "unos", "unas", "del", "por", "para", "con", "es", "son",
+  "que", "cual", "cuales", "yo", "usted", "nosotros", "mi", "mis", "su", "sus", "como",
+  // it
+  "lo", "gli", "uno", "dei", "delle", "della", "dello", "degli", "che", "chi", "sono",
+  "per", "con", "nel", "nella", "mio", "mia", "miei", "come", "qual", "quale",
+  // de
+  "der", "die", "das", "den", "dem", "ein", "eine", "einen", "einer", "und", "oder",
+  "ist", "sind", "wie", "was", "wo", "wer", "ich", "wir", "sie", "mein", "meine", "fur",
+  // nl
+  "het", "een", "en", "of", "van", "voor", "met", "op", "in", "hoe", "wat", "wie",
+  "waar", "ik", "wij", "mijn", "zijn", "is",
+  // pt
+  "um", "uma", "dos", "das", "por", "para", "com", "que", "qual", "quais", "meu",
+  "minha", "como", "sao",
+]);
+
+/**
  * Token-overlap search against slug-as-words plus curated keywords. Slugs are
  * descriptive (e.g. `building-your-org-structure-roles-circles`), so
  * dash-to-space gives a usable signal without fetching every article's title.
@@ -140,16 +236,30 @@ export function searchArticleIndex(
   query: string,
   limit = 10,
 ): ArticleSearchHit[] {
-  const tokens = query
-    .toLowerCase()
+  const allTokens = fold(query)
     .split(/[^a-z0-9]+/)
     .filter(t => t.length >= 2);
+  // Words that carry no topic signal are dropped before scoring. They are not
+  // merely neutral here: matching is substring-based, so "do" scores against
+  // "downgrade", "le" against "licence" and "est" against "requests", and a
+  // question made mostly of grammar quietly picks its answer out of whichever
+  // article happens to contain those letters. "quel est le prix" chose
+  // customising-tabs that way. The list is closed-class words only — articles,
+  // pronouns, auxiliaries and prepositions in the languages the queues run in —
+  // never a noun anyone could be asking about.
+  //
+  // "nestr" is in the same bucket for the same reason: it is in most questions
+  // and in several slugs, so it separates nothing while deciding ties. "how much
+  // does nestr cost" chose getting-started-with-nestr on the strength of the
+  // product name alone.
+  const meaningful = allTokens.filter(t => !STOP_TOKENS.has(t));
+  const tokens = meaningful.length > 0 ? meaningful : allTokens;
   if (tokens.length === 0) return [];
   const hits: ArticleSearchHit[] = [];
   for (const entry of entries) {
-    const slugWords = entry.slug.toLowerCase().replace(/-/g, " ");
+    const slugWords = fold(entry.slug).replace(/-/g, " ");
     const keywords = ARTICLE_KEYWORDS[entry.slug] ?? [];
-    const haystack = keywords.length ? `${slugWords} ${keywords.join(" ")}` : slugWords;
+    const haystack = fold(keywords.length ? `${slugWords} ${keywords.join(" ")}` : slugWords);
     const words = haystack.split(/\s+/).filter(Boolean);
     let score = 0;
     for (const token of tokens) {
@@ -390,9 +500,14 @@ export async function fetchImageAsBase64(url: string): Promise<{ data: string; m
   try {
     const res = await fetchWithTimeout(url);
     if (!res.ok) return null;
-    const contentType = (res.headers?.get?.("content-type") || "").split(";")[0].trim().toLowerCase();
-    const sourceMime = contentType.startsWith("image/") ? contentType : mimeFromExtension(url);
-    if (!sourceMime || sourceMime === "image/svg+xml") return null; // svg = chrome/icons, skip
+    const contentType = normalizeMimeType(res.headers?.get?.("content-type"));
+    // Only a type the model accepts as an image: anything else (SVG chrome and
+    // icons, but also BMP/AVIF/HEIC) is a 400 on the agent's forwarding call.
+    // The extension is a fallback for a server that typed the body as something
+    // other than an image, never a second opinion on one that did: an AVIF
+    // served from a .png URL would otherwise be relabelled as PNG it isn't.
+    const sourceMime = isImageMimeType(contentType) ? modelImageMimeType(contentType) : mimeFromExtension(url);
+    if (!sourceMime) return null;
     const declaredLength = Number(res.headers?.get?.("content-length") || 0);
     if (declaredLength > MAX_IMAGE_BYTES) return null;
     const buf = Buffer.from(await res.arrayBuffer());

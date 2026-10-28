@@ -17,6 +17,7 @@ export const TOPIC_TO_ARTICLES: Record<string, string[]> = {
   "core-concepts": ["nestr-the-basic-building-blocks", "structure-and-governance-in-nestr"],
   "nest-model": ["nestr-the-basic-building-blocks"],
   "labels": ["nestr-the-power-of-labels"],
+  "fields": ["custom-fields", "customising-tabs", "customising-views"],
   "search": ["nestr-search"],
   "operating-modes": ["structure-and-governance-in-nestr"],
   "workspace-types": ["structure-and-governance-in-nestr", "building-your-org-structure-roles-circles"],
@@ -32,17 +33,22 @@ export const TOPIC_TO_ARTICLES: Record<string, string[]> = {
   "linking": ["navigating-nestr"],
   "web-app-links": ["navigating-nestr"],
   "workspace-setup": ["setting-up-a-new-collaborative-workspace"],
+  "meetings": ["running-meetings-in-nestr"],
   "best-practices": ["getting-started-with-nestr"],
+  "pricing": ["pricing-plans-what-you-pay-for", "managing-users-invitations-permissions"],
 };
 
 export const ARTICLE_TO_TOPIC: Record<string, string> = {
   "nestr-the-basic-building-blocks": "nest-model",
   "structure-and-governance-in-nestr": "core-concepts",
   "nestr-the-power-of-labels": "labels",
+  "custom-fields": "fields",
+  "customising-views": "fields",
+  "customising-tabs": "fields",
   "nestr-search": "search",
   "building-your-org-structure-roles-circles": "matching-work-to-roles",
   "tensions-and-governance-proposals": "tension-processing",
-  "running-meetings-in-nestr": "tension-processing",
+  "running-meetings-in-nestr": "meetings",
   "scrum-agile-app": "scrum",
   "projects-and-todos-creating-tracking-managing-work": "doing-work",
   "chat-channels-and-communication-in-nestr": "notifications",
@@ -51,6 +57,7 @@ export const ARTICLE_TO_TOPIC: Record<string, string> = {
   "navigating-nestr": "web-app-links",
   "setting-up-a-new-collaborative-workspace": "workspace-setup",
   "getting-started-with-nestr": "best-practices",
+  "pricing-plans-what-you-pay-for": "pricing",
 };
 
 /** Public help articles that go deeper on a curated internal topic. */

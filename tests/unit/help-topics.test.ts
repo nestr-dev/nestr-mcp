@@ -33,6 +33,32 @@ describe("HELP_TOPICS", () => {
     }
   });
 
+  it("meetings topic says a meeting attaches to an existing circle, anchor circle included", () => {
+    const content = HELP_TOPICS["meetings"];
+    expect(content).toBeDefined();
+    // The valid parents, including the one the bad path overlooks.
+    expect(content).toContain("anchor-circle");
+    expect(content).toContain("The anchor circle is a circle");
+    // The rule this topic exists to state.
+    expect(content).toContain("Never create a circle in order to hold a meeting");
+    // Label combos and the scheduling field.
+    expect(content).toContain('["meeting", "circle-meeting"]');
+    expect(content).toContain('["meeting", "governance"]');
+    expect(content).toContain("due");
+    // Enablement check, so it does not create a nest nobody can open. The app
+    // id is the short one on `_id`; `circleplus-meetings` is the internal data
+    // key and is NOT what the apps endpoint returns.
+    expect(content).toContain('`_id: "meetings"`');
+    expect(content).toContain("not the `circleplus-meetings` data key");
+    // Defers the run-the-meeting half to the article rather than restating it.
+    expect(content).toContain("running-meetings-in-nestr");
+  });
+
+  it("labels topic sends meeting creation to the meetings topic", () => {
+    const content = HELP_TOPICS["labels"];
+    expect(content).toContain('nestr_help({ topic: "meetings" })');
+  });
+
   it("scrum topic documents the four labels and key workflows", () => {
     const content = HELP_TOPICS["scrum"];
     expect(content).toBeDefined();
@@ -52,6 +78,15 @@ describe("HELP_TOPICS", () => {
     expect(content).toContain("fieldValues.userstory_sprint:!exists");
     // userstory_type was dropped in V1 — the topic notes its absence rather than documenting it
     expect(content).toContain("There is no \`userstory_type\` field");
+  });
+
+  it("scrum topic checks the apps endpoint by _id and enabled, not presence", () => {
+    const content = HELP_TOPICS["scrum"];
+    expect(content).toContain("`_id: 'scrum'`");
+    expect(content).toContain("enabled: true");
+    // The endpoint returns every app, so absence is never the disabled signal.
+    expect(content).toContain("testing for absence reports it as on");
+    expect(content).not.toContain("look for `id: 'scrum'`");
   });
 
   it("okr topic documents goal/result/resultwork and term queries", () => {

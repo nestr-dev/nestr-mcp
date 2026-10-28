@@ -2,6 +2,16 @@
 
 This file provides guidance to Claude Code when working with the Nestr MCP Server.
 
+## Hard rule: no PII in commits, PRs or code
+
+**Treat every commit message, PR title and description, code comment, test fixture, and issue or review comment as public and permanent.** Never put a real person's or customer's identity in one: no names, no company names, no email addresses, no phone numbers, no account, workspace or thread ids belonging to a real user.
+
+**This repo is public, so anything pushed here is world-readable the moment it lands.** The rule holds in a private repo too. Repos get opened, forks and mirrors keep what you pushed, and a force-push does not reach anyone's existing clone. A private repo is a delay, not a boundary.
+
+Refer to people by role instead: "a customer", "a workspace admin", "the PR author", "a teammate". The specifics belong in the Nestr project, the support thread, or the ticket, which is where the people who need them already look. Link to that rather than restating it.
+
+The same rule covers the work you cite as motivation. "A customer asked for read-only API access" is the right amount of detail for a PR description; naming the customer and their company is not, and it is the most common way this leaks.
+
 ## Project Overview
 
 This is an MCP (Model Context Protocol) server that connects AI assistants (Claude, Cursor, etc.) to Nestr workspaces. It wraps the Nestr REST API and exposes it as MCP tools.
@@ -275,6 +285,7 @@ The server exposes these tools to AI assistants:
 | `nestr_update_comment` | `PATCH /nests/{id}` (comment body) |
 | `nestr_delete_comment` | `DELETE /nests/{id}` (comment) |
 | `nestr_get_comments` | `GET /nests/{id}/posts` |
+| `nestr_get_nest_activity` | `GET /nests/{id}/activity` |
 | `nestr_list_circles` | `GET /workspaces/{id}/circles` |
 | `nestr_get_circle` | `GET /workspaces/{id}/circles/{cid}` |
 | `nestr_get_circle_roles` | `GET /workspaces/{id}/circles/{cid}/roles` |
@@ -293,7 +304,7 @@ The server exposes these tools to AI assistants:
 | `nestr_get_inbox_item` | `GET /users/me/inbox/{id}` (OAuth only) |
 | `nestr_update_inbox_item` | `PATCH /users/me/inbox/{id}` (OAuth only) |
 | `nestr_reorder_inbox` | `PATCH /users/me/inbox/reorder` (OAuth only) |
-| `nestr_reorder_inbox_item` | `POST /users/me/inbox/{id}/reorder/{position}/{relatedId}` (OAuth only) |
+| `nestr_reorder_inbox_item` | `PATCH /users/me/inbox/{id}/reorder/{position}/{relatedId}` (OAuth only) |
 | `nestr_list_personal_labels` | `GET /users/me/labels` (OAuth only) |
 | `nestr_create_personal_label` | `POST /users/me/labels` (OAuth only) |
 | `nestr_get_daily_plan` | `GET /users/me/today` (OAuth only) |
@@ -306,8 +317,13 @@ The server exposes these tools to AI assistants:
 | `nestr_list_tensions_awaiting_consent` | `GET /users/me/tensions/awaiting-my-consent` (OAuth only) |
 | `nestr_list_notifications` | `GET /users/me/notifications` (OAuth only) |
 | `nestr_mark_notifications_read` | `POST /users/me/notifications/mark-all-read` (OAuth only) |
-| `nestr_reorder_nest` | `POST /nests/{id}/reorder/{position}/{relatedId}` |
+| `nestr_reorder_nest` | `PATCH /nests/{id}/reorder/{position}/{relatedId}` |
 | `nestr_bulk_reorder` | `PATCH /workspaces/{id}/reorder` |
+| `nestr_set_recurrence` | `PATCH /nests/{id}/recurrence` |
+| `nestr_list_occurrences` | `GET /nests/{id}/recurrence` |
+| `nestr_skip_occurrence` | `DELETE /nests/{id}/recurrence/{instant}` (`?scope=following` deletes it and every later one) |
+| `nestr_update_occurrence` | `PATCH /nests/{id}/recurrence/{instant}` (materializes, then edits that one occurrence) |
+| `nestr_delete_series` | `DELETE /nests/{id}/recurrence` |
 | `nestr_create_tension` | `POST /nests/{id}/tensions` |
 | `nestr_get_tension` | `GET /nests/{id}/tensions/{tid}` |
 | `nestr_list_tensions` | `GET /nests/{id}/tensions` |
@@ -330,6 +346,8 @@ The server exposes these tools to AI assistants:
 | `nestr_list_connectors` | `GET /workspaces/{id}/connectors` |
 | `nestr_register_connector` | `POST /workspaces/{id}/connectors` (workspace-admin only) |
 | `nestr_bind_connector` | `POST /workspaces/{id}/connections` (workspace-admin only) |
+| `nestr_create_agent` | `POST /workspaces/{id}/agents` (workspace-admin only) |
+| `nestr_update_agent` | `PATCH /workspaces/{id}/agents/{uid}` (workspace-admin only; send only the fields to change) |
 
 ## Adding a New Tool
 

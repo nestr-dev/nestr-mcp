@@ -28,6 +28,13 @@ describe("help cross-links", () => {
     }
   });
 
+  it("the meetings article and topic link to each other", () => {
+    // Both directions, per the rule in cross-links.ts: when a topic and an
+    // article cover the same ground, the pair goes in BOTH tables.
+    expect(relatedArticlesForTopic("meetings")).toContain("running-meetings-in-nestr");
+    expect(relatedTopicForArticle("running-meetings-in-nestr")).toBe("meetings");
+  });
+
   it("relatedArticlesForTopic returns mapped slugs, [] for unknown topics", () => {
     expect(relatedArticlesForTopic("scrum")).toEqual(["scrum-agile-app"]);
     expect(relatedArticlesForTopic("not-a-topic")).toEqual([]);

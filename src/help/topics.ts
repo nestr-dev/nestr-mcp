@@ -17,13 +17,16 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 - topics: This list
 - operating-modes: Detailed assistant/role-filler/workspace mode behaviors
 - matching-work-to-roles: How to determine which role owns work
-- linking: URL format for linking to nests in Nestr
+- linking: Linking to an item vs. linking to a view (tab hashes); read before handing anyone a link
 - workspace-types: Holacracy, Sociocracy, and Custom workspace configurations
 - core-concepts: Workspace, nest, circle, role, label basics and content format
 - nest-model: Nest fields, hierarchy, hints, and fieldsMetaData
 - labels: Important labels, label architecture, and field schema customization
-- search: Full search query syntax with all operators and examples
-- web-app-links: URL formats for linking to the Nestr web app
+- search: Full search query syntax with all operators and examples, including strict:true
+- api-surface: nestr_api_spec, for checking whether an endpoint exists at all
+- fields: Adding custom fields to labels when Nestr has no field for something yet
+- web-app-links: Every web-app URL shape, the content tab hashes, and the two-pane hash form
+- workspace-settings: Where workspace settings are, every tab, and the link to hand over
 - inbox: Inbox quick capture, processing workflow, and reordering
 - daily-plan: Daily plan usage, scope, and planning workflows
 - notifications: Notification types, groups, and when to check them
@@ -35,8 +38,62 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 - doing-work: How work flows from purpose through strategy to execution
 - tension-processing: Listening for, creating, and processing tensions
 - workspace-setup: Guided setup wizard for new workspaces and circles
+- meetings: Creating and scheduling circle, governance and role meetings, and where a meeting nest belongs
 - scrum: Scrum/Agile workspace app — user stories, sprints, epics, burndown
-- okr: Objectives & Key Results workspace app — goals, key results, contributions`,
+- okr: Objectives & Key Results workspace app — goals, key results, contributions
+- pricing: What Nestr costs, and the one rule about answering that from memory
+- connector-instruction-approval: Why a role connector is held back on scheduled runs, and who can release it`,
+
+  "connector-instruction-approval": `### Connectors held back for instruction approval
+
+A role's connector (Gmail, a CRM, any account bound to one of the role's domains) can be **held back on scheduled runs** — runs nobody started, such as an autonomous agent's recurring check — until someone approves the role's latest instructions. Manual runs, which a person starts, still get it.
+
+**Why it happens.** On a run nobody started, Nestr checks everyone who wrote the instructions the agent will follow (the role's and its skills' and the task's title, description and purpose) against the connector's audience: the people it is shared with. If an edit came from someone outside that audience, or from an author Nestr cannot name, a person in the audience has to approve the new text before the connector is handed over.
+
+**The credential is fine.** Nothing is expired or revoked, and the connection's \`health\` can read as working. Changing the connector's settings, its exposure, or the tool's own configuration does not release it.
+
+**What releases it — only a person:**
+- Someone the connector is shared with, or a workspace admin, presses **Approve** on the request comment Nestr posted on the item, or on the role page.
+- Someone the connector is shared with **reconnects** it. That counts as approving (\`reconnectApproves: "when-in-audience"\`). A reconnect by anyone else does not.
+- Approving re-runs the paused run.
+
+**An agent cannot approve on a person's behalf**, and should not try. Tell the person you are helping, name who can approve, and give them the link to the request comment.
+
+**Where you will see it:**
+
+| Where | What it carries |
+|------|------|
+| \`connector_awaiting_instruction_approval\` hint on \`nestr_get_nest\` / \`nestr_explain_nest\` of the role, a skill, the domain or the task | \`label\`, \`detail\`, \`count\`, \`url\` (the request comment), \`connectors: [{ connectionId, name, nestId, nestTitle, askedAt, commentUrl, approvers, reconnectApproves }]\` |
+| \`connector_paused_by_instruction_edit\` hint on the response of \`nestr_update_nest\` | which connectors and roles your edit pauses; lifted to the top of the result with a \`tellThePerson\` sentence |
+| \`pendingInstructionApprovals\` on each row of \`nestr_list_connections\` | \`{ nestId, nestTitle, askedAt, commentUrl, canApprove, ... }\` per waiting run, plus an \`instructionApprovalNote\` |
+
+\`canApprove\` on a connection row is about the CALLER. \`approvers\` on the hint names the people who can.
+
+**After your own edit** (\`connector_paused_by_instruction_edit\`): the edit was saved. Say it to the person you are helping once, right then — which connector, which role, that manual runs still work, and that approving or a reconnect by someone it is shared with releases it. The next scheduled run posts the Approve request on the item.
+
+\`nestr_hints_rollup\` cannot count this hint in one query (it lists it under \`notComputed\`); read it per nest on the role.`,
+
+  "pricing": `### Pricing
+
+**Never state a Nestr price, plan limit or included allowance from memory. Not once, not hedged, not "roughly".**
+
+This is the single topic where a wrong answer is immediately expensive, immediately checkable, and lands on someone deciding whether to buy. It has already happened: a prospect asked what Nestr costs and was told "starter: environ 99 €/mois, jusqu'à 10 utilisateurs" and "pro: environ 199 €/mois, utilisateurs illimités". Nestr does not sell flat monthly tiers and has no such user caps; the real figures are per seat and roughly a seventh of that. Nothing in the answer was retrieved. Nothing corrected it.
+
+**Where the answer actually lives, in order:**
+
+1. \`nestr_help({ search: "pricing" })\` → the **pricing-plans-what-you-pay-for** article, which carries the current plan names and per-seat figures. Quote it, and link it.
+2. **https://nestr.io/pricing** — the live price table. Give this link to the person in every pricing answer, whatever else you say. Prices change and the page is the thing that changes with them.
+
+**What is stable enough to say in your own words** (the numbers never are):
+
+- Billing is **per user, per month**, with a cheaper annual rate. It is not a flat fee per company, and there is no seat cap that forces a plan change.
+- There is a **free tier for a single user**, and paid tiers above it.
+- **A user is someone with login access.** Agents are not seats: putting an agent in five roles adds no cost, because it is one login. See the managing-users article for who counts.
+- **AI work is metered separately as AI credit**, and that is not the same thing as the subscription. Product support questions — how does Nestr work, where is this setting — are free. Work inside a workspace draws credit. A workspace admin manages the balance, auto top-up and the monthly spend limit under Workspace settings → Workspace plan & billing.
+
+**If the search returns nothing**, say you would rather not guess at prices, give the https://nestr.io/pricing link, and offer to bring in a human. An unanswered pricing question costs one link. An invented one costs the deal and the trust.
+
+**Not a pricing question**: "how do I add a colleague", "extend our plan by one person", "we need another seat". Those are user management — see the managing-users-invitations-permissions article — and answering them with a price list sends someone to buy something they already have.`,
 
   "operating-modes": `### Mode-Specific Behavior Summary
 
@@ -112,26 +169,94 @@ When determining work assignments, consider:
 
   "linking": `## Linking to Nests
 
-**When generating clickable links to nests in chat output, comments, or descriptions, always use the canonical pattern:** \`https://app.nestr.io/n/{nestId}\` (NOT \`/nests/{nestId}\`, \`/nest/\`, or any other variation — only \`/n/\`).
+**Two different questions, two different answers.** Sending someone to an ITEM is not the
+same as sending them to a VIEW, and the link that answers one does not answer the other.
 
-Every nest returned by this MCP server includes a precomputed \`url\` field — **prefer that field over constructing the URL yourself**. The server already applies the context rules below.
+| You want them to see | Use |
+|---|---|
+| One item (a project, a role, a todo) | the nest's own \`url\` field |
+| A list or board (the circle's projects, its roles, its meetings) | the CONTAINER's \`tabs\` hint |
 
-### URL construction rules (when you must build a URL yourself)
+### Linking to an item
 
-1. If you know the nest's parent (circle, project, role, etc.), include it as the context prefix:
-   \`https://app.nestr.io/n/{parentId}/{nestId}\`
-2. If the nest has no parent, or its parent is \`inbox\`, fall back to the bare form:
-   \`https://app.nestr.io/n/{nestId}\`
+Every nest returned by this MCP server carries a precomputed \`url\`. **Use that field. Do not
+assemble one from ids.** It already applies the parent context and the tab hash (below), and
+assembling one by analogy is how a link ends up pointing at the workspace root instead of the
+circle the item actually lives in.
 
-The parent context (when present) opens the nest in its detail pane on desktop. The bare form always works.
+The canonical path is \`/n/{nestId}\` — never \`/nests/{nestId}\`, \`/nest/\`, or anything else.
 
-### Examples
+### Linking to a view
 
-- Role in a circle: \`[Developer](https://app.nestr.io/n/circleId/roleId)\`
-- Task in a project: \`[Fix bug](https://app.nestr.io/n/projectId/taskId)\`
-- Top-level workspace: \`[My Workspace](https://app.nestr.io/n/workspaceId)\`
-- Inbox item: \`[Quick capture](https://app.nestr.io/n/itemId)\` (parent is 'inbox' — drop the context)
-- Nest of unknown context: \`[Fix bug](https://app.nestr.io/n/taskId)\``,
+A view is a TAB on a container, and a tab is a hash. Call \`nestr_get_nest\` on the circle or
+role and take the URL from its \`tabs\` hint:
+
+\`\`\`json
+{ "type": "tabs", "tabs": [
+  { "id": "projects", "title": "Projects", "parentTab": "Work",
+    "url": "https://app.nestr.io/n/circleId#projects" } ] }
+\`\`\`
+
+Say "Work > Projects" to the person (\`parentTab\` is the on-screen grouping) and give them
+\`/n/{circleId}#projects\`. The hash is always the leaf \`id\`; \`parentTab\` is never in the URL.
+
+Do not read the tab list off \`nestr_help\` or off memory. A workspace can rename Projects,
+hide a tab, or not have one, and only the hint on that nest knows.
+
+**Circle board or role board.** Both a circle and a role have a Projects tab, and they answer
+different questions. Pick from what the person actually asked for rather than defaulting to
+the circle.
+
+| They asked | Give them |
+|---|---|
+| "what is the team working on", an overview, a status view | \`/n/{circleId}#projects\` — everything in flight across the circle |
+| "my work", "what should I do next", focused work | \`/n/{roleId}#projects\` — only the work that role holds |
+
+The circle board is the shared picture and the one to open in a tactical meeting. The role
+board is where a person works: it is already filtered to their accountabilities, so nothing
+on it belongs to someone else. Someone who fills several roles has several boards, one per
+role, which is the point rather than a limitation. Find their roles with
+\`assignee:me label:role\`.
+
+### Why the hash is not optional
+
+**A nest URL with no \`#\` is not a stable link.** The web app remembers the last tab each
+person opened on each nest, in that person's own browser, and a link with no hash lands on
+whatever that happens to be. A first-time visitor gets the container's first tab, which on a
+circle is Structure > About. This is a real failure, not a theoretical one: a new user was
+sent three links to their new project, landed on the anchor circle's governance view every
+time, and concluded Nestr had no boards.
+
+### Two panes, two hashes
+
+On a wide screen \`/n/{leftId}/{rightId}\` shows the left nest with the right one open beside
+it. The hash follows the same shape: \`#{leftTab}/{rightTab}\`.
+
+- \`/n/{circleId}/{projectId}#projects\` — circle on its Projects tab, project open beside it.
+  This is what the \`url\` field gives you, and it is almost always what you want.
+- \`/n/{circleId}/{roleId}#roles/projects\` — circle on Roles, and the role beside it opened
+  on ITS Projects tab. Rarely needed, but this is how you steer both panes at once.
+- \`/n/{circleId}/{roleId}#_/projects\` — \`_\` in the left slot leaves the left pane's tab
+  alone and sets only the right pane's.
+
+A hash naming a tab the nest does not have is ignored and the nest opens on its default tab,
+so a stale or wrong hash degrades to the hashless behaviour rather than erroring.
+
+### Other shapes
+
+| Format | Example | Use case |
+|---|---|---|
+| \`/n/{nestId}\` | \`/n/abc123\` | Any nest, no context (always works) |
+| \`/n/{parentId}/{nestId}\` | \`/n/circleId/roleId\` | Item in context (detail pane on desktop) |
+| \`/n/{nestId}#{tab}\` | \`/n/circleId#projects\` | A view on that nest |
+| \`/n/{nestId}?s=1#{tab}\` | \`/n/wsId?s=1#users\` | Settings (see the \`settings\` hint) |
+
+Cross-workspace pages for the current user: \`/roles\`, \`/projects\`.
+A user's roles in one workspace: \`/profile/{userId}?cId={workspaceId}\`.
+
+Inbox items have no parent context — link them bare as \`/n/{itemId}\`.
+
+See \`nestr_help({ topic: "web-app-links" })\` for the full tab and settings hash tables.`,
 
   "workspace-types": `## Workspace Types
 
@@ -188,7 +313,7 @@ Nestr uses different formats for different fields:
 - **\`purpose\`**: The aspirational future state this nest is working towards. **Most important for workspaces, circles, and roles** — it defines the north star and context boundary for the organization, circle, or role. Everything within that container should serve its purpose. For other nests (tasks, projects, etc.), prefer \`description\` or \`fields\` for detailed information — but purpose can be set if it serves the user. Supports HTML.
 - **\`description\`**: The primary field for detailed information about a nest. Use for project details, task context, acceptance criteria, Definition of Done, and any persistent information about the nest. Supports HTML.
 - **\`fields\`**: Structured data defined by labels (e.g., \`fields['project.status']\`, \`fields['metric.frequency']\`). Use for structured, label-specific information.
-- **Comment \`body\`**: HTML supported (same tags as above, including base64 images). Supports @mentions — **mentions MUST be wrapped in literal curly braces**: write \`@{aBcD1234eFgH5678i:roleNestId}\`, NOT \`@aBcD1234eFgH5678i\`. Without the braces the platform does not parse the mention, the user is not notified, and no link is rendered. Forms: **\`@{userId:roleId}\` is the preferred form when mentioning a user** — it addresses them in the context of a specific role (or a circle, for "individual action on a circle"), so they know which hat they're being addressed in. \`@{userId}\` mentions by user ID without role context (legacy — avoid when a role is known), \`@{email}\` mentions by any email the user is registered with in Nestr, \`@{circle}\` notifies all role fillers in the nearest ancestor circle, \`@{everyone}\` is available in the UI but not yet via the API. **Use comments for progress updates**, status changes, and conversation — not purpose or description.
+- **Comment \`body\`**: HTML supported (same tags as above, including base64 images). Supports @mentions — **mentions MUST be wrapped in literal curly braces**: write \`@{aBcD1234eFgH5678i:roleNestId}\`, NOT \`@aBcD1234eFgH5678i\`. Without the braces the platform does not parse the mention, the user is not notified, and no link is rendered. Forms: **\`@{userId:roleId}\` is the preferred form when mentioning a user** — it addresses them in the context of a specific role (or a circle, for "individual action on a circle"), so they know which hat they're being addressed in. the second id must be a ROLE or CIRCLE nest and never the project, task or tension being commented on, since the mention renders that nest's title where the role name belongs (a project id produces 'Henk as Write a weekly blog post', reading as though the project were his role). \`@{userId}\` mentions by user ID without role context (use it when the role is genuinely unknown, rather than substituting the nest you are working on), \`@{email}\` mentions by any email the user is registered with in Nestr, \`@{circle}\` notifies all role fillers in the nearest ancestor circle, \`@{everyone}\` is available in the UI but not yet via the API. **Use comments for progress updates**, status changes, and conversation — not purpose or description.
 - **\`data\`**: Generic key-value store. Also used internally by Nestr and other integrations — **never overwrite or remove existing keys**. When adding your own data, namespace it under \`mcp.\` (e.g., \`{ "mcp.lastSync": "2025-01-01" }\`) to avoid conflicts. Not rendered in UI.
 
 **Where to put information:**
@@ -291,7 +416,7 @@ To discover the actual field schema (including available options), add \`fieldsM
 GET /nests/{nestId}?fieldsMetaData=true
 \`\`\`
 
-This adds a \`fieldsMetaData\` object to the response showing field definitions and options:
+This adds a \`fieldsMetaData\` object to the response holding the declared schema of every label on the nest, including fields that hold no value on this nest, with their definitions and options:
 
 \`\`\`json
 {
@@ -333,6 +458,12 @@ for example — and those fields appear in \`fields\` alongside the nest's own. 
   may edit everything else here.
 - A field without \`proxySource\` belongs to the nest you fetched, as usual.
 
+### Field Keys
+
+- **Writing**: a key is \`<labelId>.<fieldCode>\`, e.g. \`{ "project.status": "Current" }\` or \`{ "order.source": "webshop" }\`. The server adds the workspace prefix. A bare code (\`{ "source": "webshop" }\`) is refused with a 422 whose \`detail.validKeys\` lists every key the nest accepts. A field the nest defines itself, with no defining label, is written under its own id.
+- **Reading back**: fields from a workspace's own labels come back as \`{workspaceId}:<labelId>.<fieldCode>\`; fields from built-in labels come back bare, as \`<labelId>.<fieldCode>\` (\`project.status\`, \`role.characteristics\`). Strip the workspace prefix before matching.
+- **Codes**: a field code can contain hyphens (\`role.role-circle-admin\`), so read codes from \`fieldsMetaData\` rather than deriving them from a field's title.
+
 **Example**: A workspace might customize the global \`project\` label to add a \`project.department\` field, and a sub-circle might further customize it to add \`project.sprint\` - both would appear on projects within that sub-circle.
 
 #### Hints (Contextual Signals)
@@ -352,6 +483,7 @@ Each hint object has:
 - \`toolCall\` — pre-mapped tool call to drill into the hint: \`{ tool: "nestr_search", params: { workspaceId: "...", query: "..." } }\`. Call the specified tool with the given params to investigate.
 - \`lastPost\` — (comments hints only) ISO timestamp of the most recent comment
 - \`readAt\` — (comments hints only, user-scoped auth only) ISO timestamp of when the user last read comments. Compare \`lastPost > readAt\` to detect unread comments.
+- \`tabs\` — (on the \`tabs\` and \`settings\` hints only) the pages a PERSON can be sent to, each with \`id\`, \`title\` and a ready-made absolute \`url\`. These carry no \`toolCall\` and should not: the answer is a link to hand over, not a call to make.
 
 **Available hint types:**
 
@@ -382,6 +514,10 @@ Each hint object has:
 | \`project_overdue\` | warning | project | Past due date |
 | \`no_proposed_output\` | suggestion | tension | Tension has no proposed output yet |
 | \`inline_images\` | info | all | Count of images pasted into the text (see below) |
+| \`tabs\` | info | all (single-nest reads) | The nest's own content tabs, each with the URL that opens it |
+| \`settings\` | info | all (single-nest reads) | The settings tabs THIS viewer may open, each with its URL |
+| \`connector_awaiting_instruction_approval\` | warning | role, skill, domain, task | A role connector is held back on scheduled runs until a person in its audience approves the role's latest instructions (see \`connector-instruction-approval\`) |
+| \`connector_paused_by_instruction_edit\` | warning | write response (update of a role, skill or task) | Your edit to title/description/purpose will hold a role connector back on scheduled runs; tell the person you are helping, once |
 
 Example response with hints:
 \`\`\`json
@@ -405,6 +541,37 @@ Example response with hints:
 }
 \`\`\`
 
+**Hints have a level, and a listing should not ask for the expensive one.** \`hints\` takes
+\`'full'\`, \`'summary'\` or \`false\`. \`summary\` keeps everything that varies per nest — type,
+severity, count, url, and the \`query\` below — and drops the two things identical for every
+nest of that type: \`detail\`, the teaching paragraph, and \`endpoints\`. A page of fifty nests
+at \`full\` carries fifty copies of one paragraph; \`nestr_help\` carries it once, and
+\`helpTopic\` on the hint names which topic. Single reads default to \`full\`, listings to
+\`summary\`. Narrow further with \`hintTypes\` and \`minSeverity\`.
+
+**A hint can tell you how to find every other nest with the same problem.** Where the
+predicate is expressible as a search, the hint carries a \`query\`:
+
+\`\`\`json
+{ "type": "project_waiting_no_reason", "severity": "warning",
+  "query": {
+    "search": "label:project fields.project.status:Waiting fields.project.waiting_reason:!exists",
+    "scope": "<circleId>", "url": "https://.../api/nests/<circleId>/search?search=...",
+    "exact": false,
+    "caveat": "A reason saved as empty markup triggers the hint but is not matched by !exists." } }
+\`\`\`
+
+Read \`exact\` before you trust a count from it. \`true\` means the search reproduces the hint's
+predicate; \`false\` means it gets close and \`caveat\` says which way it is wrong. Where the
+predicate cannot be expressed at all there is no \`query\` — deliberately, because a search
+that quietly disagrees with its hint is worse than none.
+
+**To count rather than to list, use \`nestr_hints_rollup\`.** It returns how many nests under
+a circle or workspace carry each hint type, with a small sample, in one call instead of one
+per nest. Read its \`notComputed\`: it names the types it cannot count in a single query, so a
+type listed there is unknown, not zero. Do not sum counts across types — one nest can carry
+several.
+
 **Inline images.** An image pasted into a nest's text is stored as a file and left in the
 content as a markdown reference: \`![name](/file/download?id=FILE_ID&name=NAME)\`. These are
 deliberately absent from \`nestr_get_nest_files\`, because they belong to the text rather than
@@ -413,6 +580,24 @@ to the attachment list, and the \`files\` hint does not count them either. The
 the reference in the content and call \`nestr_read_file({ nestId, fileId })\` — that works for
 inline images even though they are not listed. The hint carries no \`toolCall\`: the id belongs
 to a specific reference, so there is no single call to pre-map.
+
+**The \`tabs\` hint is the only correct source for an in-app view link.** It is computed per
+nest and per viewer: a workspace can rename Projects to "Stories Board", hide a tab, or not
+have one at all, and the hint already reflects that. It is returned on single-nest reads
+(\`nestr_get_nest\`), not on listings, so when you need to send someone to a VIEW, read the
+CONTAINER — the circle or the role — and take the URL from its \`tabs\` hint.
+
+\`\`\`json
+{ "type": "tabs", "count": 15, "tabs": [
+  { "id": "projects", "title": "Projects", "parentTab": "Work",
+    "url": "https://app.nestr.io/n/circleId#projects" },
+  { "id": "roles", "title": "Roles", "parentTab": "Structure",
+    "url": "https://app.nestr.io/n/circleId#roles" } ] }
+\`\`\`
+
+\`parentTab\` ("Work", "Structure", "Communicate") is how the tab bar groups tabs on screen, so
+say "Work > Projects" to a person. It is never part of the URL: the hash is always the leaf
+\`id\`. See \`nestr_help({ topic: "linking" })\`.
 
 Use hints to proactively surface issues to the user — for example, when reviewing a circle's roles, hints can reveal which roles need attention without separate queries. Use the \`toolCall\` to drill into any hint directly.`,
 
@@ -436,7 +621,7 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 - \`governance\` - Combined with \`meeting\` label to create a governance meeting (processes governance tensions/proposals)
 - \`circle-meeting\` - Combined with \`meeting\` label to create a circle/tactical meeting (processes operational tensions — projects, todos, inter-role requests)
 
-**Creating meetings:** A meeting is a nest with \`labels: ["meeting", "governance"]\` or \`labels: ["meeting", "circle-meeting"]\`. Set \`due\` to the meeting start time. Assign all role fillers in the circle to the meeting's \`users\` array — this includes people/agents energizing roles in the circle, plus rep-link and circle-lead roles from sub-circles. Use graph tools (\`nestr_add_graph_link\` with relation \`meeting\`) to link tensions as agenda items. Agenda items that don't originate from a specific role can be created as child nests of the meeting directly.
+**Creating meetings:** See \`nestr_help({ topic: "meetings" })\` for where a meeting nest belongs (an existing circle — the anchor circle counts) and why you must not create a circle to hold one. A meeting is a nest with \`labels: ["meeting", "governance"]\` or \`labels: ["meeting", "circle-meeting"]\`. Set \`due\` to the meeting start time. Assign all role fillers in the circle to the meeting's \`users\` array — this includes people/agents energizing roles in the circle, plus rep-link and circle-lead roles from sub-circles. Use graph tools (\`nestr_add_graph_link\` with relation \`meeting\`, nestId the tension and targetId the meeting) to link tensions as agenda items. Agenda items that don't originate from a specific role can be created as child nests of the meeting directly.
 
 **OKRs & Goals:**
 - \`goal\` - An Objective (the O in OKR)
@@ -483,7 +668,27 @@ Labels created by individual users for their own organization:
 - Help users maintain personal categorization systems
 - Managed via \`nestr_list_personal_labels\` and \`nestr_create_personal_label\` (OAuth only)
 
+### Hidden labels (autoComplete: false)
+
+A label carrying \`autoComplete: false\` is **invisible in the UI**. It does not autocomplete
+while someone types, and it is not drawn in the label list on an item's detail view or in
+list view. It is still on the nest, still gives the item its fields and behaviour, and is
+still searchable with \`label:<id>\`.
+
+Which ones: \`task\` (on every plain todo), the CRM and OKR internals, and **every tagAlong**,
+which is how a workspace's per-context customisation attaches without showing up as a chip.
+That is why a card showing only "Contract" can also carry \`task\` plus a tagAlong, and show
+Status and other task fields nobody put there deliberately.
+
+**Never tell someone to "open the item and delete that label" for a hidden one.** There is
+nothing on the card to click, and the advice sends them looking for a control that is not
+drawn. The two routes that do work: type the label's full name in the add/remove label
+modal, or find the items with \`label:<name>\` in search. Check the label before you answer:
+a label you can see in the data may be invisible to them.
+
 ### Field Schemas and Customization
+
+**Need a field that does not exist yet?** A workspace admin can add one to the label, and every item of that type picks it up. See \`nestr_help({ topic: "fields" })\` before telling anyone a field is not available.
 
 Labels define field schemas - the custom fields available on nests with that label. Key points:
 
@@ -500,7 +705,7 @@ To discover the actual field schema (including available options), add \`fieldsM
 GET /nests/{nestId}?fieldsMetaData=true
 \`\`\`
 
-This adds a \`fieldsMetaData\` object to the response showing field definitions and options:
+This adds a \`fieldsMetaData\` object to the response holding the declared schema of every label on the nest, including fields that hold no value on this nest, with their definitions and options:
 
 \`\`\`json
 {
@@ -544,6 +749,53 @@ for example — and those fields appear in \`fields\` alongside the nest's own. 
 
 **Example**: A workspace might customize the global \`project\` label to add a \`project.department\` field, and a sub-circle might further customize it to add \`project.sprint\` - both would appear on projects within that sub-circle.`,
 
+  "fields": `## Custom Fields (recording data Nestr has no field for yet)
+
+**Rule of thumb: when someone asks "can I record X on Y?" and there is no built-in field for it, the answer is almost always yes.** Fields are defined on labels, so a workspace admin adds the field to Y's label and every item of that type gets it. Never tell a user something cannot be recorded just because you could not find a field for it. Check the label's schema first, then point them at this route.
+
+### How fields work
+
+- **Defined per label, not per item.** Adding a field to a label gives it to every item carrying that label, including items that already exist.
+- **Where:** Workspace settings -> Labels, Fields & Tabs -> select the label -> add a field.
+- **Who:** a workspace admin. If the person asking is not an admin, describe the route and suggest they ask an admin, rather than saying it is not possible.
+- **Naming:** the new field is namespaced by its label, e.g. \`tension.notes\`, and is read and written through \`fields\` on the nest tools like any built-in field.
+- **Per-circle overrides:** a circle can add, alter or hide a label's fields for itself, and a circle nested inside it can override again. The same label can carry different fields in different parts of the tree. The route is the circle's own settings, \`/n/{workspaceId}/{circleId}?s=1#labels\`, which lists the system labels under "Customize a system label" and the workspace's own labels under "Customize a workspace label". Renaming, recolouring, creating and deleting a workspace label stay at the workspace root; a circle only changes how one behaves there.
+- **Internally** this is stored as a tagAlong label on the label definition. That is implementation detail. Talk to users about "adding a field to the label".
+
+### Order of fields and tabs
+
+**There is no order number anywhere in this screen. Do not invent one.** The order of a label's fields and tabs is their order in the settings list, and it is changed by moving a row, not by typing a value. Two controls do it, both on the row itself:
+
+- a drag grip at the far left of the row (two columns of dots), and
+- up and down arrows at the right of the row, next to the delete icon, which only **appear on hover**. They are invisible in a screenshot, so never conclude from one that a list cannot be reordered. The first row has no up arrow and the last has no down arrow.
+
+For tabs, the top of the settings list is the leftmost tab on the item, so moving a tab up moves it left. For fields, the list order is the order the fields appear on the item. A tab with a "Parent tab title" sits inside that parent, so moving it reorders it within the parent's menu rather than on the bar. The options inside a drop down field have their own order, dragged the same way, and that order carries into the columns when a view groups by that field. Changes need **Save**.
+
+### Whose label is that tab on?
+
+A tab bar belongs to the label of the item you are looking at, not to the label of whatever the tab lists. The tabs across the top of a circle are the \`circle\` label's tabs even when one of them lists items of some other type; editing that other label's tabs changes what one of those items shows on its own page, and moves nothing on the circle. The editor is headed "Edit tabs for: <label>", so when someone says a tab will not move, check which label they have open first. This is the most common cause of "I changed it and nothing happened".
+
+### Check before you answer
+
+Fetch any nest of that type with \`fieldsMetaData=true\` (see topic "labels") to read the live schema, including the options on a dropdown. A field you do not recognise may already exist in that workspace.
+
+### Common requests, and the label to change
+
+| Request | What to do |
+|---|---|
+| Notes on a meeting agenda item | Agenda items are tensions. Add a multiline or HTML text field to the \`tension\` label. |
+| A budget on projects | Currency field on \`project\`. |
+| A start date on roles | Date field on \`role\`. |
+| A renewal date on contracts | Create a workspace label for contracts, add a date field to it. |
+| A priority to group a board by | Drop down list on the label, then group with \`groupbycol:<label>-><field>\` (see topic "search"). |
+| Something Nestr has no concept of at all | Create a workspace label for it and give it fields. |
+
+### Field types available
+
+Text, multiline text, HTML text, number, currency, percentage, slider, range, formula, drop down list, multi-select drop down list, label drop down selector, checkbox, date, term selector, nest link, URL, user.
+
+Fields are first class: once added you can search, filter, sort and group by them.`,
+
   "search": `## Search Query Syntax
 
 The \`nestr_search\` tool supports powerful query operators. Combine multiple operators with spaces (AND logic) or use commas within an operator (OR logic).
@@ -569,6 +821,28 @@ The \`nestr_search\` tool supports powerful query operators. Combine multiple op
 | \`depth:\` | \`depth:1\` | Limit search depth (1 = direct children only) |
 | \`mindepth:\` | \`mindepth:2\` | Minimum depth from search context |
 | \`limit:\` | \`limit:10\` | Limit number of results |
+| \`groupby:\` | \`groupby:parent\` | Group results into sections (app + tabs; inert here) |
+| \`groupbycol:\` | \`groupbycol:project->status\` | Same grouping as board columns — see "Grouping and Layout" below |
+
+### Knowing your filter applied: \`strict:true\`
+
+An operator this parser does not recognise, an unknown label, or a field filter naming a
+field that does not exist are all **dropped silently**. The search still runs, returns a
+broader result, and nothing says a filter went missing. Fine when browsing, wrong when
+counting: a mistyped filter reads as a real, larger answer.
+
+Add \`strict:true\` and any dropped term becomes an error instead:
+
+\`\`\`
+label:project fields.project.stauts:Waiting strict:true
+  -> rejected, naming the unknown field, instead of returning every project
+\`\`\`
+
+\`nestr_search\` also takes \`strict: true\` as a parameter, which appends the operator for you.
+Use it whenever the number matters: counting, reporting, or deciding something on the result.
+
+For "does this deployment have X at all", \`strict:true\` answers it for the search language
+and \`nestr_api_spec\` answers it for the HTTP surface.
 
 ### The \`has:\` Operator
 
@@ -584,6 +858,10 @@ The \`has:\` operator checks for property existence. Supports \`!\` prefix for n
 - \`has:icon\` - Items with an icon set
 - \`has:tabs\` - Items with tabs configured
 - \`has:header\` - Items with a header
+
+An unlisted value is not an error: \`has:<x>\` falls through to the nest property \`_p.<x>\`,
+so \`has:completable\` (items that can be completed) and \`has:eventable\` both work. The names
+above are the ones with special handling, not the whole set.
 
 ### Field Value Search
 
@@ -672,8 +950,19 @@ Both support \`!\` prefix for negation.
 
 ### Additional Operators
 
-- \`deleted:true\` - Include deleted items (hidden by default)
 - \`linkeditems:true\` - Items linked to the current context
+
+### Deleted Items
+
+Deleted items are soft-deleted and stay in the workspace, so they remain findable. Searches exclude them unless one of these operators is present.
+
+- \`deleted:true\` - ONLY deleted items, no date limit. This does not mean "live plus deleted"
+- \`deleted:today\`, \`deleted:past_7_days\`, \`deleted:past_30_days\`, \`deleted:past_12_months\` - ONLY items deleted in that window
+- \`include-deleted:<range>\` - live items AND those deleted in the range, in one result set. Same ranges as above, plus \`include-deleted:all\` for no date limit
+
+Use \`include-deleted:\` when the user asks "did this ever exist" or "find X, including anything deleted". Use \`deleted:\` when they want the deleted set on its own, for example "what was removed last week".
+
+Deleted results come back read-only. **There is no restore tool: restoring is done in the Nestr app.** Point the user at the item's page, where a banner carries a Restore link, and note that restoring requires the delete right on that item. An item deleted as part of its parent is restored by restoring that parent, which brings back everything removed in the same deletion event. See the \`recovering-deleted-items-undo-activity-stream\` help article.
 
 ### Sorting Results
 
@@ -711,6 +1000,41 @@ label:project completed:this_month sort:completedAt sort-order:desc
   -> Recently completed projects
 \`\`\`
 
+### Grouping and Layout (\`groupby:\` / \`groupbycol:\`)
+
+\`groupby:\` and \`groupbycol:\` are supported operators that organise results rather than filter them. \`groupby:\` splits the list into sections; \`groupbycol:\` lays the same grouping out as columns, i.e. a kanban board. Both can appear in one query, giving sections inside each column.
+
+**Where they take effect:** the search bar in the Nestr app, and the search term saved on a tab (Workspace settings -> Labels, Fields & Tabs -> pick the label -> its tabs). They are accepted but inert for the \`nestr_search\` API tool, which always returns a flat list — so group the results yourself when answering. Do not tell a user these operators do not exist, and do not send them hunting for a menu instead: in the app and on tabs they work.
+
+**Values (the same set for both):**
+- \`label\` — the first groupable label on each result
+- \`parent\` — the item's parent nest
+- \`workspace\`
+- \`assignee\` — first assigned user, \`none\` when unassigned
+- \`completed\` — completed vs not (needs 'hide completed' turned off to show both)
+- \`due\` — Overdue / Today / This week / Next week / Later / Without due date
+- \`{labelId}->{fieldCode}\` — any dropdown field on a label, e.g. \`project->status\` or \`task->status\`. This general form is not in the app's autosuggest but is fully supported, for custom fields too.
+- \`ancestorlabel->{labelId,...}\` — the nearest ancestor carrying one of the listed labels, e.g. \`groupby:ancestorlabel->circleplus-role,circleplus-circle\` for a lane per role or circle. Built-in views such as My projects use exactly this.
+
+**Worked example — a board of tasks by status inside a project.** Tasks have no native status field (projects do: Future / Current / Waiting / Done), so add a dropdown field, e.g. \`status\`, to the task label first, then give the project label a search tab whose term includes \`groupbycol:task->status\`. Every project then shows its tasks as a board with one column per status value.
+
+**Examples:**
+\`\`\`
+label:project groupbycol:project->status
+  -> Projects as a board, one column per project status
+
+completed:false groupbycol:assignee
+  -> Open work as a board, one column per person
+
+label:project groupby:ancestorlabel->circleplus-role,circleplus-circle
+  -> Projects in sections, one per owning role or circle
+
+groupbycol:task->status groupby:parent
+  -> Tasks as status columns, sectioned by their parent inside each column
+\`\`\`
+
+Public help articles covering the same ground, each fetched by passing its slug as \`topic\`: \`nestr-search\` for the in-app search UI, \`customising-tabs\` for putting a search on a tab, and \`customising-views\` for the per-person list/columns switch.
+
 ### Scoping Search to a Specific Nest
 
 Use \`in:nestId\` to limit search results to only items within a specific nest (its descendants at any depth).
@@ -742,6 +1066,24 @@ in:roleId label:project project->status:Current
 - Roles in a circle only (not sub-circles): \`in:circleId label:role depth:1\`
 - All work in a circle: \`in:circleId completed:false\` (includes all nested items)
 - Direct tasks under a project: \`in:projectId depth:1 completed:false\`
+
+**Two ways to scope, and when to use which.** \`in:nestId\` scopes a workspace-wide
+\`nestr_search\`. \`nestr_get_nest_children\` takes a \`search\` that is already scoped to that
+nest, so the same question is shorter:
+
+\`\`\`
+nestr_search({ query: "in:circleId label:role depth:1" })
+nestr_get_nest_children({ nestId: circleId, search: "label:role" })
+  -> the same roles
+\`\`\`
+
+The children route applies \`depth:1\` when your query sets no depth, and says so in
+\`appliedDefaults\` on the response, which also names how to widen it. Reach for it when you
+already hold the nest id; reach for \`in:\` when you are composing one query across several
+scopes.
+
+Either way, ask for the subset you want rather than fetching a mixed set and sorting it
+out afterwards. "What type is this nest" is a question you can avoid asking.
 
 ### Filtering by Completion Status
 
@@ -816,7 +1158,58 @@ When sharing results with users, provide clickable links to the Nestr web app.
 |--------|---------|----------|
 | \`/n/{nestId}\` | \`/n/abc123\` | Direct link to any nest |
 | \`/n/{nestId}/{childId}\` | \`/n/circleId/roleId\` | Show child in context (opens detail pane on desktop) |
+| \`/n/{nestId}#{tab}\` | \`/n/circleId#projects\` | A specific tab (view) on that nest |
+| \`/n/{leftId}/{rightId}#{left}/{right}\` | \`/n/circleId/roleId#roles/projects\` | A tab on each pane |
 | \`/n/{workspaceId}?s=1#hash\` | \`/n/wsId?s=1#users\` | Workspace admin settings |
+
+### Content Tab Hashes
+
+A tab on a nest is a hash on that nest's own URL. **Read the real list off the nest's
+\`tabs\` hint (\`nestr_get_nest\`), because a workspace can rename or hide any of them.** These
+are the defaults a circle or role ships with:
+
+| Hash | Tab | Group |
+|---|---|---|
+| \`#about\` | About | Structure |
+| \`#roles\` | Roles | Structure |
+| \`#policies\` | Domains & Policies | Structure |
+| \`#skills\` | Skills | Structure |
+| \`#goals\` | Goals | Work |
+| \`#projects\` | Projects | Work |
+| \`#tasks\` | Todos | Work |
+| \`#meetings\` | Meetings | Work |
+| \`#metrics\` | Metrics | Work |
+| \`#checklists\` | Checklist | Work |
+| \`#feedback\` | Feedback | Work |
+| \`#feed\` | Feed | Communicate |
+| \`#notes\` | Notes | Communicate |
+
+The Group column is the \`parentTab\` the tab bar shows on screen, so say "Work > Projects"
+to a person. It is NEVER part of the hash: the hash is always the leaf id.
+
+**\`#projects\` already IS the board.** The Projects tab defaults to columns grouped by project
+status (Future / Current / In Review / Waiting / Done) on desktop, and to a flat list on
+mobile. So a person asking for "a board" needs the link and nothing else — do not send them
+hunting for a board icon or a view toggle. (Elsewhere in Nestr a list does start flat and
+Group by is a per-browser setting; the Projects tab is the exception because its tab
+definition sets the column view as its default.)
+
+**Circles and roles both have one, and they are for different things.**
+\`/n/{circleId}#projects\` is the team's board: everything in flight across the circle, the
+shared picture, the one to open in a tactical meeting. \`/n/{roleId}#projects\` is one role's
+board: already filtered to that role's accountabilities, which makes it the place to do
+focused work. Someone who fills three roles has three boards. Neither is the "real" one —
+choose by what was asked for.
+
+### Two Panes, Two Hashes
+
+\`/n/{leftId}/{rightId}\` shows the left nest with the right one open beside it, and the hash
+splits the same way: \`#{leftTab}/{rightTab}\`. Most links only need the left half, because
+the right pane is usually an item rather than a view. \`_\` in the left slot (\`#_/projects\`)
+means "leave the left pane's tab alone and set only the right".
+
+A hash naming a tab the nest does not have is ignored, and the nest opens on its default
+tab — the same thing a hashless link does.
 
 ### Context Links (Detail Pane)
 
@@ -842,9 +1235,60 @@ This works for viewing colleagues too - replace userId to see what roles they fi
 
 For workspace admins, link to settings with \`/n/{workspaceId}?s=1\` plus:
 - \`#users\` - Team members
-- \`#labels\` - Label configuration
+- \`#details\` - Workspace details
+- \`#plan\` - Subscription plan and billing
+- \`#settings\` - User permissions and domains
+- \`#labels\` - Labels, fields and tabs
 - \`#workspace-apps\` - Enabled apps/features
-- \`#plan\` - Subscription plan`,
+- \`#workspace-integrations\` - Integrations
+- \`#provider\` - Provider settings (service-provider workspaces only)
+
+The same \`?s=1#labels\` opens a CIRCLE's own settings when the id is a circle rather
+than the workspace. See \`nestr_help({ topic: "workspace-settings" })\` before answering
+any "where do I find..." question about settings, and \`nestr_help({ topic: "linking" })\`
+for when to link an item and when to link a view.`,
+
+  "workspace-settings": `## Where workspace settings are
+
+**Answer this with a link, never with a menu path.** Do not describe a gear icon, a
+hamburger menu, a sidebar, or anything else on screen: you cannot see the user's screen,
+the app differs across desktop, mobile and window widths, and a wrong walkthrough sends
+someone hunting for a control that is not there. Give the URL.
+
+\`https://app.nestr.io/n/{workspaceId}?s=1#{tab}\`
+
+| Tab | What is on it |
+|---|---|
+| \`users\` | People, invites, removing someone |
+| \`details\` | Workspace name and details |
+| \`plan\` | Plan, trial and billing |
+| \`settings\` | User permissions and email domains |
+| \`labels\` | Labels, fields and tabs |
+| \`workspace-apps\` | Applications (Scrum, OKR, CRM, Agentic work, imports) |
+| \`workspace-integrations\` | Slack, Teams and the rest |
+| \`provider\` | Provider settings, on service-provider workspaces only |
+
+A tab the workspace does not offer bounces to its first tab, so a wrong guess degrades
+to \`#users\` rather than to an error.
+
+### Which workspace id
+
+If the run already told you the workspace, use it. If it did not, do not guess and do not
+say you cannot help: call \`nestr_list_workspaces\` (or \`nestr_get_me\` with
+\`fullWorkspaces: true\`) and give a link per workspace, naming each. People routinely own
+two workspaces with the same name, so lead with the name and let the link carry the id.
+
+### Who can open it
+
+Only a workspace admin. Check before you say it, because \`nestr_get_workspace\` reports
+who the admins are: telling an owner to go and find an administrator is worse than saying
+nothing. Someone who created their own workspace is its admin and its owner.
+
+### Circles have the same screen
+
+A circle has its own settings at \`/n/{workspaceId}/{circleId}?s=1#labels\`, which is where
+a label is customised for that circle and everything under it. See
+\`nestr_help({ topic: "fields" })\`.`,
 
   "inbox": `## Inbox (Quick Capture)
 
@@ -1060,6 +1504,48 @@ When a user asks about trends or patterns (e.g., "Are we getting better at gover
 - **All plans**: Workspace-level insights (aggregated across the whole organization)
 - **Pro plan only**: Circle-level insights (\`nestId\` parameter) and user-level insights (\`userId\` parameter). If the workspace is not on a Pro plan, these filters will return a 402 error.
 - \`userId\` and \`nestId\` cannot be combined — user metrics are always workspace-level.`,
+
+  "api-surface": `## Checking whether the API has something
+
+There is a difference between "I did not find it" and "it is not there", and only the
+second is safe to act on. \`nestr_api_spec\` is how you get the second.
+
+It returns this deployment's own OpenAPI document, reduced to something readable:
+
+- **No arguments**: the operation index. Method, path, and a one-line summary for every
+  operation the deployment serves, plus \`totalOperations\`.
+- **\`search\`**: filter that index by keyword against path and summary. The counts are the
+  answer as much as the rows are. \`matchedOperations: 0\` out of \`totalOperations: 94\` for
+  "duration" means this API has nothing about duration, full stop.
+- **\`path\`**: the full schema for one operation, including every parameter it accepts and
+  what each does. Use this before assuming a parameter exists.
+
+### When to reach for it
+
+- A user asks whether Nestr can do X through the API and you are about to say "I do not
+  think so". Check first, then say it with certainty.
+- You are about to pass a parameter you have not seen documented. \`path\` tells you whether
+  it exists rather than having it silently ignored.
+- Something is missing and you need to say whether it is unsupported or merely not exposed
+  through a tool. Those are different answers with different next steps.
+
+### The neighbouring questions
+
+\`nestr_api_spec\` answers "does the HTTP surface have this". Two others answer nearby
+questions, and mixing them up wastes a call:
+
+- **Does my search filter apply?** \`strict: true\` on \`nestr_search\`. An unrecognised
+  operator or field is otherwise dropped silently and the search returns a broader result.
+  See \`nestr_help('search')\`.
+- **Does this label have this field?** \`nestr_get_label\` returns a label's fields with their
+  codes, types and options. That is the data model rather than the HTTP surface, so a field
+  can exist here and have no dedicated endpoint.
+
+### What it does not tell you
+
+The spec describes routes, not permissions. An operation being listed does not mean this
+caller may call it: read-only keys, key profiles and per-nest rights all still apply. For
+"why can I not do this", use \`nestr_explain_nest\`; for auth failures, \`nestr_diagnose\`.`,
 
   "mcp-apps": `## MCP Apps (Interactive UI)
 
@@ -1325,7 +1811,7 @@ The Scrum app adds four label types (\`userstory\`, \`sprint\`, \`epic\`, \`mile
 
 ### Detect whether Scrum is enabled
 
-Call \`nestr_get_workspace_apps({ workspaceId })\` and look for \`id: 'scrum'\`. If it's absent, the labels won't exist in the workspace and any \`label:userstory\` / \`label:sprint\` / \`label:epic\` / \`label:milestone\` queries will return empty.
+Call \`nestr_get_workspace_apps({ workspaceId })\` and look for \`_id: 'scrum'\` with \`enabled: true\`. The field is \`_id\`, not \`id\`, and the endpoint returns every app rather than only the enabled ones, so a disabled Scrum app comes back as \`enabled: false\` rather than going missing — testing for absence reports it as on. When it is disabled the labels won't exist in the workspace and any \`label:userstory\` / \`label:sprint\` / \`label:epic\` / \`label:milestone\` queries will return empty.
 
 Sprints, epics, and milestones can each be individually disabled at the workspace level even when the app is on — check \`workspace.data['appfield-scrum-sprints-enabled']\` (and the \`-epics-\` / \`-milestones-\` variants). When a sub-feature is set to \`false\`, the corresponding graph-field on user stories is hidden in the UI; the labels still resolve, so search and graph-link tools keep working.
 
@@ -1580,6 +2066,51 @@ The parent Objective's \`goal_complete\` updates from the average of its KRs.
 **Role-filler mode** — If your role owns an Objective or contributes \`resultwork\` to a Key Result, update your contribution as part of your operational rhythm. Reading the parent goal's \`term\` tells you the window you're working in. Capture repeatable measurement patterns as skill nests.
 
 **Workspace mode** — Use for cross-circle reporting and period-level rollups. Pair \`goal.term=this_quarter\` queries with insights tools to build dashboards.`,
+
+  "meetings": `## Meetings (creating and scheduling)
+
+For how a meeting is *run* once it exists — the facilitator flow, check-in, processing agenda items into outcomes, closing, the emailed report and the PDF minutes — read the end-user article: \`nestr_help({ topic: "running-meetings-in-nestr" })\`. This topic covers the part that article does not: where a meeting nest belongs in the tree, and how to create one with tool calls.
+
+### A meeting attaches to a circle that already exists
+
+A meeting nest's parent must be one of:
+
+| Parent label | What it is |
+|---|---|
+| \`anchor-circle\` | The workspace itself |
+| \`circle\` | A sub-circle |
+| \`role\` | A role (role meetings — off by default; a workspace admin enables them under Workspace settings > Applications) |
+
+**The anchor circle is a circle.** Every workspace has one from the moment it is created, it already holds the Circle lead, Facilitator and Secretary roles, and it hosts tactical and governance meetings exactly like any sub-circle does. In a young workspace that has no sub-circles yet, the anchor circle is the right parent — not a missing prerequisite.
+
+This matters because the end-user article opens with "navigate to the circle where you want to hold the meeting", which reads like a blocker when \`nestr_list_circles\` returns only the anchor circle. It is not one. The web app's own **+ Create > Meeting** dialog offers the anchor circle in its circle picker.
+
+### Never create a circle in order to hold a meeting
+
+A circle is a durable domain of work with a purpose, roles and accountabilities: "Marketing", "Customer Support", "Platform". A meeting is an event that a circle holds. "Weekly team sync", "Monday standup" and "Quarterly review" are meeting names, never circle names.
+
+Creating a circle to house a meeting is close to pure cost. It arrives with no purpose, nobody filling its roles, and four core roles (Circle lead, Rep link, Facilitator, Secretary) generated alongside it, and it widens the governance tree permanently in exchange for a calendar entry. It also splits the workspace's work across a boundary the organisation never asked for.
+
+If a meeting genuinely seems to want a circle of its own, that is a claim about the **organisation**, not about the meeting: a distinct domain of work needs a home. That is a governance decision, so ask the user before creating anything, and name the circle after the domain rather than the meeting.
+
+### Creating one
+
+\`nestr_create_nest\`:
+
+- \`parentId\` — the circle (or role) that holds it, per the table above
+- \`labels\` — \`["meeting", "circle-meeting"]\` for a tactical meeting, \`["meeting", "governance"]\` for a governance meeting
+- \`title\` — what the meeting is, e.g. "Weekly team sync"
+- \`due\` — the meeting start time as an ISO datetime. A future \`due\` schedules it (the web app shows a countdown and a "Start meeting now" link); omit it to mean now.
+- \`users\` — everyone who should attend: the people and agents energizing roles in the circle, plus circle-lead and rep-link fillers from its sub-circles.
+
+Agenda items are tensions. Link them with \`nestr_add_graph_link\` (relation \`meeting\`, from the tension to the meeting; remove it the same way round); an agenda item with no originating role can be a plain child nest of the meeting instead.
+
+### Before you create one
+
+1. Call \`nestr_list_circles({ workspaceId })\`. A workspace always has at least the anchor circle, so an answer of "there are no circles" is always wrong.
+2. If more than one circle exists and the user has not said which, **ask**. Putting a meeting in the wrong circle puts it in front of the wrong people.
+3. Check the app is on with \`nestr_get_workspace_apps({ workspaceId })\` and look for \`_id: "meetings"\` (titled "Circle Meetings") with \`enabled: true\`. Note the field is \`_id\`, not \`id\`, and the app id is the short \`meetings\` — not the \`circleplus-meetings\` data key the workspace stores internally. Whether tactical and governance meetings are individually enabled is NOT exposed by this endpoint; if you need that distinction, ask the admin. If meetings are off, say so and point the admin at Workspace settings > Applications rather than creating a nest nobody can open.
+4. Report back with a link to the meeting. See \`nestr_help({ topic: "web-app-links" })\` — meetings live on the \`#meetings\` tab of their circle.`,
 
   "doing-work": DOING_WORK_INSTRUCTIONS,
 

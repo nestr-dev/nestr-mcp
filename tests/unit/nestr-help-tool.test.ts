@@ -117,6 +117,22 @@ describe("nestr_help tool", () => {
     expect(textOf(result)).toMatch(/No help articles matched/);
   });
 
+  // The corpus and the index are English. A query in another language returns
+  // nothing and looks exactly like "Nestr does not do this" — which is how a
+  // prospect came to be quoted an invented price list. Rather than translating
+  // keywords per article for every language, the empty result teaches the retry,
+  // which covers every article at once.
+  it("tells the caller to retry in English, and not to fill the gap from memory", async () => {
+    const sitemap = `<urlset><url><loc>https://nestr.io/help/articles/x</loc></url></urlset>`;
+    mockFetch.mockResolvedValueOnce(htmlResponse(sitemap));
+
+    const text = textOf(await handleToolCall(client, "nestr_help", { search: "quels sont les couts" }));
+    expect(text).toMatch(/corpus and the index are English/i);
+    expect(text).toMatch(/translate the query and search again/i);
+    expect(text).toMatch(/never fill the gap from memory/i);
+    expect(text).toMatch(/prices, limits and plan names/i);
+  });
+
   it("falls back to article fetch when topic is not an internal key", async () => {
     const articleHtml = `<html><head>
 <title>Scrum/Agile app | Nestr Help</title>

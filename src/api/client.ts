@@ -44,6 +44,33 @@ function logBearerFingerprintOn401(
 /** Which auth flow the request is in. Used by the error envelope so an LLM client knows whose responsibility refresh is. */
 export type AuthFlow = "A" | "B" | "unknown";
 
+/**
+ * How much of a hint to ask for. `summary` keeps what varies per nest (type,
+ * severity, count, url, and the sibling `query`) and drops what does not: the
+ * teaching prose, which is identical for every nest of that type, and the
+ * endpoints list. A page of fifty nests at `full` carries fifty copies of the
+ * same paragraph; `nestr_help` carries it once.
+ */
+export type HintLevel = "full" | "summary";
+
+export type HintSeverity = "info" | "suggestion" | "warning" | "alert";
+
+/** Options every read route understands. */
+export interface NestrReadOptions {
+  sort?: string;
+  limit?: number;
+  page?: number;
+  cleanText?: boolean;
+  /** A level, or the historical boolean. A listing reads a bare `true` as `summary`. */
+  hints?: HintLevel | boolean;
+  /** Keep only these hint types, e.g. ['project_waiting_no_reason']. */
+  hintTypes?: string[];
+  /** Drop hints below this severity. */
+  minSeverity?: HintSeverity;
+  /** Resolve every user id in the results to a full user in one extra lookup. */
+  linkedUsers?: boolean;
+}
+
 export interface NestrClientConfig {
   apiKey: string;
   baseUrl?: string;
@@ -72,6 +99,14 @@ export interface NestrClientConfig {
   onRefreshAttempt?: (result: { at: number; success: boolean; error?: string }) => void;
 }
 
+/** Shape of GET /tokens/self: what the calling key is scoped to and may do. */
+export interface TokenSelf {
+  scope: string[];
+  readOnly: boolean;
+  workspaceIds: string[];
+  userIds: string[];
+}
+
 export interface Nest {
   _id: string;
   title: string;
@@ -98,6 +133,46 @@ export interface Nest {
   updatedAt?: string;
 }
 
+/**
+ * What GET .../posts actually returns. The envelope is kept rather than unwrapped to
+ * `data`, because the route carries an unread_posts hint beside it (when the caller is
+ * user-scoped) and `meta` for paging, and both are the point.
+ */
+/**
+ * A list route's body: the rows, or the `{ status, meta, data }` envelope the
+ * Nestr API wraps them in. `NestrClient.fetch` does not unwrap, so a caller that
+ * wants the rows has to say so.
+ */
+export interface ListEnvelope<T> {
+  status?: string;
+  meta?: Record<string, unknown>;
+  data: T[];
+}
+
+export type MaybeListEnvelope<T> = T[] | ListEnvelope<T>;
+
+/**
+ * The rows out of either shape, and `[]` for anything else.
+ *
+ * Hand-rolled at three call sites before this existed, and missing at a fourth,
+ * which is the bug it is named for. Tolerant on purpose: a null body, a missing
+ * `data` and a `data` that is not an array all answer `[]` rather than throwing,
+ * because every caller is asking "which workspaces can this token see" and an
+ * unreadable answer to that is none of them, not a crash.
+ */
+export function unwrapList<T>(body: MaybeListEnvelope<T> | null | undefined): T[] {
+  if (Array.isArray(body)) return body;
+  const rows = (body as ListEnvelope<T> | null | undefined)?.data;
+  return Array.isArray(rows) ? rows : [];
+}
+
+export interface PostsEnvelope {
+  status?: string;
+  data?: Post[];
+  hints?: unknown[];
+  meta?: Record<string, unknown>;
+}
+
 export interface Post {
   _id: string;
   body: string;
@@ -113,10 +188,22 @@ export interface User {
   username: string;
   /** True when the authenticated user is a bot (agent acting as role filler) */
   bot?: boolean;
+  /**
+   * True when this agent may never fill a role, so it can only ever assist a
+   * person. The one to hand work to that needs a person's OWN credentials.
+   * Only present on agents, and only when a workspace was in context.
+   */
+  assistant?: boolean;
   profile?: {
     email?: string;
     fullName?: string;
     avatar?: string;
+    /** Set on agents: the workspace the agent was created in. */
+    agentWorkspaceId?: string;
+    /** Set on agents: what the agent is for. */
+    agentDescription?: string;
+    /** Set on agents: 'active' or otherwise. */
+    agentStatus?: string;
   };
 }
 
@@ -127,6 +214,107 @@ export interface Label {
   userId?: string;
 }
 
+/**
+ * One occurrence of a recurring series, materialized or not.
+ *
+ * Occurrences beyond the next are VIRTUAL: the rule produces the instant and no
+ * nest exists for it, so nothing finds them by search. `virtual` says which kind
+ * this is; a virtual occurrence has no `nestId` and cannot be fetched from the
+ * nest endpoints until something promotes it.
+ */
+export interface Occurrence {
+  /** Epoch milliseconds. The key this occurrence is addressed by. */
+  instant: number;
+  /** The same instant as an ISO-8601 date. */
+  occurrenceStart: string;
+  /** The date the occurrence prints, which differs when it has been moved off its rule instant. */
+  start: string;
+  allDay: boolean;
+  title: string;
+  completed: boolean;
+  virtual: boolean;
+  /** The real nest, when this occurrence has been materialized. */
+  nestId: string | null;
+  /** The id a virtual occurrence will take when it is promoted. Not a nest: nothing answers for it yet. */
+  virtualId: string | null;
+  /** An exdate covers this instant: the series skips it. */
+  excluded: boolean;
+  /** Materialized and since changed from what its series says. */
+  altered: boolean;
+}
+
+/** One cursor-paged page of a series' occurrences. */
+export interface OccurrencePage {
+  seriesId: string | null;
+  series: Record<string, unknown> | null;
+  allDay: boolean;
+  occurrences: Occurrence[];
+  hasMore: boolean;
+  /** ISO-8601. Feed back as `cursor` while `hasMore` is true. */
+  nextCursor: string | null;
+  /** The same cursor in epoch milliseconds. */
+  nextCursorMs: number | null;
+}
+
+/** Which occurrences a skip reaches: the one at the instant, or it and every later one. */
+export type OccurrenceScope = "occurrence" | "following";
+
+/**
+ * `DELETE nests/:id/recurrence/:instant` with scope `occurrence`.
+ *
+ * Skipping the first occurrence deletes the series nest itself and hands the series
+ * on: then `restoreId` is the deleted nest, and `seriesId` is the new series nest,
+ * omitted when nothing carries on and the series has ended.
+ */
+export interface SkippedOccurrence {
+  excluded: true;
+  seriesId?: string;
+  instant: number;
+  restoreId?: string;
+}
+
+/** `DELETE nests/:id/recurrence/:instant` with scope `following`. */
+export interface DeletedFollowingOccurrences {
+  deleted: true;
+  seriesId: string;
+  instant: number;
+  /** The nest to restore. Restores that nest only; occurrences deleted with it are restored separately. */
+  restoreId: string;
+}
+
+/** `DELETE nests/:id/recurrence`. */
+export interface DeletedSeries {
+  deleted: true;
+  seriesId: string;
+  /** The series nest. Restores that nest only; occurrences deleted with it are restored separately. */
+  restoreId: string;
+}
+
+/** The editable fields `PATCH nests/:id` takes. */
+export type NestUpdates = Partial<{
+  title: string;
+  purpose: string;
+  description: string;
+  parentId: string;
+  labels: string[];
+  fields: Record<string, unknown>;
+  users: string[];
+  data: Record<string, unknown>;
+  /** ISO 8601 or yyyy-mm-dd; null clears. */
+  due: string | null;
+  /** ISO 8601 or yyyy-mm-dd; null clears. */
+  start: string | null;
+  allDay: boolean | null;
+  completed: boolean;
+}>;
+
+/** What `DELETE nests/:id` answers. Hints appear when a recurring series carries on. */
+export interface DeleteNestResponse {
+  status?: string;
+  data?: { message?: string; nestId?: string; restoreId?: string };
+  hints?: Array<Record<string, unknown>>;
+}
+
 /** Metadata for a nest's file attachment (no contents). */
 export interface NestFileMeta {
   id: string;
@@ -135,6 +323,26 @@ export interface NestFileMeta {
   size: number;
   createdBy?: string;
   createdAt?: string;
+  /** The group the uploading field wrote, e.g. "nestradamus_files". */
+  context?: string;
+  /** What the document holds and when to read it. Absent until someone says. */
+  description?: string;
+  /** "auto" (drafted on upload) or "admin" (someone wrote it). */
+  descriptionSource?: string;
+  /** Present only on a search: the passages that matched, best first. */
+  matches?: Array<{ excerpt: string; offset: number; score?: number }>;
+}
+
+/** A context document's extracted text, whole or as a resumable slice. */
+export interface NestFileText {
+  id: string;
+  name: string;
+  contentType: string;
+  text: string;
+  offset: number;
+  total: number;
+  /** null when the slice reaches the end. */
+  nextOffset: number | null;
 }
 
 /** A nest's file attachment with its base64-encoded contents. */
@@ -224,16 +432,19 @@ export interface Connector {
 
 /** The owner a connector binds to. */
 export interface ConnectionOwner {
-  type: "user" | "agent" | "workspace" | "role-domain";
-  /** user/agent: user id. workspace: workspace id. role-domain: domain nest id. */
+  type: "user" | "agent" | "workspace" | "role-domain" | "role";
+  /**
+   * user/agent: user id. workspace: workspace id. role-domain: domain nest id.
+   * role: role nest id — the connector's domain is found or created under it.
+   */
   id: string;
 }
 
 /**
  * A connection: a connector bound to an owner. Holds no secret; the secret
  * lives on an authorization captured out-of-band via the Connect button.
- * For a role-domain owner, `credentialsField` describes the credentials field
- * materialised on the domain nest so the role can use the connector.
+ * Binding with owner type 'role' returns the domain that now holds the access,
+ * and whether it had to be created.
  */
 export interface Connection {
   _id: string;
@@ -242,36 +453,143 @@ export interface Connection {
   owner: ConnectionOwner;
   metadata?: Record<string, unknown>;
   status?: "active" | "disabled";
-  /** Present only for a role-domain binding. */
-  credentialsField?: {
-    domainId: string;
-    fieldId?: string;
-    fieldCode?: string;
-    /** Set when the connection bound but the field could not be materialised. */
-    error?: string;
-  };
+  /** Present when binding with owner type 'role'. */
+  domainId?: string;
+  /** Whether that domain had to be created for this connector. */
+  domainCreated?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
 
 /**
- * One entry in the authenticated user's cross-workspace activity feed
- * (GET /users/me/activity). Newest first.
+ * A scheduled run waiting for someone in a role connector's audience to approve the role's
+ * latest instructions (GET /workspaces/:id/connections/list, per row). Nestr holds the
+ * connector back on runs nobody started until then; manual runs still get it.
+ */
+export interface PendingInstructionApproval {
+  /** The nest the ask was posted on: the role, or a task the role's agent ran on. */
+  nestId: string;
+  nestTitle?: string;
+  connectionId?: string;
+  connectorName?: string;
+  askedAt: string | null;
+  agentUserId?: string | null;
+  roleNestId?: string | null;
+  skillIds?: string[];
+  commentId?: string | null;
+  /** App path of the ask comment, `/n/{nestId}?comment={commentId}`: a page for a person. */
+  commentPath?: string | null;
+  commentUrl?: string | null;
+  approvers?: string[];
+  /** Whether the CALLER is someone the connector is shared with, and so may approve. */
+  canApprove?: boolean;
+}
+
+/** A binding as the workspace listing reports it, with who holds a credential. */
+export interface ConnectionListing {
+  connectionId: string;
+  connectorId: string | null;
+  connectorName: string;
+  owner: ConnectionOwner;
+  /** "Role (Circle) / Domain" for a role binding, the person or agent otherwise. */
+  ownerLabel: string | null;
+  ownerRoleId?: string | null;
+  ownerRoleTitle?: string | null;
+  ownerCircleTitle?: string | null;
+  ownerDomainTitle?: string | null;
+  status?: "active" | "disabled";
+  connectedCount: number;
+  authorizations: Array<{
+    _id: string;
+    principal: { type: "user" | "agent"; id: string };
+    principalName: string | null;
+    scope: "personal" | "shared";
+    status: string;
+    connected: boolean;
+    /** Set when an agent holds a credential a person consented to. */
+    delegated: boolean;
+    authorizedBy: string | null;
+    authorizedByName: string | null;
+  }>;
+  /** Scheduled runs this connector is held back on, pending instruction approval. */
+  pendingInstructionApprovals?: PendingInstructionApproval[];
+}
+
+/**
+ * An autonomous agent's cadence on a nest: "continuous", or an RRULE such as
+ * "FREQ=WEEKLY;BYDAY=MO". "hourly", "daily" and "weekly" are accepted as shorthand
+ * when setting; the server always answers with the rule.
+ */
+export type AgentRecheck = string;
+
+/** One agent's operating mode on one nest (GET /nests/:id/agents/:userId/mode). */
+export interface AgentMode {
+  agentUserId: string;
+  nestId: string;
+  mode: "reactive" | "autonomous";
+  recheck: AgentRecheck | null;
+  /** The schedule's anchor: when it starts and what time of day it runs at. */
+  start?: string | null;
+  /** IANA zone the schedule keeps its local time in. */
+  tzid?: string | null;
+  /** The next time the schedule fires. null for continuous, reactive, or an ended schedule. */
+  nextRunAt?: string | null;
+  /** own: set on this nest. inherited: from an ancestor role or circle. default: nothing set. */
+  source: "own" | "inherited" | "default";
+}
+
+/** What an agent can and cannot use, and why. */
+export interface AgentConnectorReach {
+  connectionId: string;
+  connectorId: string | null;
+  connectorName: string;
+  /** Where the grant comes from: its own binding, the workspace, or a role. */
+  source: "own" | "workspace" | "role-domain" | null;
+  available: boolean;
+  /** Why it is unavailable: no-credential, catalog-disabled, no-capabilities, ... */
+  reason: string | null;
+  roleNestId: string | null;
+  roleTitle: string | null;
+  domainId: string | null;
+  domainTitle: string | null;
+  scope: "personal" | "shared" | null;
+  delegatedBy: string | null;
+  delegatedByName: string | null;
+  /** The person who consented can no longer authorise it here. */
+  delegatorLapsed: boolean;
+  canConnect: boolean;
+}
+
+/**
+ * One entry of an activity feed: a nest's (GET /nests/:id/activity) or a
+ * user's (GET /users/me/activity, GET /users/:userId/activity). Newest first.
  *
  * Two shapes share this type, discriminated by `type`:
  * - Agent internal considerations: `type: "consideration"` with `summary`,
  *   `tools`, `outcome`, `considerationCount`, `dm`, and `redacted` when the
  *   substance was withheld (DM privacy — see getMyActivity's withUser option).
- * - Everything else: `type: <verb>` with a human-readable `description`.
+ * - Everything else: `type: <verb>` with a human-readable `description` and
+ *   the same change as data in `changes`.
  */
 export interface ActivityItem {
+  id?: string;
   date: string;
+  /** Who did it. "SYSTEM" when the server itself wrote it. */
+  userId?: string;
+  /** The agent that wrote it on the user's behalf, when an assistant did. */
+  agentUserId?: string;
   workspaceId: string;
   nestId: string;
   nestTitle: string;
   type: string;
   /** Human-readable line for non-consideration activity. */
   description?: string;
+  /**
+   * The entry as data: one row per changed field, named as GET /nests/:id names
+   * it (title, users, parentId, data.<key>, fields.<label>.<code>). Empty for
+   * uploads, label edits and considerations.
+   */
+  changes?: TensionChange[];
   /** consideration: short summary of what the agent considered/did. */
   summary?: string;
   /** consideration: tool names invoked during the run. */
@@ -288,13 +606,23 @@ export interface ActivityItem {
 }
 
 export interface Tension extends Nest {
-  status?: "draft" | "proposed" | "accepted" | "objected";
+  status?: "draft" | "proposed" | "accepted" | "escalated";
 }
 
 export interface TensionPart {
   _id: string;
   title?: string;
   items?: Array<Record<string, unknown>>;
+}
+
+/** The page GET /nests/:id/activity answers with. */
+export interface NestActivityEnvelope {
+  status: string;
+  meta: { depth: number | "all"; limit: number; count: number; has_more: boolean };
+  /** `next` is the request URL with the next page's `before` cursor set. */
+  links?: { next?: string };
+  linked?: { users?: User[] };
+  data: ActivityItem[];
 }
 
 export interface TensionChange {
@@ -305,10 +633,10 @@ export interface TensionChange {
 }
 
 export interface TensionStatus {
-  status: "draft" | "proposed" | "accepted" | "objected";
+  status: "draft" | "proposed" | "accepted" | "escalated";
   responses?: Array<{
     userId: string;
-    response: "none" | "accepted" | "objected";
+    response: "none" | "accepted" | "escalated";
     votedAt?: string;
   }>;
   autoapprove?: string;
@@ -390,7 +718,9 @@ export class NestrApiError extends Error {
     if (status === 401) return "AUTH_TOKEN_REJECTED_BY_NESTR";
     if (status === 404) return "NOT_FOUND";
     if (status === 429) return "RATE_LIMITED";
-    if (status === 400) return "VALIDATION";
+    // The Nestr API answers input errors with 422 (constructIncorrectInput), not
+    // 400, so both have to map here or a rejected RRULE surfaces as UNKNOWN.
+    if (status === 400 || status === 422) return "VALIDATION";
     if (status >= 500) return "SERVER_ERROR";
 
     if (status === 403) {
@@ -618,13 +948,41 @@ export class NestrClient {
 
   // ============ WORKSPACES ============
 
+  /**
+   * Describe the calling key. Available to every bearer, including a workspace
+   * key with no user scope, which /users/me refuses.
+   *
+   * The route answers `{ status, data }` and `fetch` hands back the raw body,
+   * so unwrap here. Tolerates a bare payload too, the way the listWorkspaces
+   * callers do.
+   */
+  async getTokenSelf(): Promise<TokenSelf> {
+    const body = await this.fetch<TokenSelf | { data: TokenSelf }>("/tokens/self");
+    const unwrapped = (body as { data?: TokenSelf })?.data;
+    return (unwrapped ?? body) as TokenSelf;
+  }
+
+  /**
+   * Lists the workspaces a bearer reaches.
+   *
+   * Returns the RAW body, which is why the type is a union rather than `Nest[]`.
+   * `fetch` hands back what the route answered and does not unwrap, and callers
+   * genuinely want both shapes: nestr_list_workspaces and the nestr://workspaces
+   * resource render the envelope because `meta` carries the paging, while the
+   * identity resolvers and nestr_workspace_docs want the rows. Declaring `Nest[]`
+   * here told every caller it was safe to index into the result, and one of them
+   * believed it: `.length` on the envelope is undefined, so a single-workspace
+   * token missed its own fast path and fell through to `.map` on an object.
+   *
+   * Pass the result through `unwrapList` when you want the rows.
+   */
   async listWorkspaces(options?: {
     search?: string;
     sort?: string;
     limit?: number;
     page?: number;
     cleanText?: boolean;
-  }): Promise<Nest[]> {
+  }): Promise<MaybeListEnvelope<Nest>> {
     const params = new URLSearchParams();
     if (options?.search) params.set("search", options.search);
     if (options?.sort) params.set("sort", options.sort);
@@ -633,7 +991,7 @@ export class NestrClient {
     if (options?.cleanText) params.set("cleanText", "true");
 
     const query = params.toString();
-    return this.fetch<Nest[]>(`/workspaces${query ? `?${query}` : ""}`);
+    return this.fetch<MaybeListEnvelope<Nest>>(`/workspaces${query ? `?${query}` : ""}`);
   }
 
   async getWorkspace(workspaceId: string, cleanText = false): Promise<Nest> {
@@ -672,26 +1030,20 @@ export class NestrClient {
   async searchWorkspace(
     workspaceId: string,
     search: string,
-    options?: { sort?: string; limit?: number; page?: number; cleanText?: boolean }
+    options?: NestrReadOptions
   ): Promise<Nest[]> {
     const params = new URLSearchParams({ search });
-    if (options?.sort) params.set("sort", options.sort);
-    if (options?.limit) params.set("limit", options.limit.toString());
-    if (options?.page) params.set("page", options.page.toString());
-    if (options?.cleanText) params.set("cleanText", "true");
+    NestrClient.appendReadParams(params, options);
 
     return this.fetch<Nest[]>(`/workspaces/${workspaceId}/search?${params}`);
   }
 
   async getWorkspaceProjects(
     workspaceId: string,
-    options?: { sort?: string; limit?: number; page?: number; cleanText?: boolean }
+    options?: NestrReadOptions
   ): Promise<Nest[]> {
     const params = new URLSearchParams();
-    if (options?.sort) params.set("sort", options.sort);
-    if (options?.limit) params.set("limit", options.limit.toString());
-    if (options?.page) params.set("page", options.page.toString());
-    if (options?.cleanText) params.set("cleanText", "true");
+    NestrClient.appendReadParams(params, options);
 
     const query = params.toString();
     return this.fetch<Nest[]>(
@@ -706,7 +1058,9 @@ export class NestrClient {
     options?: {
       cleanText?: boolean;
       fieldsMetaData?: boolean;
-      hints?: boolean;
+      hints?: HintLevel | boolean;
+      hintTypes?: string[];
+      minSeverity?: HintSeverity;
       provenance?: boolean;
       rights?: boolean;
       forUser?: string;
@@ -716,7 +1070,16 @@ export class NestrClient {
     const params = new URLSearchParams();
     if (options?.cleanText) params.set("cleanText", "true");
     if (options?.fieldsMetaData) params.set("fieldsMetaData", "true");
-    if (options?.hints) params.set("hints", "true");
+    // Same condition as appendReadParams, deliberately. Today the API reads an absent
+    // `hints` and `hints=false` identically (parseHintLevel returns null for both), so a
+    // falsy guard here is not a live bug — but it made the two code paths send different
+    // things for the same argument, which is the kind of divergence that becomes a bug the
+    // day the server-side default changes.
+    if (options?.hints !== undefined && options.hints !== null) {
+      params.set("hints", typeof options.hints === "boolean" ? String(options.hints) : options.hints);
+    }
+    if (options?.hintTypes?.length) params.set("hintTypes", options.hintTypes.join(","));
+    if (options?.minSeverity) params.set("minSeverity", options.minSeverity);
     // Nest-diagnosis flags (single-nest reads): field/property provenance, the
     // composed-rights block (optionally for another user), and the whoCan query.
     if (options?.provenance) params.set("provenance", "true");
@@ -731,19 +1094,76 @@ export class NestrClient {
     );
   }
 
-  async getNestChildren(
-    nestId: string,
-    options?: { sort?: string; limit?: number; page?: number; cleanText?: boolean; hints?: boolean }
-  ): Promise<Nest[]> {
-    const params = new URLSearchParams();
+  /**
+   * Options every read route understands. `hints` is a level rather than a flag:
+   * 'summary' keeps the per-nest signal and drops the fixed teaching prose and the
+   * endpoints list, which is what makes a listing affordable. The API accepts the
+   * historical booleans too, and reads a bare `true` on a listing as 'summary'.
+   */
+  private static appendReadParams(
+    params: URLSearchParams,
+    options?: NestrReadOptions,
+  ): URLSearchParams {
     if (options?.sort) params.set("sort", options.sort);
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.page) params.set("page", options.page.toString());
     if (options?.cleanText) params.set("cleanText", "true");
-    if (options?.hints) params.set("hints", "true");
+    if (options?.hints !== undefined && options.hints !== null) {
+      params.set("hints", typeof options.hints === "boolean" ? String(options.hints) : options.hints);
+    }
+    if (options?.hintTypes?.length) params.set("hintTypes", options.hintTypes.join(","));
+    if (options?.minSeverity) params.set("minSeverity", options.minSeverity);
+    // One request instead of one per id. Without it the caller gets bare user ids and
+    // has to resolve each one separately, which is what our tool descriptions used to
+    // tell an agent to do.
+    if (options?.linkedUsers) params.set("linkedUsers", "true");
+    return params;
+  }
+
+  /**
+   * Children of a nest, optionally filtered by a search scoped to that nest.
+   *
+   * `search` has always worked on this route and was documented nowhere, so callers
+   * fetched every child and filtered client-side. The route adds `depth:1` when the
+   * query sets no depth, and says so in `appliedDefaults` on the response.
+   */
+  async getNestChildren(
+    nestId: string,
+    options?: NestrReadOptions & { search?: string }
+  ): Promise<Nest[]> {
+    const params = new URLSearchParams();
+    if (options?.search) params.set("search", options.search);
+    NestrClient.appendReadParams(params, options);
 
     const query = params.toString();
     return this.fetch<Nest[]>(`/nests/${nestId}/children${query ? `?${query}` : ""}`);
+  }
+
+  /**
+   * Hint counts across everything under a nest, without the per-nest payload.
+   * Reading this by fetching every descendant with hints costs several queries per
+   * nest; this is one indexed query per hint type.
+   */
+  async getHintsRollup(
+    nestId: string,
+    options?: { hintTypes?: string[]; minSeverity?: string; sampleSize?: number }
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (options?.hintTypes?.length) params.set("hintTypes", options.hintTypes.join(","));
+    if (options?.minSeverity) params.set("minSeverity", options.minSeverity);
+    // Deliberately not `|| ` — 0 is a meaningful value here and means counts only.
+    if (options?.sampleSize !== undefined) params.set("sampleSize", String(options.sampleSize));
+
+    const query = params.toString();
+    return this.fetch<unknown>(`/nests/${nestId}/hints${query ? `?${query}` : ""}`);
+  }
+
+  /**
+   * The deployment's own OpenAPI document. Lets a caller check whether the API has
+   * something at all rather than concluding "I did not find it" and guessing.
+   */
+  async getApiSpec(): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>("/openapi.json");
   }
 
   async createNest(data: {
@@ -754,6 +1174,11 @@ export class NestrClient {
     labels?: string[];
     fields?: Record<string, unknown>;
     users?: string[];
+    /** ISO 8601. The field the dated-work sweep reads; a title date is not it. */
+    due?: string;
+    /** ISO 8601 or yyyy-mm-dd. With due it makes a span; yyyy-mm-dd dates are all-day. */
+    start?: string;
+    allDay?: boolean;
   }): Promise<Nest> {
     return this.fetch<Nest>("/nests", {
       method: "POST",
@@ -821,18 +1246,7 @@ export class NestrClient {
 
   async updateNest(
     nestId: string,
-    updates: Partial<{
-      title: string;
-      purpose: string;
-      description: string;
-      parentId: string;
-      labels: string[];
-      fields: Record<string, unknown>;
-      users: string[];
-      data: Record<string, unknown>;
-      due: string;
-      completed: boolean;
-    }>
+    updates: NestUpdates
   ): Promise<Nest> {
     return this.fetch<Nest>(`/nests/${nestId}`, {
       method: "PATCH",
@@ -857,7 +1271,7 @@ export class NestrClient {
       users?: string[];
       fields?: Record<string, unknown>;
       data?: Record<string, unknown>;
-      due?: string;
+      due?: string | null;
       accountabilities?: string[];
       domains?: string[];
     }
@@ -888,7 +1302,7 @@ export class NestrClient {
       users?: string[];
       fields?: Record<string, unknown>;
       data?: Record<string, unknown>;
-      due?: string;
+      due?: string | null;
       accountabilities?: string[];
       domains?: string[];
     }
@@ -902,20 +1316,27 @@ export class NestrClient {
     );
   }
 
-  async deleteNest(nestId: string): Promise<void> {
-    await this.fetch<void>(`/nests/${nestId}`, {
+  /**
+   * Deletes exactly that nest. On a recurring item the body carries `restoreId` and,
+   * while the series carries on, a `recurring_series` hint naming the series routes.
+   */
+  async deleteNest(nestId: string): Promise<DeleteNestResponse> {
+    return this.fetch<DeleteNestResponse>(`/nests/${nestId}`, {
       method: "DELETE",
     });
   }
 
+  /**
+   * Search within one nest's subtree. This is where a hint's `query.url` points, so a
+   * caller following a sibling query lands here.
+   */
   async searchNest(
     nestId: string,
     search: string,
-    options?: { limit?: number; cleanText?: boolean }
+    options?: NestrReadOptions
   ): Promise<Nest[]> {
     const params = new URLSearchParams({ search });
-    if (options?.limit) params.set("limit", options.limit.toString());
-    if (options?.cleanText) params.set("cleanText", "true");
+    NestrClient.appendReadParams(params, options);
 
     return this.fetch<Nest[]>(`/nests/${nestId}/search?${params}`);
   }
@@ -927,9 +1348,46 @@ export class NestrClient {
    * by nestId). Wraps GET /nests/:id/files, which returns { status, data: [...] };
    * this unwraps to the metadata array.
    */
-  async getNestFiles(nestId: string): Promise<NestFileMeta[]> {
+  async getNestFiles(
+    nestId: string,
+    options?: { context?: string; search?: string }
+  ): Promise<NestFileMeta[]> {
+    const params = new URLSearchParams();
+    // The group id the uploading field set. Without it the listing is every
+    // attachment on the nest, which for a workspace root is not what a caller
+    // asking about context documents wants.
+    if (options?.context) params.set("context", options.context);
+    // Filters to the documents whose extracted text matches, each gaining a
+    // `matches` array. Scored server-side: the largest context document in
+    // production is over half a million characters.
+    if (options?.search) params.set("search", options.search);
+    const query = params.toString();
     const response = await this.fetch<{ status: string; data: NestFileMeta[] }>(
-      `/nests/${nestId}/files`
+      `/nests/${nestId}/files${query ? `?${query}` : ""}`
+    );
+    return response.data;
+  }
+
+  /**
+   * Read a context document's extracted text rather than its bytes. Whole when
+   * it fits, otherwise a slice carrying `nextOffset` to continue from.
+   *
+   * Only resolves for files whose text was extracted on upload, so this is a
+   * representation that can be unavailable rather than a conversion that always
+   * works; anything else errors.
+   */
+  async getNestFileText(
+    nestId: string,
+    fileId: string,
+    offset?: number
+  ): Promise<NestFileText> {
+    const params = new URLSearchParams({ as: "text" });
+    // != null, not truthiness: offset 0 is a real value. It happens to match
+    // the server default today, so this is a footgun rather than a bug, but the
+    // day "absent" and "0" mean different things it would be a silent one.
+    if (offset != null) params.set("offset", String(offset));
+    const response = await this.fetch<{ status: string; data: NestFileText }>(
+      `/nests/${nestId}/files/${fileId}?${params.toString()}`
     );
     return response.data;
   }
@@ -976,15 +1434,22 @@ export class NestrClient {
 
   // ============ POSTS/COMMENTS ============
 
+
+  /**
+   * Wraps GET /nests/:id/posts. Deliberately NOT unwrapped to `data`: the route
+   * carries an unread_posts hint alongside it when the caller is user-scoped, and
+   * `meta` for paging. Unwrapping would throw both away.
+   */
   async getNestPosts(
     nestId: string,
-    options?: { depth?: number | "all" }
-  ): Promise<Post[]> {
+    options?: { depth?: number | "all"; unread?: boolean }
+  ): Promise<PostsEnvelope> {
     const params = new URLSearchParams();
     if (options?.depth !== undefined) params.set("depth", options.depth.toString());
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
 
     const query = params.toString();
-    return this.fetch<Post[]>(`/nests/${nestId}/posts${query ? `?${query}` : ""}`);
+    return this.fetch<PostsEnvelope>(`/nests/${nestId}/posts${query ? `?${query}` : ""}`);
   }
 
   async createPost(
@@ -1000,6 +1465,138 @@ export class NestrClient {
         ...(options?.labels !== undefined ? { labels: options.labels } : {}),
       }),
     });
+  }
+
+  // ============ DIRECT MESSAGES ============
+  //
+  // A thread is the unit and its id is the whole address. The space that holds a pair's
+  // threads is a storage detail the API does not expose, so nothing here carries one.
+  // Posts and read markers are the ordinary Nestr ones: the DM routes delegate to the
+  // shared posts handler server-side, so grants, depth and nesting behave the same here.
+
+  async listDMs(
+    options?: {
+      withUser?: string;
+      unread?: boolean;
+      includeCompleted?: boolean;
+      limit?: number;
+      page?: number;
+    }
+  ): Promise<Record<string, unknown>[]> {
+    const params = new URLSearchParams();
+    if (options?.withUser) params.set("user", options.withUser);
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    if (options?.includeCompleted) params.set("includeCompleted", "true");
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+    if (options?.page !== undefined) params.set("page", String(options.page));
+    const query = params.toString();
+    return this.fetch<Record<string, unknown>[]>(`/users/me/dm${query ? `?${query}` : ""}`);
+  }
+
+  async createDMThread(user: string, title?: string): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>("/users/me/dm", {
+      method: "POST",
+      body: JSON.stringify({ user, ...(title !== undefined ? { title } : {}) }),
+    });
+  }
+
+  // ============ SUPPORT QUEUES ============
+  //
+  // A queue is a label on threads across many DM spaces, not a space itself, so these are
+  // a sibling of the DM routes. They hand back thread ids, which is the whole address on
+  // the DM routes: read one with getDMThread or getDMPosts.
+
+  async listQueues(): Promise<Record<string, unknown>[]> {
+    return this.fetch<Record<string, unknown>[]>("/users/me/queues");
+  }
+
+  async listQueueThreads(
+    key: string,
+    options?: { unread?: boolean }
+  ): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    const query = params.toString();
+    return this.fetch<Record<string, unknown>>(
+      `/users/me/queues/${encodeURIComponent(key)}/threads${query ? `?${query}` : ""}`
+    );
+  }
+
+  async getDMThread(
+    threadId: string,
+    options?: { unread?: boolean }
+  ): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    const query = params.toString();
+    return this.fetch<Record<string, unknown>>(
+      `/users/me/dm/${threadId}${query ? `?${query}` : ""}`
+    );
+  }
+
+  // The body is a partial nest, the same shape PATCH /nests/{id} takes: the keys you send
+  // are the ones that change, and `users` is the participant list you want rather than a
+  // pair of add/remove lists. A DM thread is a nest, so it needs no second vocabulary.
+  async updateDMThread(
+    threadId: string,
+    body: {
+      title?: string;
+      // null reopens a closed conversation, true closes one. Absent leaves it alone,
+      // which is why the caller passes the key through rather than a boolean.
+      completed?: boolean | null;
+      users?: string[];
+    }
+  ): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>(`/users/me/dm/${threadId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** Same envelope as getNestPosts: the DM route delegates to the same handler. */
+  async getDMPosts(
+    threadId: string,
+    options?: { unread?: boolean; depth?: number | "all" }
+  ): Promise<PostsEnvelope> {
+    const params = new URLSearchParams();
+    if (options?.unread !== undefined) params.set("unread", String(options.unread));
+    if (options?.depth !== undefined) params.set("depth", options.depth.toString());
+    const query = params.toString();
+    return this.fetch<PostsEnvelope>(
+      `/users/me/dm/${threadId}/posts${query ? `?${query}` : ""}`
+    );
+  }
+
+  async createDMPost(threadId: string, body: string): Promise<Post> {
+    return this.fetch<Post>(`/users/me/dm/${threadId}/posts`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    });
+  }
+
+  // The read marker lives on the post's context nest and never moves backwards, so this
+  // is safe to call out of order and works for any post, not only a DM.
+  async markPostRead(postId: string): Promise<Record<string, unknown>> {
+    return this.fetch<Record<string, unknown>>(`/posts/${postId}/read`, { method: "POST" });
+  }
+
+  // suppressStatusMessage always rides along: whoever called this tool is told to say a
+  // human is coming, so the canned confirmation on the thread would be the same news
+  // twice. It is a request, not an instruction. Nestr grants it only while an agent
+  // reply to that same thread is pending, so a client whose answer lands somewhere else
+  // (this server also runs outside the Nestradamus runtime) leaves the thread with the
+  // confirmation it needs. The response says which way it went.
+  // Unwrapped to `data`, unlike its DM siblings: the caller reads flags off this
+  // (alreadyQueued, statusMessagePosted) and reading them off the envelope silently
+  // yielded undefined every time, so the already-queued branch never fired.
+  async escalateDMThread(threadId: string, reason?: string): Promise<Record<string, unknown>> {
+    const body: Record<string, unknown> = { suppressStatusMessage: true };
+    if (reason) body.reason = reason;
+    const response = await this.fetch<{ data?: Record<string, unknown> }>(
+      `/users/me/dm/${threadId}/escalate`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+    return response?.data ?? {};
   }
 
   // ============ CIRCLES & ROLES ============
@@ -1050,13 +1647,10 @@ export class NestrClient {
 
   async listRoles(
     workspaceId: string,
-    options?: { sort?: string; limit?: number; page?: number; cleanText?: boolean }
+    options?: NestrReadOptions
   ): Promise<Role[]> {
     const params = new URLSearchParams();
-    if (options?.sort) params.set("sort", options.sort);
-    if (options?.limit) params.set("limit", options.limit.toString());
-    if (options?.page) params.set("page", options.page.toString());
-    if (options?.cleanText) params.set("cleanText", "true");
+    NestrClient.appendReadParams(params, options);
 
     const query = params.toString();
     return this.fetch<Role[]>(
@@ -1087,10 +1681,17 @@ export class NestrClient {
 
   async listUsers(
     workspaceId: string,
-    options?: { search?: string; limit?: number; page?: number; includeSuspended?: boolean }
+    options?: {
+      search?: string;
+      agents?: "only" | "exclude";
+      limit?: number;
+      page?: number;
+      includeSuspended?: boolean;
+    }
   ): Promise<User[]> {
     const params = new URLSearchParams();
     if (options?.search) params.set("search", options.search);
+    if (options?.agents) params.set("agents", options.agents);
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.page) params.set("page", options.page.toString());
     if (options?.includeSuspended) params.set("includeSuspended", "true");
@@ -1328,7 +1929,7 @@ export class NestrClient {
   ): Promise<Nest & { searchOrder?: number; order?: number }> {
     const response = await this.fetch<{ status: string; data: Nest & { searchOrder?: number; order?: number } }>(
       `/nests/${nestId}/reorder/${position}/${relatedNestId}`,
-      { method: "POST" }
+      { method: "PATCH" }
     );
     return response.data;
   }
@@ -1362,7 +1963,7 @@ export class NestrClient {
   ): Promise<Nest & { searchOrder?: number; order?: number }> {
     const response = await this.fetch<{ status: string; data: Nest & { searchOrder?: number; order?: number } }>(
       `/users/me/inbox/${nestId}/reorder/${position}/${relatedNestId}`,
-      { method: "POST" }
+      { method: "PATCH" }
     );
     return response.data;
   }
@@ -1380,6 +1981,123 @@ export class NestrClient {
         method: "PATCH",
         body: JSON.stringify(nestIds),
       }
+    );
+    return response.data;
+  }
+
+  // ============ SCHEDULE / RECURRENCE ============
+
+  /**
+   * Set or remove a nest's recurrence rule, wrapping the `scheduleSetRecurrence`
+   * Meteor method behind `PATCH nests/:id/recurrence`.
+   *
+   * Setting a rule creates no nests. Occurrences are computed from the rule and
+   * stay virtual until something touches one, at which point that occurrence
+   * alone becomes a real nest carrying `recurrence.seriesId`. The response is the
+   * stored rule and nothing else; there is no count of generated instances.
+   *
+   * `rrule: null` removes recurrence: future occurrences stop, and anything that
+   * had already been materialized is kept, detached from the series.
+   */
+  async setRecurrence(
+    nestId: string,
+    rrule: string | null
+  ): Promise<{ rrule: string } | { removed: true }> {
+    const response = await this.fetch<{
+      status: string;
+      data: { rrule: string } | { removed: true };
+    }>(`/nests/${nestId}/recurrence`, {
+      method: "PATCH",
+      body: JSON.stringify({ rrule }),
+    });
+    return response.data;
+  }
+
+  /**
+   * One page of a series' occurrences, wrapping `GET nests/:id/recurrence`.
+   *
+   * The list is a union of materialized occurrences and virtual ones. The virtual
+   * ones exist only as instants of the rule, so no search or children listing can
+   * find them; this is the only way to see them at all.
+   *
+   * Cursor-paged, not page-paged: a rule with no COUNT and no UNTIL produces
+   * occurrences forever, so there is no total and the route reports none. Feed
+   * `nextCursor` back as `cursor` while `hasMore` is true.
+   *
+   * `nestId` may be the series or any occurrence of it; both resolve to the same
+   * series.
+   */
+  async listOccurrences(
+    nestId: string,
+    options?: { direction?: "future" | "past"; cursor?: string | number; limit?: number }
+  ): Promise<OccurrencePage> {
+    const params = new URLSearchParams();
+    if (options?.direction !== undefined) params.set("direction", options.direction);
+    if (options?.cursor !== undefined) params.set("cursor", String(options.cursor));
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+
+    const query = params.toString();
+    const response = await this.fetch<{ status: string; data: OccurrencePage }>(
+      `/nests/${nestId}/recurrence${query ? `?${query}` : ""}`
+    );
+    return response.data;
+  }
+
+  /**
+   * Skip one occurrence, or cut the series there, wrapping
+   * `DELETE nests/:id/recurrence/:instant`.
+   *
+   * Scope `occurrence` (the default, sent as no query) excludes the instant and
+   * never ends the series. Scope `following` deletes it and every later one and
+   * answers with a `restoreId`; restoring it brings back that nest only.
+   *
+   * `instant` is epoch milliseconds and must be one the series has; anything else
+   * is refused with 422.
+   */
+  async skipOccurrence(
+    nestId: string,
+    instant: number,
+    scope?: OccurrenceScope
+  ): Promise<SkippedOccurrence | DeletedFollowingOccurrences> {
+    const query = scope === "following" ? "?scope=following" : "";
+    const response = await this.fetch<{
+      status: string;
+      data: SkippedOccurrence | DeletedFollowingOccurrences;
+    }>(`/nests/${nestId}/recurrence/${instant}${query}`, { method: "DELETE" });
+    return response.data;
+  }
+
+  /**
+   * Edit one occurrence, wrapping `PATCH nests/:id/recurrence/:instant`.
+   *
+   * Materializes the occurrence if it is still virtual, then applies `updates` to
+   * it; an empty body only materializes. Not all-or-nothing: a refused edit leaves
+   * the occurrence materialized. Answers with the nest, whose `_id` every other
+   * nest route takes from then on.
+   */
+  async updateOccurrence(
+    nestId: string,
+    instant: number,
+    updates: NestUpdates
+  ): Promise<Nest> {
+    const body = await this.fetch<Nest | { status: string; data: Nest }>(
+      `/nests/${nestId}/recurrence/${instant}`,
+      { method: "PATCH", body: JSON.stringify(updates) }
+    );
+    // A nest carries its own `data` store, so tell the envelope apart by `_id`.
+    const isEnvelope = body && typeof body === "object" && !("_id" in body) && "data" in body;
+    return (isEnvelope ? (body as { data: Nest }).data : body) as Nest;
+  }
+
+  /**
+   * Delete a whole series, wrapping `DELETE nests/:id/recurrence`: the series nest
+   * and every live occurrence, past ones included. To stop repeating and keep the
+   * nests, use `setRecurrence(nestId, null)` instead.
+   */
+  async deleteSeries(nestId: string): Promise<DeletedSeries> {
+    const response = await this.fetch<{ status: string; data: DeletedSeries }>(
+      `/nests/${nestId}/recurrence`,
+      { method: "DELETE" }
     );
     return response.data;
   }
@@ -1810,6 +2528,35 @@ export class NestrClient {
   }
 
   /**
+   * A nest's activity and, by default, everything beneath it, newest first.
+   * Wraps GET /nests/:id/activity. Paging is a cursor: the response's
+   * `links.next` carries the next page's `before`, and `meta.has_more` says
+   * whether there is one. There is no total.
+   */
+  async getNestActivity(
+    nestId: string,
+    options?: {
+      depth?: number | "all";
+      userId?: string;
+      limit?: number;
+      before?: string;
+      linkedUsers?: boolean;
+    }
+  ): Promise<NestActivityEnvelope> {
+    const params = new URLSearchParams();
+    if (options?.depth !== undefined) params.set("depth", options.depth.toString());
+    if (options?.userId) params.set("userId", options.userId);
+    if (options?.limit !== undefined) params.set("limit", options.limit.toString());
+    if (options?.before) params.set("before", options.before);
+    if (options?.linkedUsers) params.set("linkedUsers", "true");
+
+    const query = params.toString();
+    return this.fetch<NestActivityEnvelope>(
+      `/nests/${encodeURIComponent(nestId)}/activity${query ? `?${query}` : ""}`
+    );
+  }
+
+  /**
    * Get the current authenticated user's info.
    * Requires OAuth token - does not work with workspace API keys.
    * Used for analytics to get user_id for session stitching.
@@ -1837,6 +2584,95 @@ export class NestrClient {
   }
 
   /**
+   * The connector templates this deployment can offer: the one-click set, each
+   * carrying an endpoint, transport, auth strategy and OAuth client that nobody
+   * has to guess. Workspace-admin only, as the route enforces.
+   * Wraps GET /workspaces/:workspaceId/connector-templates.
+   */
+  async listConnectorTemplates(
+    workspaceId: string
+  ): Promise<{ templates: unknown[]; hints?: unknown[] }> {
+    // The envelope's hints are kept, not unwrapped away. Listing templates was
+    // not enough on its own: a caller that could see the Xero template still
+    // hand-built a connector from what the template told it. The hint on this
+    // response is what turns "here they are" into "register this one".
+    const response = await this.fetch<{
+      status: string;
+      data: unknown[];
+      hints?: unknown[];
+    }>(`/workspaces/${workspaceId}/connector-templates`);
+    return { templates: response.data, hints: response.hints };
+  }
+
+  /**
+   * Create an agent user in the workspace. Workspace-admin only: the REST route
+   * enforces it and returns 403 (mapped to AUTH_SCOPE_INSUFFICIENT) for a
+   * non-admin caller.
+   *
+   * agentConfig is runtime wiring (runtimeCallbackUrl, tokenTtlSeconds), not
+   * persona: what the agent should DO belongs in a skill nest under the role it
+   * fills, which is a separate nest with a name of its own.
+   *
+   * Wraps POST /workspaces/:workspaceId/agents. The route returns
+   * { status, data }; this unwraps to the created agent user.
+   */
+  async createAgent(
+    workspaceId: string,
+    body: {
+      name: string;
+      description?: string;
+      /** false creates an assistant: never assignable to a role. */
+      roleAssignable?: boolean;
+      agentConfig?: Record<string, unknown>;
+    }
+  ): Promise<User> {
+    const response = await this.fetch<{ status: string; data: User }>(
+      `/workspaces/${workspaceId}/agents`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      }
+    );
+    return response.data;
+  }
+
+  /**
+   * Change an existing agent's settings. Workspace-admin only: the REST route
+   * enforces it and returns 403 (mapped to AUTH_SCOPE_INSUFFICIENT) for a
+   * non-admin caller.
+   *
+   * Only the fields sent are changed. The route refuses a field it does not
+   * know, an empty body, a blank name, and roleAssignable:false while the agent
+   * still fills a role, all with a 422 whose message says why (the last one
+   * names the roles), so the message is worth relaying as it is.
+   *
+   * Wraps PATCH /workspaces/:workspaceId/agents/:userId. The route returns
+   * { status, data }; this unwraps to the updated agent user.
+   */
+  async updateAgent(
+    workspaceId: string,
+    userId: string,
+    body: {
+      name?: string;
+      description?: string;
+      webSearch?: boolean;
+      status?: "active" | "paused" | "disabled";
+      /** false makes an assistant: never assignable to a role. */
+      roleAssignable?: boolean;
+      agentConfig?: Record<string, unknown>;
+    }
+  ): Promise<User> {
+    const response = await this.fetch<{ status: string; data: User }>(
+      `/workspaces/${workspaceId}/agents/${userId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }
+    );
+    return response.data;
+  }
+
+  /**
    * Register a connector in the workspace catalog. Workspace-admin only: the
    * REST route enforces it and returns 403 (mapped to AUTH_SCOPE_INSUFFICIENT)
    * for a non-admin caller. Holds no secret.
@@ -1846,22 +2682,26 @@ export class NestrClient {
   async registerConnector(
     workspaceId: string,
     body: {
-      type: "mcp" | "cli" | "api";
-      name: string;
+      templateId?: string;
+      type?: "mcp" | "cli" | "api";
+      name?: string;
       config?: ConnectorConfig;
       capabilities?: ConnectorCapabilities;
       exposure?: ConnectorExposure;
       authStrategy?: "secret" | "oauth2";
     }
-  ): Promise<Connector> {
-    const response = await this.fetch<{ status: string; data: Connector }>(
+  ): Promise<{ connector: Connector; hints?: unknown[] }> {
+    // The envelope's hints are kept, not unwrapped away: POST /connectors raises
+    // one when a hand-written url points at a vendor this deployment ships a
+    // template for, and that is precisely the caller who needs to see it.
+    const response = await this.fetch<{ status: string; data: Connector; hints?: unknown[] }>(
       `/workspaces/${workspaceId}/connectors`,
       {
         method: "POST",
         body: JSON.stringify(body),
       }
     );
-    return response.data;
+    return { connector: response.data, hints: response.hints };
   }
 
   /**
@@ -1888,6 +2728,213 @@ export class NestrClient {
       }
     );
     return response.data;
+  }
+
+  /**
+   * Update a connector in the workspace catalog. Workspace-admin only. Send
+   * `enabled` to switch it on or off.
+   *
+   * Wraps PATCH /workspaces/:workspaceId/connectors/:connectorId.
+   */
+  async updateConnector(
+    workspaceId: string,
+    connectorId: string,
+    updates: {
+      type?: string;
+      name?: string;
+      authStrategy?: string;
+      config?: Record<string, unknown>;
+      capabilities?: Record<string, unknown>;
+      exposure?: Record<string, unknown>;
+      enabled?: boolean;
+    }
+  ): Promise<Connector> {
+    const response = await this.fetch<{ status: string; data: Connector }>(
+      `/workspaces/${workspaceId}/connectors/${connectorId}`,
+      { method: "PATCH", body: JSON.stringify(updates) }
+    );
+    return response.data;
+  }
+
+  /**
+   * Remove a connector from the workspace catalog. Workspace-admin only.
+   *
+   * Wraps DELETE /workspaces/:workspaceId/connectors/:connectorId.
+   */
+  async removeConnector(workspaceId: string, connectorId: string): Promise<{ _id: string }> {
+    const response = await this.fetch<{ status: string; data: { _id: string } }>(
+      `/workspaces/${workspaceId}/connectors/${connectorId}`,
+      { method: "DELETE" }
+    );
+    return response.data;
+  }
+
+  /**
+   * List the workspace's bindings: which connector is bound to which owner, who
+   * holds a credential, and who consented. Never returns a secret.
+   *
+   * Wraps GET /workspaces/:workspaceId/connections/list.
+   */
+  async listConnections(
+    workspaceId: string,
+    options: { includeDisabled?: boolean } = {}
+  ): Promise<ConnectionListing[]> {
+    const query = options.includeDisabled ? "?includeDisabled=true" : "";
+    const response = await this.fetch<{ status: string; data: ConnectionListing[] }>(
+      `/workspaces/${workspaceId}/connections/list${query}`
+    );
+    return response.data;
+  }
+
+  /**
+   * Remove a binding: the connection is disabled and every credential on it is
+   * revoked. Workspace-admin only.
+   *
+   * Wraps DELETE /workspaces/:workspaceId/connections/:connectionId.
+   */
+  async removeConnection(
+    workspaceId: string,
+    connectionId: string
+  ): Promise<{ _id: string; revokedCount: number }> {
+    const response = await this.fetch<{
+      status: string;
+      data: { _id: string; revokedCount: number };
+    }>(`/workspaces/${workspaceId}/connections/${connectionId}`, { method: "DELETE" });
+    return response.data;
+  }
+
+  /**
+   * Get a link a human opens to complete the connect (an OAuth popup or a secure
+   * secret modal). The link carries no authority: whoever opens it is re-checked.
+   * This is how an agent hands the credential step to a person, since an agent
+   * must never handle a raw token.
+   *
+   * Wraps POST /workspaces/:workspaceId/connections/:connectionId/connect-link.
+   */
+  async getConnectLink(
+    workspaceId: string,
+    connectionId: string
+  ): Promise<{ connectionId: string; url: string }> {
+    const response = await this.fetch<{
+      status: string;
+      data: { connectionId: string; url: string };
+    }>(`/workspaces/${workspaceId}/connections/${connectionId}/connect-link`, {
+      method: "POST",
+    });
+    return response.data;
+  }
+
+  /**
+   * Revoke the acting user's credential on a connection.
+   *
+   * Wraps DELETE /workspaces/:workspaceId/connections/:connectionId/authorizations.
+   */
+  async revokeConnectionCredential(
+    workspaceId: string,
+    connectionId: string
+  ): Promise<{ _id: string }> {
+    const response = await this.fetch<{ status: string; data: { _id: string } }>(
+      `/workspaces/${workspaceId}/connections/${connectionId}/authorizations`,
+      { method: "DELETE" }
+    );
+    return response.data;
+  }
+
+  /**
+   * What an agent can and cannot use, grouped by where the grant comes from,
+   * with the reason a connector is unavailable.
+   *
+   * Wraps GET /workspaces/:workspaceId/agents/:userId/connectors.
+   */
+  async getAgentConnectorReach(
+    workspaceId: string,
+    agentUserId: string
+  ): Promise<AgentConnectorReach[]> {
+    const response = await this.fetch<{ status: string; data: AgentConnectorReach[] }>(
+      `/workspaces/${workspaceId}/agents/${agentUserId}/connectors`
+    );
+    return response.data;
+  }
+
+  /**
+   * Run an agent now on a nest, optionally saying what the run is for. The
+   * caller needs assign rights on the nest and the agent must fill or be
+   * assigned to it, so this cannot run an agent anywhere in the workspace.
+   *
+   * Wraps POST /workspaces/:workspaceId/agents/:userId/run.
+   */
+  async runAgent(
+    workspaceId: string,
+    agentUserId: string,
+    body: { nestId: string; message?: string }
+  ): Promise<{
+    agentUserId: string;
+    nestId: string;
+    dispatched: boolean;
+    watchUrl?: string;
+  }> {
+    const response = await this.fetch<{
+      status: string;
+      data: {
+        agentUserId: string;
+        nestId: string;
+        dispatched: boolean;
+        // The page the run reports back on, absolute. Built server-side: whether
+        // the nest has a feed tab is a label question and the host is the
+        // deployment's own, so neither is ours to assemble.
+        watchUrl?: string;
+      };
+    }>(`/workspaces/${workspaceId}/agents/${agentUserId}/run`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return response.data;
+  }
+
+  /**
+   * How one agent operates on one nest: reactive, or autonomous on a cadence,
+   * and whether that is set on the nest itself, inherited from an ancestor role
+   * or circle, or the reactive default. The mode is always per nest, never a
+   * setting of the agent as a whole.
+   *
+   * Wraps GET /nests/:id/agents/:userId/mode.
+   */
+  async getAgentMode(nestId: string, agentUserId: string): Promise<AgentMode> {
+    const response = await this.fetch<{ status: string; data: AgentMode }>(
+      `/nests/${nestId}/agents/${agentUserId}/mode`
+    );
+    return response.data;
+  }
+
+  /**
+   * Set or clear how one agent operates on one nest. mode null clears the
+   * nest's own setting so it inherits again. The caller needs assign rights on
+   * the nest.
+   *
+   * Wraps PUT /nests/:id/agents/:userId/mode.
+   */
+  async setAgentMode(
+    nestId: string,
+    agentUserId: string,
+    body: {
+      mode: "reactive" | "autonomous" | null;
+      recheck?: AgentRecheck;
+      start?: string;
+      tzid?: string;
+    }
+  ): Promise<{ result: Record<string, unknown>; hints?: unknown[] }> {
+    // The envelope's hints are kept: the server answers every set with the one
+    // that says a repeating job belongs on a repeating task, which is the advice
+    // a caller reaching for "weekly" most needs.
+    const response = await this.fetch<{
+      status: string;
+      data: Record<string, unknown>;
+      hints?: unknown[];
+    }>(`/nests/${nestId}/agents/${agentUserId}/mode`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+    return { result: response.data, hints: response.hints };
   }
 }
 

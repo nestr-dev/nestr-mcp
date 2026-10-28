@@ -108,6 +108,82 @@ describe("file attachment tools", () => {
     expect((textBlocks[0] as { type: "text"; text: string }).text).toContain("diagram.png");
   });
 
+  it("nestr_read_file returns an SVG as text, never as an image block", async () => {
+    // image/svg+xml is not one of the four types the model API accepts, and an
+    // image block carrying it 400s the agent's whole request. SVG is markup, so
+    // the source is the useful form anyway.
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><title>logo</title></svg>';
+    mockFetch.mockResolvedValue(
+      mockResponse(200, {
+        status: "success",
+        data: {
+          id: "f1c",
+          name: "logo-tagline.svg",
+          contentType: "image/svg+xml",
+          size: svg.length,
+          dataBase64: Buffer.from(svg, "utf-8").toString("base64"),
+        },
+      })
+    );
+
+    const result = await handleToolCall(client, "nestr_read_file", { nestId: "nest-1", fileId: "f1c" });
+    expect(result.isError).toBeFalsy();
+    expect(result.content.filter((c) => c.type === "image")).toHaveLength(0);
+    const text = (result.content[0] as { type: "text"; text: string }).text;
+    expect(text).toContain("logo-tagline.svg");
+    expect(text).toContain("<title>logo</title>");
+  });
+
+  it.each(["image/bmp", "image/avif", "image/heic", "image/x-icon", "image/tiff"])(
+    "nestr_read_file returns metadata, not an image block, for %s",
+    async (contentType) => {
+      mockFetch.mockResolvedValue(
+        mockResponse(200, {
+          status: "success",
+          data: { id: "f1d", name: "asset.bin", contentType, size: 4, dataBase64: "AAAA" },
+        })
+      );
+
+      const result = await handleToolCall(client, "nestr_read_file", { nestId: "nest-1", fileId: "f1d" });
+      expect(result.isError).toBeFalsy();
+      expect(result.content.filter((c) => c.type === "image")).toHaveLength(0);
+      const text = (result.content[0] as { type: "text"; text: string }).text;
+      expect(text).toContain(contentType);
+      expect(text).toContain("image/png");
+    }
+  );
+
+  it("nestr_read_file inlines an image/jpg file as image/jpeg", async () => {
+    // Uploaders mislabel JPEGs as image/jpg; the model API rejects that spelling.
+    mockFetch.mockResolvedValue(
+      mockResponse(200, {
+        status: "success",
+        data: { id: "f1e", name: "photo.jpg", contentType: "image/jpg", size: 4, dataBase64: "/9j/4A==" },
+      })
+    );
+
+    const result = await handleToolCall(client, "nestr_read_file", { nestId: "nest-1", fileId: "f1e" });
+    expect(result.isError).toBeFalsy();
+    const imageBlocks = result.content.filter((c) => c.type === "image");
+    expect(imageBlocks).toHaveLength(1);
+    expect((imageBlocks[0] as { mimeType: string }).mimeType).toBe("image/jpeg");
+  });
+
+  it("nestr_read_file inlines an image whose content type carries a parameter", async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(200, {
+        status: "success",
+        data: { id: "f1f", name: "shot.png", contentType: "IMAGE/PNG; charset=binary", size: 4, dataBase64: "iVBORw0=" },
+      })
+    );
+
+    const result = await handleToolCall(client, "nestr_read_file", { nestId: "nest-1", fileId: "f1f" });
+    expect(result.isError).toBeFalsy();
+    const imageBlocks = result.content.filter((c) => c.type === "image");
+    expect(imageBlocks).toHaveLength(1);
+    expect((imageBlocks[0] as { mimeType: string }).mimeType).toBe("image/png");
+  });
+
   it("nestr_read_file returns metadata (no image block) for an oversized image", async () => {
     // A 6MB image is over MAX_IMAGE_INLINE_BYTES (5MB): forwarding the base64
     // would exceed the model API's per-image limit, so degrade to a note.

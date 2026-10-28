@@ -6,12 +6,12 @@
     "url": "https://github.com/nestr-dev/nestr-mcp",
     "source": "github"
   },
-  "version": "0.1.14",
+  "version": "0.2.4",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@nestr/mcp",
-      "version": "0.1.14",
+      "version": "0.2.4",
       "transport": {
         "type": "stdio"
       }

@@ -6,7 +6,9 @@ import {
   completableResponse,
   unescapeRichTextFields,
   addNestUrls,
+  containingTabHash,
   extractSearchDirectives,
+  nextCursorOf,
   schemas,
   toolDefinitions,
   commentPlacementNote,
@@ -44,6 +46,18 @@ describe("compactResponse", () => {
     const data = { _id: "1", title: "Single item", extraField: "kept" };
     const result = compactResponse(data);
     expect(result).toEqual(data);
+  });
+
+  it("keeps the schedule, so a span does not read as a bare deadline", () => {
+    const data = [{ _id: "1", title: "Span", start: "2026-10-05T00:00:00.000Z", due: "2026-10-09T23:59:00.000Z", allDay: true }];
+    const result = compactResponse(data) as any[];
+    expect(result[0]).toMatchObject({ start: "2026-10-05T00:00:00.000Z", allDay: true });
+  });
+
+  it("keeps relation and direction on graph links, and only there", () => {
+    const data = [{ _id: "1", title: "Linked", relation: "depends_on", direction: "incoming" }];
+    expect((compactResponse(data, "graph") as any[])[0]).toMatchObject({ relation: "depends_on", direction: "incoming" });
+    expect((compactResponse(data) as any[])[0]).not.toHaveProperty("direction");
   });
 
   it("includes role fields when type is role", () => {
@@ -250,6 +264,84 @@ describe("enrichHints", () => {
     });
   });
 
+  it("maps no_purpose on a role to nestr_update_nest with a role purpose example", () => {
+    // Same shape as no_strategy: the API emits no_purpose with url /nests/{id},
+    // which would resolve to nestr_get_nest, a no-op for a caller holding the nest.
+    const data = {
+      _id: "role1",
+      labels: ["circleplus-role"],
+      hints: [{
+        type: "no_purpose",
+        label: "This role has no purpose statement.",
+        severity: "warning",
+        url: "/nests/role1",
+      }],
+    };
+    const result = enrichHints(data) as any;
+    expect(result.hints[0].toolCall).toEqual({
+      tool: "nestr_update_nest",
+      params: {
+        nestId: "role1",
+        purpose: "<purpose statement: why this role exists and the future state it works towards>",
+      },
+    });
+  });
+
+  it("maps no_purpose on a circle to nestr_update_nest with a circle purpose example", () => {
+    const data = {
+      _id: "circle1",
+      labels: ["circleplus-circle"],
+      hints: [{
+        type: "no_purpose",
+        label: "This circle has no purpose statement.",
+        severity: "warning",
+        url: "/nests/circle1",
+      }],
+    };
+    const result = enrichHints(data) as any;
+    expect(result.hints[0].toolCall).toEqual({
+      tool: "nestr_update_nest",
+      params: {
+        nestId: "circle1",
+        purpose: "<purpose statement: the north star every role and project here traces back to>",
+      },
+    });
+  });
+
+  it("maps no_purpose on an anchor-circle the same way as a circle", () => {
+    const data = {
+      _id: "ws1",
+      labels: ["circleplus-anchor-circle"],
+      hints: [{
+        type: "no_purpose",
+        label: "This workspace has no purpose statement.",
+        severity: "warning",
+        url: "/nests/ws1",
+      }],
+    };
+    const result = enrichHints(data) as any;
+    expect(result.hints[0].toolCall.params.purpose)
+      .toBe("<purpose statement: the north star every role and project here traces back to>");
+  });
+
+  it("falls back to the URL match when a no_purpose hint carries no nest id", () => {
+    // The override returns null without an _id, so enrichHints must not swallow
+    // the hint: it drops through to HINT_URL_PATTERNS.
+    const data = {
+      hints: [{
+        type: "no_purpose",
+        label: "This role has no purpose statement.",
+        severity: "warning",
+        url: "/nests/role9",
+      }],
+    };
+    const result = enrichHints(data) as any;
+    expect(result.hints[0].toolCall).toEqual({
+      tool: "nestr_get_nest",
+      params: { nestId: "role9" },
+    });
+  });
+
   it("maps /nests/{id}/children?search=... to nestr_search", () => {
     const data = {
       _id: "nest1",
@@ -379,6 +471,58 @@ describe("addNestUrls", () => {
     expect(addNestUrls(null)).toBeNull();
     expect(addNestUrls("hello")).toBe("hello");
     expect(addNestUrls(42)).toBe(42);
+  });
+
+  it("carries the containing tab hash so the link opens the same tab for everyone", () => {
+    const data = { _id: "proj1", title: "API auth", parentId: "circle1", labels: ["project"] };
+    const result = addNestUrls(data) as any;
+    expect(result.url).toBe("https://app.nestr.io/n/circle1/proj1#projects");
+  });
+
+  it("resolves a scrum story through its first mapped label", () => {
+    const data = { _id: "s1", title: "Story", parentId: "circle1", labels: ["project", "userstory"] };
+    expect((addNestUrls(data) as any).url).toBe("https://app.nestr.io/n/circle1/s1#projects");
+  });
+
+  it("maps the other containers a person gets sent to", () => {
+    const cases: [string, string][] = [
+      ["role", "roles"],
+      ["circle", "roles"],
+      ["task", "tasks"],
+      ["meeting", "meetings"],
+      ["tension", "meetings"],
+      ["metric", "metrics"],
+      ["checklist", "checklists"],
+      ["goal", "goals"],
+      ["policy", "policies"],
+      ["skill", "skills"],
+      ["note", "notes"],
+    ];
+    for (const [label, tab] of cases) {
+      const url = (addNestUrls({ _id: "n1", parentId: "p1", labels: [label] }) as any).url;
+      expect(url).toBe(`https://app.nestr.io/n/p1/n1#${tab}`);
+    }
+  });
+
+  it("omits the hash for an unmapped label rather than guessing", () => {
+    const data = { _id: "n1", title: "T", parentId: "p1", labels: ["contact"] };
+    expect((addNestUrls(data) as any).url).toBe("https://app.nestr.io/n/p1/n1");
+  });
+
+  it("never puts a hash on the bare /n/{id} form — that hash would select a tab on the nest itself", () => {
+    // Inbox item: parent is dropped, so there is no left pane to select a tab on.
+    const inboxItem = { _id: "i1", title: "Item", parentId: "inbox", labels: ["task"] };
+    expect((addNestUrls(inboxItem) as any).url).toBe("https://app.nestr.io/n/i1");
+    // Workspace root: no parent at all.
+    const ws = { _id: "ws1", title: "Workspace", labels: ["anchor-circle"] };
+    expect((addNestUrls(ws) as any).url).toBe("https://app.nestr.io/n/ws1");
+  });
+
+  it("containingTabHash tolerates missing, empty and non-array labels", () => {
+    expect(containingTabHash(undefined)).toBeUndefined();
+    expect(containingTabHash([])).toBeUndefined();
+    expect(containingTabHash("project")).toBeUndefined();
+    expect(containingTabHash([null, 42, "project"])).toBe("projects");
   });
 
   it("composes with compactResponse — URL survives after compaction-then-url ordering", () => {
@@ -536,17 +680,21 @@ describe("extractSearchDirectives", () => {
   });
 });
 
-// ─── list_tensions legacy `order` alias ─────────────────────────────
-// `order` predates `sort` and was never honored by the API. It stays
-// parseable for existing callers but is no longer advertised to clients.
+// ─── list_tensions takes sort and nothing else ──────────────────────
+// `order` predates `sort` and was kept parseable as a back-compat alias while being
+// hidden from clients. It is gone now: it was unadvertised, so no client could send it,
+// and the API side has since confirmed `order` was declared on thirteen routes and read
+// by none of them. An unreachable alias for a name that never worked is not backward
+// compatibility.
 
-describe("nestr_list_tensions order alias", () => {
-  it("Zod still accepts the legacy order field", () => {
-    const parsed = schemas.listTensions.parse({ nestId: "n1", order: "-createdAt" });
-    expect(parsed.order).toBe("-createdAt");
+describe("nestr_list_tensions sorting", () => {
+  it("has no order field left to parse", () => {
+    const parsed = schemas.listTensions.parse({ nestId: "n1", sort: "-createdAt" });
+    expect(parsed.sort).toBe("-createdAt");
+    expect("order" in parsed).toBe(false);
   });
 
-  it("the advertised inputSchema exposes sort but not order", () => {
+  it("advertises sort and not order", () => {
     const tool = toolDefinitions.find((t) => t.name === "nestr_list_tensions")!;
     const properties = (tool.inputSchema as { properties: Record<string, unknown> }).properties;
     expect(properties.sort).toBeDefined();
@@ -572,5 +720,21 @@ describe("commentPlacementNote", () => {
 
   it("is silent when the response carries no parentId", () => {
     expect(commentPlacementNote("nest1", { _id: "c1", body: "hi" } as never)).toBeNull();
+  });
+});
+
+describe("nextCursorOf", () => {
+  it("reads the before cursor out of a paging link", () => {
+    expect(nextCursorOf("https://app.nestr.io/api/nests/n1/activity?limit=2&before=eyJkIjoiMjAyNiJ9")).toBe("eyJkIjoiMjAyNiJ9");
+  });
+
+  it("reads it out of a relative link as well", () => {
+    expect(nextCursorOf("/api/nests/n1/activity?limit=2&before=abc")).toBe("abc");
+  });
+
+  it("is null without a next link, and for a link that carries no cursor", () => {
+    expect(nextCursorOf(undefined)).toBeNull();
+    expect(nextCursorOf("not a url")).toBeNull();
+    expect(nextCursorOf("https://app.nestr.io/api/nests/n1/activity?limit=2")).toBeNull();
   });
 });

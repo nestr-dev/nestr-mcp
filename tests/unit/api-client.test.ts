@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { NestrClient, NestrApiError } from "../../src/api/client.js";
+import { NestrClient, NestrApiError, unwrapList } from "../../src/api/client.js";
 
 describe("NestrClient", () => {
   let mockFetch: ReturnType<typeof vi.fn>;
@@ -255,6 +255,37 @@ describe("NestrClient", () => {
 
   // ─── Connectors ─────────────────────────────────────────────────
 
+  it("getNestActivity builds the query and returns the page envelope as is", async () => {
+    const page = {
+      status: "success",
+      meta: { depth: 1, limit: 2, count: 2, has_more: true },
+      links: { next: "https://api.test.io/api/nests/n1/activity?depth=1&limit=2&before=abc" },
+      data: [{ id: "a1", date: "2026-10-20T00:00:00.000Z", type: "change", nestId: "n1", changes: [] }],
+    };
+    mockFetch.mockResolvedValue(mockResponse(200, page));
+    const client = createClient();
+
+    const result = await client.getNestActivity("n1", {
+      depth: 1, userId: "u1", limit: 2, before: "cur", linkedUsers: true,
+    });
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/n1/activity?depth=1&userId=u1&limit=2&before=cur&linkedUsers=true");
+    expect(opts.method ?? "GET").toBe("GET");
+    expect(result).toEqual(page);
+  });
+
+  it("getNestActivity sends nothing it was not asked for, and depth=0 as 0", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", meta: {}, data: [] }));
+    const client = createClient();
+
+    await client.getNestActivity("n1");
+    expect(mockFetch.mock.calls[0][0]).toBe("https://api.test.io/api/nests/n1/activity");
+
+    await client.getNestActivity("n1", { depth: 0, linkedUsers: false });
+    expect(mockFetch.mock.calls[1][0]).toBe("https://api.test.io/api/nests/n1/activity?depth=0");
+  });
+
   it("listConnectors GETs the catalog and unwraps data", async () => {
     const entries = [
       { _id: "c1", workspaceId: "ws1", type: "mcp", name: "Slack", enabled: true },
@@ -295,7 +326,27 @@ describe("NestrClient", () => {
       exposure: { domainGated: true },
       authStrategy: "secret",
     });
-    expect(result).toEqual(created);
+    // The envelope's hints ride along: POST /connectors raises one when a
+    // hand-written url points at a vendor with a template, and unwrapping to
+    // data alone threw exactly that away.
+    expect(result.connector).toEqual(created);
+    expect(result.hints).toBeUndefined();
+  });
+
+  it("registerConnector keeps the template hint the API returned", async () => {
+    const created = { _id: "c9", workspaceId: "ws1", type: "api", name: "Xero" };
+    const hints = [{ type: "connector_template_available", templateId: "xero", workspaceId: "ws1" }];
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: created, hints }));
+    const client = createClient();
+
+    const result = await client.registerConnector("ws1", {
+      type: "api",
+      name: "Xero",
+      config: { url: "https://api.xero.com/api.xro/2.0" },
+    });
+
+    expect(result.connector).toEqual(created);
+    expect(result.hints).toEqual(hints);
   });
 
   it("bindConnector POSTs connectorId + owner and unwraps the connection", async () => {
@@ -433,6 +484,32 @@ describe("NestrClient", () => {
 
     const [url] = mockFetch.mock.calls[0];
     expect(url).toBe("https://api.test.io/api/workspaces/ws1/projects?cleanText=true");
+  });
+
+  // ─── Reorder ────────────────────────────────────────────────────
+
+  it("reorderInboxItem PATCHes the single-item inbox reorder route", async () => {
+    // The API defines this route as PATCH only, so a POST never reaches it.
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: { _id: "n1" } }));
+    const client = createClient();
+
+    await client.reorderInboxItem("n1", "before", "n2");
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/users/me/inbox/n1/reorder/before/n2");
+    expect(opts.method).toBe("PATCH");
+  });
+
+  it("reorderNest PATCHes the nest reorder route", async () => {
+    // Same as the inbox route: the API defines it as PATCH only.
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: { _id: "n1" } }));
+    const client = createClient();
+
+    await client.reorderNest("n1", "after", "n2");
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/n1/reorder/after/n2");
+    expect(opts.method).toBe("PATCH");
   });
 
   // ─── Elections ──────────────────────────────────────────────────
@@ -634,5 +711,51 @@ describe("NestrApiError", () => {
         expect((err as NestrApiError).retryable).toBe(true);
       }
     });
+  });
+});
+
+// ─── unwrapList ─────────────────────────────────────────────────────
+
+/**
+ * The rows out of a list body, whichever shape it arrived in.
+ *
+ * `fetch` hands back what the route answered and does not unwrap, so a caller
+ * that indexes into the result has to come through here. nestr_workspace_docs
+ * did not, and `.length` on the envelope is undefined rather than a number, so
+ * its single-workspace and no-workspace branches both missed and every bare
+ * call reached `.map` on an object.
+ */
+describe("unwrapList", () => {
+  it("returns the rows of a { status, meta, data } envelope", () => {
+    const rows = [{ _id: "ws1" }, { _id: "ws2" }];
+    expect(unwrapList({ status: "success", meta: { total: 2 }, data: rows })).toEqual(rows);
+  });
+
+  it("returns a bare array unchanged", () => {
+    const rows = [{ _id: "ws1" }];
+    expect(unwrapList(rows)).toBe(rows);
+  });
+
+  // The count is the whole point: the envelope's own `length` is undefined, so
+  // a caller comparing it against 1 or 0 misses both and falls through.
+  it("gives a usable length for a single-row envelope", () => {
+    const body = { status: "success", data: [{ _id: "ws1" }] };
+    expect((body as unknown as unknown[]).length).toBeUndefined();
+    expect(unwrapList(body)).toHaveLength(1);
+  });
+
+  it("reads an empty envelope as no rows", () => {
+    expect(unwrapList({ status: "success", data: [] })).toEqual([]);
+  });
+
+  // Every caller is asking which workspaces a token can see. An unreadable
+  // answer to that is none of them, not an exception.
+  it.each([
+    ["null", null],
+    ["undefined", undefined],
+    ["an object with no data", { status: "success" } as never],
+    ["a non-array data", { status: "success", data: "nope" } as never],
+  ])("reads %s as no rows", (_label, body) => {
+    expect(unwrapList(body as never)).toEqual([]);
   });
 });

@@ -4,9 +4,10 @@
  */
 
 import { z } from "zod";
-import { NestrApiError, tokenFingerprint, type NestrClient, type Nest, type ToolError, type ErrorCode } from "../api/client.js";
+import { NestrApiError, tokenFingerprint, unwrapList, type NestrClient, type Nest, type ToolError, type ErrorCode, type ListEnvelope, type MaybeListEnvelope, type ConnectionListing, type PendingInstructionApproval } from "../api/client.js";
 import { appResources } from "../apps/index.js";
 import { getCorrelationId } from "../util/request-context.js";
+import { MODEL_IMAGE_MIME_TYPES, isImageMimeType, modelImageMimeType, normalizeMimeType } from "../util/image-types.js";
 import { VERSION } from "../version.js";
 import type { DiagnoseSnapshot } from "../util/diagnose.js";
 import { PRIME_LABELS, PrimeLabelConflictError, validatePrimeLabels, ensureMeetingModifier } from "./validation.js";
@@ -64,23 +65,42 @@ const COMPACT_FIELDS = {
   // silently anonymous, so "which of these roles are mine?" or "who owns this project?"
   // has no answer in the data and a model fills the gap by guessing. It costs a short
   // id array per item and it is the difference between an answer and a fabrication.
-  base: ["_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description", "due", "users", "hints"],
+  // `start`/`allDay` with `due` are the schedule: without them a span reads as a bare deadline.
+  base: [
+    "_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description",
+    "due", "start", "allDay", "users", "hints",
+  ],
+  // Nest rows only (nest, role, graph). `fields` is where a status, a channel id or
+  // any custom value lives. The server sends it on list rows; dropping it here made
+  // every row read as "no value", so a filter on a search row starved with no error.
+  // Kept as sent, only when present, minus text tab bodies (see withoutTextTabs). A
+  // label's `fields` is its schema and a user is not a nest, so those rows leave it out.
+  nest: ["fields"],
   // Additional fields for roles
   role: ["accountabilities", "domains"],
-  // Additional fields for users
-  user: ["_id", "username", "profile"],
+  // Additional fields for users. `bot` and `assistant` are not optional trim:
+  // stripping them makes an agent indistinguishable from a person in a list, and
+  // "which of these can act on my own credentials for me" then has no answer in
+  // the data at all. Two booleans per row.
+  user: ["_id", "username", "profile", "bot", "assistant"],
   // Additional fields for labels
   label: ["_id", "title"],
+  // Graph links: without these, a listing of both directions is rows that look identical.
+  graph: ["relation", "direction"],
 };
 
 // Strip verbose fields from API responses for list operations
 export function compactResponse<T>(
-  data: T[] | { status: string; meta?: unknown; data: T[] } | T,
-  type: "nest" | "role" | "user" | "label" = "nest"
-): Partial<T>[] | { status: string; meta?: unknown; data: Partial<T>[] } | T {
+  // ListEnvelope rather than an inline `{ status: string; ... }`: the inline one
+  // required `status`, which no caller here can promise, since this takes a body
+  // the API sent. Nothing below reads `status` — the wrapped branch turns on
+  // `data` being an array — so requiring it only refused bodies it handles fine.
+  data: MaybeListEnvelope<T> | T,
+  type: "nest" | "role" | "user" | "label" | "graph" = "nest"
+): Partial<T>[] | ListEnvelope<Partial<T>> | T {
   // Handle wrapped response: { status, meta, data: [...] }
   if (data && typeof data === "object" && "data" in data && Array.isArray((data as { data: unknown }).data)) {
-    const wrapped = data as { status: string; meta?: unknown; data: T[] };
+    const wrapped = data as ListEnvelope<T>;
     return {
       ...wrapped,
       data: compactResponse(wrapped.data, type) as Partial<T>[],
@@ -94,20 +114,38 @@ export function compactResponse<T>(
 
   const allowedFields = new Set([
     ...COMPACT_FIELDS.base,
+    ...(type === "label" || type === "user" ? [] : COMPACT_FIELDS.nest),
     ...(type === "role" ? COMPACT_FIELDS.role : []),
     ...(type === "user" ? COMPACT_FIELDS.user : []),
     ...(type === "label" ? COMPACT_FIELDS.label : []),
+    ...(type === "graph" ? COMPACT_FIELDS.graph : []),
   ]);
 
   return data.map((item) => {
     const compact: Partial<T> = {};
     for (const key of Object.keys(item as object)) {
-      if (allowedFields.has(key)) {
-        (compact as Record<string, unknown>)[key] = (item as Record<string, unknown>)[key];
+      if (!allowedFields.has(key)) continue;
+      const value = (item as Record<string, unknown>)[key];
+      if (key === "fields") {
+        const fields = withoutTextTabs(value);
+        if (fields) (compact as Record<string, unknown>).fields = fields;
+      } else {
+        (compact as Record<string, unknown>)[key] = value;
       }
     }
     return compact;
   });
+}
+
+// The server copies each text tab's body into `fields` as `<tabId>_texttab`: meeting
+// notes or a spec, as long as it was written. Fine on one nest, a document per row on
+// a list. Undefined when nothing else is left.
+function withoutTextTabs(fields: unknown): unknown {
+  if (!fields || typeof fields !== "object" || Array.isArray(fields)) return fields;
+  const kept = Object.fromEntries(
+    Object.entries(fields).filter(([key]) => { return !key.endsWith("_texttab"); }),
+  );
+  return Object.keys(kept).length > 0 ? kept : undefined;
 }
 
 // URL-to-tool mapping for hint enrichment.
@@ -117,7 +155,8 @@ export function compactResponse<T>(
 const HINT_URL_PATTERNS: Array<{
   pattern: RegExp;
   tool: string;
-  params: (match: RegExpMatchArray, searchParams: URLSearchParams, workspaceId?: string) => Record<string, string>;
+  // Values are not all strings: a tool that declares z.boolean() rejects "true".
+  params: (match: RegExpMatchArray, searchParams: URLSearchParams, workspaceId?: string) => Record<string, unknown>;
 }> = [
   // /nests/{id}/children?search=... → nestr_search with in:{id} scoped query
   {
@@ -147,6 +186,38 @@ const HINT_URL_PATTERNS: Array<{
     tool: "nestr_search",
     params: (m, sp) => ({ workspaceId: m[1], query: sp.get("search") || "" }),
   },
+  // Direct-message hints. The unread hint on a thread carries the endpoint that answers
+  // it, so these turn "3 posts you have not read" into the one call that lists them
+  // rather than a URL the model has to hand-assemble.
+  // /users/me/dm/{t}/posts → nestr_get_dm_posts (before the thread pattern)
+  {
+    pattern: /^\/users\/me\/dm\/([^/]+)\/posts$/,
+    tool: "nestr_get_dm_posts",
+    params: (m, sp) => {
+      const result: Record<string, unknown> = { threadId: m[1] };
+      const unread = sp.get("unread");
+      if (unread) result.unread = unread === "true";
+      return result;
+    },
+  },
+  // /users/me/dm/{t} → nestr_get_dm_thread (after the deeper pattern above)
+  {
+    pattern: /^\/users\/me\/dm\/([^/]+)$/,
+    tool: "nestr_get_dm_thread",
+    params: (m, sp) => {
+      const result: Record<string, unknown> = { threadId: m[1] };
+      const unread = sp.get("unread");
+      if (unread) result.unread = unread === "true";
+      return result;
+    },
+  },
+  // /posts/{id}/read → nestr_mark_post_read. Carried by the unread_posts hint that
+  // nests/{id}/posts returns, so acknowledging what you just read is one call.
+  {
+    pattern: /^\/posts\/([^/]+)\/read$/,
+    tool: "nestr_mark_post_read",
+    params: (m) => ({ postId: m[1] }),
+  },
   // /nests/{id}/posts → nestr_get_comments
   { pattern: /^\/nests\/([^/]+)\/posts$/, tool: "nestr_get_comments", params: (m) => ({ nestId: m[1] }) },
   // /nests/{id}/files → nestr_get_nest_files
@@ -174,6 +245,43 @@ const HINT_TYPE_TOOL_CALLS: Record<
   string,
   (nest: Record<string, unknown>) => HintTypeToolCall | null
 > = {
+  // Raised by POST /connectors when a hand-written url points at a vendor the
+  // deployment ships a template for. The follow-up is to look at the template,
+  // not to re-register blindly: the connector just created may be exactly what
+  // the caller wanted, and only they can say. The hint carries its own ids, so
+  // this works on a catalog entry rather than needing nest ancestors.
+  connector_template_available(record) {
+    const hints = (record.hints as Array<Record<string, unknown>> | undefined) || [];
+    const hint = hints.find((h) => { return h.type === "connector_template_available"; });
+    const workspaceId = (hint && hint.workspaceId) || record.workspaceId;
+    if (!workspaceId) return null;
+    return {
+      tool: "nestr_list_connector_templates",
+      params: { workspaceId },
+    };
+  },
+  // Raised by GET /connector-templates on the response that LISTS them, because
+  // listing turned out not to be enough. A caller that could see the Xero
+  // template still hand-built a connector from what the template told it, and a
+  // hand-built copy carries no settingsKey, no OAuth client and whatever
+  // endpoint the model believed, so it authorises and then fails at first use.
+  // The follow-up here is the register call itself, pre-filled with the template
+  // id, so using the template is one call rather than a thing to remember.
+  connector_template_create(record) {
+    const hints = (record.hints as Array<Record<string, unknown>> | undefined) || [];
+    const hint = hints.find((h) => { return h.type === "connector_template_create"; });
+    if (!hint) return null;
+    const workspaceId = hint.workspaceId || record.workspaceId;
+    if (!workspaceId) return null;
+    const ids = (hint.templateIds as string[] | undefined) || [];
+    return {
+      tool: "nestr_register_connector",
+      params: {
+        workspaceId,
+        templateId: ids.length === 1 ? ids[0] : "<id of the template you want, from this list>",
+      },
+    };
+  },
   no_strategy(nest) {
     const nestId = nest._id as string | undefined;
     if (!nestId) return null;
@@ -189,6 +297,51 @@ const HINT_TYPE_TOOL_CALLS: Record<
       },
     };
   },
+  // `purpose` is a first-class nest field, so there is no per-label field key to pick;
+  // only the example text differs between a role and a circle.
+  no_purpose(nest) {
+    const nestId = nest._id as string | undefined;
+    if (!nestId) return null;
+    const labels = (nest.labels as string[] | undefined) || [];
+    const isRole = labels.includes("circleplus-role") || labels.includes("role");
+    return {
+      tool: "nestr_update_nest",
+      params: {
+        nestId,
+        purpose: isRole
+          ? "<purpose statement: why this role exists and the future state it works towards>"
+          : "<purpose statement: the north star every role and project here traces back to>",
+      },
+    };
+  },
+};
+
+// Guidance for hints where the label says WHAT happened but a model reliably gets the
+// follow-up wrong. Added to the hint as `guidance` by enrichHints.
+//
+// The instruction-approval pair is the case that earned this. A role connector held back
+// on scheduled runs looks, from the outside, like a broken connection, and the obvious
+// moves are all wrong: reconnecting as the wrong person, changing the connector's or the
+// tool's own settings, or the agent trying to approve for someone. What releases it is a
+// person in the connector's audience approving, and saying that once here is cheaper than
+// every caller rediscovering it. Kept short: a listing carries one copy per nest.
+export const HINT_TYPE_GUIDANCE: Record<string, string> = {
+  connector_awaiting_instruction_approval:
+    "The credential is fine and changing the connector's or the tool's own settings will not help: "
+    + "Nestr withholds it on scheduled runs (runs nobody started) because this role's instructions were "
+    + "edited by someone outside the connector's audience, or by an author Nestr cannot name. Manual runs "
+    + "still get it. Only a PERSON releases it: someone the connector is shared with, or a workspace admin, "
+    + "presses Approve on the request comment (`url`, or `connectors[].commentUrl`) or on the role page; a "
+    + "reconnect by someone it is shared with also counts as approving (a reconnect by anyone else does "
+    + "not). Approving re-runs the paused run. You cannot approve on anyone's behalf: tell the person you "
+    + "are helping, name `connectors[].approvers` as who can, and give them the link.",
+  connector_paused_by_instruction_edit:
+    "Your edit was saved. Tell the person you are helping, once, in this reply: the connectors named here "
+    + "will now be withheld on scheduled runs of these roles until someone they are shared with, or a "
+    + "workspace admin, approves the new instructions. Manual runs still work. The next scheduled run posts "
+    + "an Approve request on the item; approving there or on the role page, or a reconnect by someone it is "
+    + "shared with, releases it. You cannot approve it yourself, and changing the connector's settings does "
+    + "not help.",
 };
 
 /**
@@ -219,9 +372,24 @@ interface Hint {
   severity: string;
   count?: number;
   url?: string;
+  detail?: string;
+  helpTopic?: string;
+  // Carried by the instruction-approval hints: which role connectors are held back, where
+  // each was asked about, and (on the read-side hint) who can approve it. Passed through.
+  connectors?: Array<Record<string, unknown>>;
+  // Added here, not by Nestr: what the model should do with a hint whose label alone
+  // does not say it. Survives `hints: 'summary'`, which drops `detail`.
+  guidance?: string;
   endpoints?: ApiHintEndpoint[];
   lastPost?: string;
   readAt?: string;
+  // The `tabs` and `settings` hints carry where a PERSON can be sent in the web app —
+  // which tabs this viewer can open on this nest, and the URL for each. There is no tool
+  // call to translate them into and there should not be: the answer is a link to hand
+  // over, not an API call to make. Nestr sends these absolute, host and all, so nothing
+  // here rewrites them; the field is declared so a reader can see the passthrough is
+  // deliberate rather than an oversight.
+  tabs?: { id: string; title: string; url: string }[];
   toolCall?: { tool: string; params: Record<string, unknown> };
   toolCalls?: EnrichedToolCall[];
 }
@@ -247,9 +415,104 @@ interface EndpointToolMapping {
   bodyParams: ReadonlySet<string>;
   /** Fixed args added to parametersExample (e.g. { removeNest: true }). */
   extraParams?: Record<string, unknown>;
+  /**
+   * Query-string params the tool accepts, as `queryKey -> toolParamName`. A hint endpoint
+   * may carry a query (the unread hints do: `.../threads?unread=true`), and without this
+   * the value would be dropped and the suggested call would fetch everything instead of
+   * the thing the hint pointed at.
+   *
+   * The rename matters: the route spells it `?user=`, the tool calls it `withUser`, and
+   * emitting the URL's spelling would produce a call the tool's schema rejects.
+   */
+  queryParams?: Readonly<Record<string, string>>;
+  /** Tool params (from path or query) that the tool takes as numbers when the URL value is all digits. */
+  numericParams?: ReadonlySet<string>;
 }
 
 const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
+  // Direct messages. The unread hints on a container and a thread each carry the endpoint
+  // that answers them, so these turn "3 threads you have not read" into the one call that
+  // lists them. Deeper routes first: the patterns are tried in order.
+  // Support queues. Sibling of the DM routes, so these sit alongside them.
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/queues\/([^/]+)\/threads\/?$/,
+    tool: "nestr_list_queue_threads",
+    pathParamNames: ["key"],
+    bodyParams: new Set([]),
+    queryParams: { unread: "unread" },
+  },
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/queues\/?$/,
+    tool: "nestr_list_queues",
+    pathParamNames: [],
+    bodyParams: new Set([]),
+  },
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/posts\/?$/,
+    tool: "nestr_get_dm_posts",
+    pathParamNames: ["threadId"],
+    bodyParams: new Set([]),
+    queryParams: { unread: "unread", depth: "depth" },
+  },
+  {
+    method: "POST",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/posts\/?$/,
+    tool: "nestr_post_dm_message",
+    pathParamNames: ["threadId"],
+    bodyParams: new Set(["body"]),
+  },
+  {
+    method: "POST",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/escalate\/?$/,
+    tool: "nestr_escalate_to_support",
+    pathParamNames: ["threadId"],
+    bodyParams: new Set(["reason"]),
+  },
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/?$/,
+    tool: "nestr_get_dm_thread",
+    pathParamNames: ["threadId"],
+    bodyParams: new Set([]),
+    queryParams: { unread: "unread" },
+  },
+  {
+    method: "PATCH",
+    pattern: /^\/users\/me\/dm\/([^/]+)\/?$/,
+    tool: "nestr_update_dm_thread",
+    pathParamNames: ["threadId"],
+    bodyParams: new Set(["title", "completed", "users"]),
+  },
+  {
+    method: "POST",
+    pattern: /^\/users\/me\/dm\/?$/,
+    tool: "nestr_start_dm_thread",
+    pathParamNames: [],
+    bodyParams: new Set(["user", "title"]),
+  },
+  {
+    method: "GET",
+    pattern: /^\/users\/me\/dm\/?$/,
+    tool: "nestr_list_dms",
+    pathParamNames: [],
+    bodyParams: new Set([]),
+    // The route spells the filter ?user=, the tool calls it withUser. unread now belongs
+    // here too: the listing is the threads themselves, so "what have I not read" is
+    // answered by this call rather than by a container's own threads route.
+    queryParams: { user: "withUser", unread: "unread" },
+  },
+  // Carried by the unread_posts hint on nests/{id}/posts, so acknowledging what you just
+  // read is one call. Works for any post, not only a DM.
+  {
+    method: "POST",
+    pattern: /^\/posts\/([^/]+)\/read\/?$/,
+    tool: "nestr_mark_post_read",
+    pathParamNames: ["postId"],
+    bodyParams: new Set([]),
+  },
   {
     method: "POST",
     pattern: /^\/nests\/?$/,
@@ -275,6 +538,7 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     bodyParams: new Set([
       "_id", "title", "labels", "description", "purpose",
       "parentId", "users", "due", "accountabilities", "domains",
+      "role", // operational output: the role the work is asked of
       "roleId", // election mode
     ]),
   },
@@ -288,6 +552,7 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     bodyParams: new Set([
       "_id", "title", "labels", "description", "purpose",
       "parentId", "users", "due", "accountabilities", "domains",
+      "role",
     ]),
   },
   // DELETE /parts (body has _id) — propose deletion of an existing item.
@@ -307,12 +572,57 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     pathParamNames: ["nestId", "tensionId"],
     bodyParams: new Set([]),
   },
+  // Recurrence. One occurrence (`/recurrence/:instant`) before the series routes.
+  {
+    method: "DELETE",
+    pattern: /^\/nests\/([^/]+)\/recurrence\/([^/]+)\/?$/,
+    tool: "nestr_skip_occurrence",
+    pathParamNames: ["nestId", "instant"],
+    bodyParams: new Set([]),
+    queryParams: { scope: "scope" },
+    numericParams: new Set(["instant"]),
+  },
+  {
+    method: "PATCH",
+    pattern: /^\/nests\/([^/]+)\/recurrence\/([^/]+)\/?$/,
+    tool: "nestr_update_occurrence",
+    pathParamNames: ["nestId", "instant"],
+    bodyParams: new Set([
+      "title", "description", "purpose", "parentId", "labels",
+      "fields", "users", "data", "due", "completed",
+    ]),
+    numericParams: new Set(["instant"]),
+  },
+  {
+    method: "GET",
+    pattern: /^\/nests\/([^/]+)\/recurrence\/?$/,
+    tool: "nestr_list_occurrences",
+    pathParamNames: ["nestId"],
+    bodyParams: new Set([]),
+    queryParams: { direction: "direction", cursor: "cursor", limit: "limit" },
+    numericParams: new Set(["cursor", "limit"]),
+  },
+  {
+    method: "DELETE",
+    pattern: /^\/nests\/([^/]+)\/recurrence\/?$/,
+    tool: "nestr_delete_series",
+    pathParamNames: ["nestId"],
+    bodyParams: new Set([]),
+  },
 ];
 
-/** Strip optional host + /api prefix so we match against canonical routes. */
-function normalizeEndpointPath(path: string): string {
+/**
+ * Strip optional host + /api prefix so we match against canonical routes, and split the
+ * query off: the patterns describe paths, so a trailing `?unread=true` would stop every
+ * one of them matching.
+ */
+function normalizeEndpointPath(path: string): { path: string; search: URLSearchParams } {
   const hostStripped = path.replace(/^https?:\/\/[^/]+/, "");
-  return hostStripped.replace(/^\/api(?=\/)/, "");
+  const [rawPath, queryString] = hostStripped.split("?");
+  return {
+    path: rawPath.replace(/^\/api(?=\/)/, ""),
+    search: new URLSearchParams(queryString || ""),
+  };
 }
 
 /**
@@ -323,7 +633,7 @@ export function translateEndpoint(endpoint: ApiHintEndpoint): EnrichedToolCall |
   if (!endpoint || typeof endpoint !== "object") return null;
   const method = (endpoint.method || "").toUpperCase();
   if (!method) return null;
-  const path = normalizeEndpointPath(endpoint.path || "");
+  const { path, search } = normalizeEndpointPath(endpoint.path || "");
 
   for (const mapping of HINT_ENDPOINT_TOOL_MAPPINGS) {
     if (mapping.method !== method) continue;
@@ -333,6 +643,22 @@ export function translateEndpoint(endpoint: ApiHintEndpoint): EnrichedToolCall |
     const parametersExample: Record<string, unknown> = {};
     mapping.pathParamNames.forEach((name, i) => {
       parametersExample[name] = match[i + 1];
+    });
+    // "true"/"false" become booleans: every tool that takes one of these declares it as a
+    // boolean, and a string would fail schema validation on the suggested call.
+    if (mapping.queryParams) {
+      for (const [key, value] of search.entries()) {
+        const paramName = mapping.queryParams[key];
+        if (!paramName) continue;
+        parametersExample[paramName] =
+          value === "true" || value === "false" ? value === "true" : value;
+      }
+    }
+    // An instant or a limit arrives as URL text; only an all-digit value is a number
+    // (a cursor may also be an ISO date, which stays a string).
+    mapping.numericParams?.forEach((name) => {
+      const value = parametersExample[name];
+      if (typeof value === "string" && /^-?\d+$/.test(value)) parametersExample[name] = Number(value);
     });
     if (mapping.extraParams) Object.assign(parametersExample, mapping.extraParams);
 
@@ -364,14 +690,114 @@ export function translateEndpoint(endpoint: ApiHintEndpoint): EnrichedToolCall |
   return null;
 }
 
+// Hints a write route put on its response ENVELOPE ({ status, data, hints }), lifted out and
+// enriched so a model sees them beside the write's message rather than buried in `nest`.
+// PUT/PATCH nests/:id answers this way when an edit to instructions (title, description,
+// purpose) changes what a role's agents may use; that is advice about the write the model
+// has to pass on now, not something to find later. `rest` is the response without them.
+export function writeEnvelopeHints(result: unknown): { hints?: Hint[]; rest: unknown; tellThePerson?: string } {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return { rest: result };
+  const envelope = result as Record<string, unknown>;
+  // Only an envelope: a bare nest's own `hints` are about the nest, and stay on it.
+  if (!("data" in envelope) || !Array.isArray(envelope.hints) || envelope.hints.length === 0) {
+    return { rest: result };
+  }
+  const { hints: raw, ...rest } = envelope;
+  const hints = (enrichHints({ hints: raw }) as { hints: Hint[] }).hints;
+  const paused = hints.filter((hint) => { return hint.type === "connector_paused_by_instruction_edit"; });
+  return {
+    hints,
+    rest,
+    ...(paused.length
+      ? { tellThePerson: paused.map((hint) => { return hint.label; }).join(" ") }
+      : {}),
+  };
+}
+
+// The result of an update, with any write-time hints lifted to the top (see above).
+function updatedNestResult(nest: unknown): Record<string, unknown> {
+  const { hints, rest, tellThePerson } = writeEnvelopeHints(nest);
+  return {
+    message: tellThePerson
+      ? "Nest updated successfully. Before anything else, tell the person you are helping what this edit paused (see tellThePerson)."
+      : "Nest updated successfully",
+    _id: writtenId(nest),
+    ...(tellThePerson ? { tellThePerson } : {}),
+    ...(hints ? { hints } : {}),
+    nest: rest,
+  };
+}
+
+// What a connection row with pendingInstructionApprovals means, said once per row that has
+// them. The row's `health` still reads as working, because manual runs do work, so without
+// this the one thing wrong with the connector is an array a model has to interpret.
+export const INSTRUCTION_APPROVAL_NOTE =
+  "Held back on scheduled runs until someone this connector is shared with, or a workspace admin, "
+  + "approves the role's latest instructions (they were edited by someone outside its audience, or by an "
+  + "author Nestr cannot name). The credential is fine, manual runs still work, and changing the "
+  + "connector's settings will not release it. To release it, a person opens commentUrl and presses "
+  + "Approve (or uses Approve on the role page), or someone it is shared with reconnects it. Approving "
+  + "re-runs the paused run. canApprove says whether you, the caller, are in its audience; an agent "
+  + "cannot approve on a person's behalf, so tell the person you are helping and give them the link.";
+
+// A page path made a link a person can click; anything already absolute is left as it is.
+function absoluteWebUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  return path.startsWith("/") ? `${NESTR_WEB_BASE}${path}` : path;
+}
+
+// The instruction-approval hints tell the model to hand over these links, so they must be clickable
+// whether the API sent them absolute or as app paths.
+const INSTRUCTION_APPROVAL_HINT_TYPES = new Set([
+  "connector_awaiting_instruction_approval",
+  "connector_paused_by_instruction_edit",
+]);
+
+// Each pending approval's ask-comment path made absolute, so it is a link to hand over, and
+// the note above added to every row that has any. Rows without are returned untouched.
+export function withInstructionApprovalNotes<T>(connections: T): T {
+  if (!Array.isArray(connections)) return connections;
+  return connections.map((row) => {
+    const pending = row && (row as ConnectionListing).pendingInstructionApprovals;
+    if (!Array.isArray(pending) || pending.length === 0) return row;
+    return {
+      ...row,
+      instructionApprovalNote: INSTRUCTION_APPROVAL_NOTE,
+      pendingInstructionApprovals: pending.map((entry: PendingInstructionApproval) => {
+        return { ...entry, commentUrl: absoluteWebUrl(entry.commentUrl || entry.commentPath) };
+      }),
+    };
+  }) as T;
+}
+
+// The id of the object a write tool just created or updated. REST writes answer
+// { status, data: <object> }, a few client methods unwrap that, and the
+// self-organization routes can answer with a list, so look in each place, and only
+// there: one envelope level down and no further. A nest's own `data` store and its
+// `fields` hold objects too, and a peel that kept descending would land in one of them.
+export function writtenId(result: unknown): string | undefined {
+  const own = idOf(result);
+  if (own !== undefined) return own;
+  const top = Array.isArray(result) ? result[0] : result;
+  return top && typeof top === "object" ? idOf((top as { data?: unknown }).data) : undefined;
+}
+
+function idOf(value: unknown): string | undefined {
+  const obj = Array.isArray(value) ? value[0] : value;
+  if (!obj || typeof obj !== "object") return undefined;
+  const id = (obj as { _id?: unknown })._id;
+  return typeof id === "string" ? id : undefined;
+}
+
 // Nestr re-points a comment aimed at a message inside a DM onto the conversation, since
 // DM threads are flat. The created post carries the parent it actually landed on, so say
 // so when it differs from the id the caller passed.
 export function commentPlacementNote(
   requestedNestId: string,
-  post: { parentId?: string } | null | undefined
+  post: { parentId?: string; data?: { parentId?: string } } | null | undefined
 ): string | null {
-  const landedOn = post?.parentId;
+  // POST /nests/:id/posts answers { status, data: <post> }; a bare post is accepted too.
+  const landedOn = post?.data?.parentId ?? post?.parentId;
   if (!landedOn || landedOn === requestedNestId) return null;
   return (
     `Placed on ${landedOn}, not the ${requestedNestId} you passed. ` +
@@ -382,6 +808,120 @@ export function commentPlacementNote(
 
 // Enrich hints with tool call parameters so models can act on hints directly.
 // Extracts workspaceId from nest ancestors (last element) for search-based hints.
+// Canonical web URL for a nest in the Nestr app.
+// Pattern: /n/{parentId}/{id} when a parent context is known, /n/{id} otherwise.
+// Parent 'inbox' is treated as no parent — inbox is not a navigable container.
+//
+// The host comes from the API base this server was pointed at, because these URLs are
+// handed to a person and have to open on the Nestr they are using. Hardcoding the
+// production host meant a self-hosted or local deployment answered with app.nestr.io
+// links for nests that only exist on their own server — a wrong link, confidently given,
+// which is the failure this whole area keeps producing. Hint URLs do not need this:
+// Nestr sends those absolute already. This is for the URLs this server mints itself.
+export function nestrWebBase(apiBase?: string): string {
+  const base = apiBase || "https://app.nestr.io/api";
+  return base.replace(/\/api\/?$/, "").replace(/\/+$/, "") || "https://app.nestr.io";
+}
+
+const NESTR_WEB_BASE = nestrWebBase(process.env.NESTR_API_BASE);
+
+/**
+ * Turn the tool-level `hints` argument into what the API should be sent.
+ *
+ * `false` means none. A level passes through. `undefined` and `true` both take the
+ * caller-appropriate default, which differs by call shape on purpose: a single read
+ * wants the teaching prose, a listing wants it once from nestr_help rather than once
+ * per row.
+ */
+export function resolveHintLevel(
+  value: boolean | "full" | "summary" | undefined,
+  fallback: "full" | "summary",
+): "full" | "summary" | false {
+  if (value === false) return false;
+  if (value === "full" || value === "summary") return value;
+  return fallback;
+}
+
+/**
+ * Append `strict:true` unless the caller already asked for it.
+ *
+ * Without it an unrecognised operator, label or field filter is silently dropped and the
+ * search returns a broader result that looks like a real answer. That is fine for
+ * browsing and wrong for counting, so the tool exposes it as a flag rather than making
+ * every caller remember the operator.
+ */
+export function withStrict(query: string, strict?: boolean): string {
+  if (!strict) return query;
+  if (/(^|\s)strict:true(\s|$)/i.test(query)) return query;
+  return `${query} strict:true`;
+}
+
+interface ApiSpecFilter {
+  search?: string;
+  path?: string;
+}
+
+/**
+ * Reduce an OpenAPI document to something a model can read.
+ *
+ * The whole document is far too large to return, and returning nothing useful is how a
+ * caller ends up guessing whether an endpoint exists. So: an operation index by default,
+ * one operation in full when asked for by path, and a keyword filter in between. The
+ * counts matter as much as the rows — "0 of 94 operations match 'duration'" is the
+ * answer to "does the API store meeting duration", and it is a real negative rather than
+ * a failed search.
+ */
+export function summariseApiSpec(spec: Record<string, unknown>, filter: ApiSpecFilter = {}): unknown {
+  const paths = (spec?.paths || {}) as Record<string, Record<string, { summary?: string; description?: string }>>;
+  const allPaths = Object.keys(paths);
+
+  if (filter.path) {
+    const match = allPaths.find((p) => { return p === filter.path; })
+      || allPaths.find((p) => { return p.toLowerCase() === filter.path!.toLowerCase(); });
+    if (!match) {
+      return {
+        found: false,
+        requested: filter.path,
+        totalPaths: allPaths.length,
+        note: "No such path in this deployment's spec. This is a definitive negative, not a failed lookup.",
+        // Intentionally broad rather than precise: the first path segment, so
+        // `/nests/{id}/nonsense` suggests everything under `/nests/`. A caller who got the
+        // path wrong usually has the resource right, and a wide list they can scan beats a
+        // narrow one that misses the route they meant. Capped so it stays readable.
+        didYouMean: allPaths.filter((p) => { return p.includes(filter.path!.split("/")[1] || ""); }).slice(0, 10),
+      };
+    }
+    return { found: true, path: match, operations: paths[match] };
+  }
+
+  const rows: { method: string; path: string; summary: string }[] = [];
+  for (const p of allPaths) {
+    for (const [method, op] of Object.entries(paths[p] || {})) {
+      if (typeof op !== "object" || op === null) continue;
+      const summary = (op.summary || op.description || "").split("\n")[0].slice(0, 160);
+      rows.push({ method: method.toUpperCase(), path: p, summary });
+    }
+  }
+
+  const needle = filter.search?.toLowerCase();
+  const matched = needle
+    ? rows.filter((r) => {
+      return r.path.toLowerCase().includes(needle) || r.summary.toLowerCase().includes(needle);
+    })
+    : rows;
+
+  return {
+    totalOperations: rows.length,
+    matchedOperations: matched.length,
+    ...(needle ? { query: filter.search } : {}),
+    ...(needle && matched.length === 0
+      ? { note: `No operation mentions "${filter.search}". This deployment does not serve one, which is a definitive answer rather than a failed search.` }
+      : {}),
+    operations: matched.slice(0, 200),
+    ...(matched.length > 200 ? { truncated: true } : {}),
+  };
+}
+
 export function enrichHints<T>(data: T): T {
   if (!data || typeof data !== "object") return data;
 
@@ -390,13 +930,17 @@ export function enrichHints<T>(data: T): T {
     return data.map((item) => enrichHints(item)) as T;
   }
 
-  // Handle wrapped responses { data: [...] }
-  if ("data" in data && Array.isArray((data as Record<string, unknown>).data)) {
-    return { ...data, data: enrichHints((data as Record<string, unknown>).data) } as T;
+  // Handle wrapped responses { data: [...] }. Enrich the payload, then fall through so
+  // the envelope's OWN hints are enriched too: a posts response carries unread_posts
+  // beside its data, and returning here left that hint as a bare URL.
+  let subject = data as Record<string, unknown>;
+  if ("data" in subject && Array.isArray(subject.data)) {
+    subject = { ...subject, data: enrichHints(subject.data) };
+    if (!Array.isArray(subject.hints)) return subject as T;
   }
 
   // Enrich hints on this nest
-  const record = data as Record<string, unknown>;
+  const record = subject;
   if (Array.isArray(record.hints)) {
     // Extract workspaceId from ancestors (last element is always the workspace)
     const ancestors = record.ancestors as string[] | undefined;
@@ -415,13 +959,19 @@ export function enrichHints<T>(data: T): T {
       } else if (hint.url) {
         // Legacy: single URL → toolCall. Kept for backwards compatibility with
         // hints that pre-date the endpoints[] payload.
-        let rawUrl = hint.url;
-        const apiPrefixMatch = rawUrl.match(/^https?:\/\/[^/]+\/api(\/.*)/);
-        if (apiPrefixMatch) rawUrl = apiPrefixMatch[1];
+        // Strip an optional host, then an optional /api prefix. Previously only the
+        // host-qualified form was handled, so a bare "/api/..." hint matched no pattern
+        // and was reported as unrecognized. normalizeEndpointPath does both for the
+        // endpoints[] payload; this is the same rule for the legacy url field.
+        let rawUrl = hint.url.replace(/^https?:\/\/[^/]+/, "");
+        rawUrl = rawUrl.replace(/^\/api(?=\/)/, "");
         const [path, queryString] = rawUrl.split("?");
         const searchParams = new URLSearchParams(queryString || "");
-        let matched = false;
-        for (const { pattern, tool, params } of HINT_URL_PATTERNS) {
+        // `/n/...` is a page a PERSON opens (the instruction-approval hint points at its
+        // ask comment this way), not a route: there is no call to map it to, and logging
+        // it as unrecognised would make a deliberate link look like a gap.
+        let matched = /^\/n\//.test(path);
+        for (const { pattern, tool, params } of matched ? [] : HINT_URL_PATTERNS) {
           const match = path.match(pattern);
           if (match) {
             enriched.toolCall = { tool, params: params(match, searchParams, workspaceId) };
@@ -431,6 +981,21 @@ export function enrichHints<T>(data: T): T {
         }
         if (!matched) {
           console.error(`[nestr-mcp] Unrecognized hint URL pattern: "${hint.url}" (hint type: ${hint.type})`);
+        }
+      }
+
+      const guidance = HINT_TYPE_GUIDANCE[hint.type];
+      if (guidance) enriched.guidance = guidance;
+
+      if (INSTRUCTION_APPROVAL_HINT_TYPES.has(hint.type)) {
+        if (typeof enriched.url === "string") enriched.url = absoluteWebUrl(enriched.url) || enriched.url;
+        const connectors = (enriched as { connectors?: unknown }).connectors;
+        if (Array.isArray(connectors)) {
+          (enriched as { connectors?: unknown }).connectors = connectors.map((entry) => {
+            if (!entry || typeof entry !== "object" || !("commentUrl" in entry)) return entry;
+            const link = (entry as { commentUrl?: string | null }).commentUrl;
+            return { ...entry, commentUrl: absoluteWebUrl(link) };
+          });
         }
       }
 
@@ -449,17 +1014,82 @@ export function enrichHints<T>(data: T): T {
     });
   }
 
-  return data;
+  // subject, not data: the wrapped-response branch above works on a copy, so returning
+  // `data` would discard both the enriched payload and the enriched envelope hints.
+  return subject as T;
 }
 
-// Canonical web URL for a nest in the Nestr app.
-// Pattern: /n/{parentId}/{id} when a parent context is known, /n/{id} otherwise.
-// Parent 'inbox' is treated as no parent — inbox is not a navigable container.
-const NESTR_WEB_BASE = "https://app.nestr.io";
+// Which of the PARENT's tabs holds a child carrying this label, keyed by the
+// API-facing label name (the API strips `circleplus-` and renames
+// prepared-tension to tension, so these are the names that actually arrive).
+//
+// This is the reverse of the `labels: [...]` declarations the tab definitions
+// already carry in slashme-online `packages/nestr_circleplus/lib/tabs.js`: the
+// Projects tab declares it holds project / individual-action / sprint / epic,
+// the Roles tab declares role / circle, and so on. A few tabs (Goals, Todos,
+// Metrics on a circle) express the same containment as a `searchTerm` rather
+// than a labels array, so those entries are read off the search and written
+// here by hand.
+//
+// Why a static map rather than asking the server which tab contains this nest:
+// the precise answer needs the PARENT's resolved tab set, and getTabs() on the
+// server evaluates the circleplus tab callback (a walk through getWorkspace,
+// getData and TAPi18n). translateNest runs per row on every search and children
+// response, so that is a per-row cost on the hot path for a link most rows never
+// need. A wrong guess costs nothing: listview_lists falls back to the nest's
+// default tab when the hash names no available tab, which is exactly the
+// hashless behaviour we have today.
+const LABEL_CONTAINING_TAB: Readonly<Record<string, string>> = {
+  project: "projects",
+  "individual-action": "projects",
+  sprint: "projects",
+  epic: "projects",
+  task: "tasks",
+  role: "roles",
+  circle: "roles",
+  "anchor-circle": "roles",
+  domain: "policies",
+  policy: "policies",
+  meeting: "meetings",
+  governance: "meetings",
+  tactical: "meetings",
+  tension: "meetings",
+  metric: "metrics",
+  checklist: "checklists",
+  goal: "goals",
+  result: "goals",
+  skill: "skills",
+  feedback: "feedback",
+  note: "notes",
+};
 
-function buildNestUrl(id: string, parentId: string | undefined): string {
+// The tab on the parent that a person opens to SEE this nest in its list.
+// First label wins, so a scrum story labelled ["project", "userstory"] resolves
+// through `project` and lands on Projects.
+export function containingTabHash(labels: unknown): string | undefined {
+  if (!Array.isArray(labels)) return undefined;
+  for (const label of labels) {
+    if (typeof label !== "string") continue;
+    const tab = LABEL_CONTAINING_TAB[label];
+    if (tab) return tab;
+  }
+  return undefined;
+}
+
+// A nest URL without a `#` is NOT a stable link. listview_lists reads the tab
+// from localStorage `<nestId>_preferred_header`, so the same link opens whichever
+// tab that particular person last used on that particular nest, and a first-time
+// visitor gets the container's first tab — which for a circle is Structure >
+// About, not the work they were sent to look at. Carrying the hash is what makes
+// the link mean the same thing to everyone.
+//
+// The hash belongs to the LEFT pane, which in the two-id form is the parent, so
+// it is only appended there. On the bare `/n/{id}` form the hash would select a
+// tab on the nest ITSELF, and `#projects` on a project means nothing.
+function buildNestUrl(id: string, parentId: string | undefined, labels?: unknown): string {
   if (parentId && parentId.toLowerCase() !== "inbox") {
-    return `${NESTR_WEB_BASE}/n/${parentId}/${id}`;
+    const tab = containingTabHash(labels);
+    return `${NESTR_WEB_BASE}/n/${parentId}/${id}${tab ? `#${tab}` : ""}`;
   }
   return `${NESTR_WEB_BASE}/n/${id}`;
 }
@@ -490,7 +1120,11 @@ export function addNestUrls<T>(data: T): T {
   const out: Record<string, unknown> = { ...record };
 
   if (looksLikeNest(record) && typeof out.url !== "string") {
-    out.url = buildNestUrl(record._id as string, record.parentId as string | undefined);
+    out.url = buildNestUrl(
+      record._id as string,
+      record.parentId as string | undefined,
+      record.labels,
+    );
   }
 
   for (const [key, value] of Object.entries(out)) {
@@ -510,7 +1144,31 @@ const coerceFromJson = <T extends z.ZodTypeAny>(schema: T) =>
       try { return JSON.parse(val); } catch { return val; }
     }
     return val;
-  }, schema) as z.ZodEffects<T, z.output<T>, unknown>;
+  }, schema);
+
+// The instant an occurrence keys on, as integer epoch milliseconds. An ISO-8601 date
+// is accepted only with an explicit Z or offset: without one this host's timezone
+// would silently decide the instant.
+const occurrenceInstant = z.union([z.number(), z.string()]).transform((val, ctx) => {
+  const refuse = (message: string) => {
+    ctx.addIssue({ code: "custom", message });
+    return z.NEVER;
+  };
+  const useListing = "Use the `instant` value from nestr_list_occurrences (integer epoch milliseconds)";
+  if (typeof val === "number") {
+    return Number.isInteger(val) ? val : refuse(`not an instant: ${val}. ${useListing}.`);
+  }
+  const text = val.trim();
+  if (/^-?\d+$/.test(text)) return Number(text);
+  const at = Date.parse(text);
+  if (!Number.isFinite(at)) {
+    return refuse(`not an instant: "${val}". ${useListing}, or an ISO-8601 date with a Z or an offset.`);
+  }
+  if (!/T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/i.test(text)) {
+    return refuse(`"${val}" has no timezone, so which instant it means depends on where this server runs. ${useListing}, or give the date with a Z or an offset.`);
+  }
+  return at;
+});
 
 // Coerce an integer-array param to number[] even when a client serialises it as
 // a string — e.g. a stale/cached tool schema that doesn't know the array type
@@ -532,21 +1190,209 @@ const coerceIntArray = <T extends z.ZodTypeAny>(schema: T) =>
       return toNums(s.replace(/[[\]]/g, '').split(/[\s,]+/).filter(Boolean));
     }
     return val;
-  }, schema) as z.ZodEffects<T, z.output<T>, unknown>;
+  }, schema);
 
 // Shared description for the sort parameter on list/fetch tools. All of these
 // endpoints honor a `sort` query param server-side (field name, '-' prefix for
 // descending) — the same fields the search `sort:` operator uses.
+const MENTION_DESC =
+  "Supports HTML and @mentions. Mentions MUST use literal curly braces: `@{userId:roleId}`, NOT `@userId`. Without braces nothing is linked and nobody is notified. Forms: `@{userId:roleId}` (preferred, names the role), `@{userId}`, `@{email}`, `@{circle}` (all fillers in the nearest ancestor circle). The second id MUST be a ROLE or CIRCLE nest, never the project, task or tension you are commenting on: the mention renders that nest's title where the role name belongs, so a project id produces 'Henk as Write a weekly blog post', which reads as though the project were his role. When you do not know which role the person is acting in, use `@{userId}` rather than substituting the nest you happen to be working on.";
+
+const PRIME_LABEL_RULE =
+  "At most ONE prime label per nest (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback, userstory, sprint, epic, milestone): they are the nest's identity and cannot coexist. Only exception: userstory may pair with project.";
+
+const PURPOSE_DESC =
+  "Only for workspaces, circles and roles: a short aspirational statement. Details belong in description, not here. Supports HTML.";
+
+const CONTENT_DESC =
+  "The primary content field: details, context, acceptance criteria. Structured data goes in fields, progress in comments. Supports Markdown and HTML.";
+
+const START_DESC =
+  "When the item begins: an ISO 8601 date-time, or a yyyy-mm-dd date for a whole day. "
+  + "Set it with due to make a span, which is what the Timeline draws. For whole days send allDay: true "
+  + "with yyyy-mm-dd dates, e.g. start \"2026-10-05\", due \"2026-10-09\"; they read as the same dates in "
+  + "every timezone. A due before the start is refused.";
+const ALL_DAY_DESC =
+  "true when start/due are whole calendar days, false when they are instants. Send it with start/due; "
+  + "yyyy-mm-dd dates imply true.";
+const DUE_DESC =
+  "Due date (ISO 8601, or yyyy-mm-dd). With a start it is the END of the item (a meeting's finish, the last "
+  + "day of a span); without one it is the deadline. For roles: re-election date. null clears it; "
+  + "omitting it leaves it unchanged.";
+
+// A bare code is refused, and a field key cannot be guessed from a title, so the
+// key rule has to be stated where the key is written.
+const FIELD_KEYS_DESC =
+  "Keys are <labelId>.<fieldCode>, e.g. 'project.status'; the server adds the workspace prefix. A bare "
+  + "code ('status') is refused with a 422 whose detail.validKeys lists the keys this nest accepts. Codes "
+  + "can contain hyphens; read them from fieldsMetaData rather than deriving them from a title. See "
+  + "nestr_help('nest-model') for how keys read back.";
+
+// The editable fields of PATCH /nests/:id, shared by nestr_update_nest and
+// nestr_update_occurrence so the two cannot drift apart.
+const nestUpdateFieldSchemas = {
+  title: z.string().optional().describe("New title (plain text, HTML stripped)"),
+  description: z.string().optional().describe("The primary content field — use for project details, task context, acceptance criteria, and any detailed information. Supports Markdown and HTML."),
+  purpose: z.string().optional().describe(PURPOSE_DESC),
+  parentId: z.string().optional().describe("New parent ID (move nest to different location, e.g., move inbox item to a role or project)"),
+  labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to set (e.g., ['project'] to convert an item into a project)"),
+  fields: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe(`Field updates (e.g., { 'project.status': 'Current' }). ${FIELD_KEYS_DESC}`),
+  users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign"),
+  data: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead."),
+  due: z.string().nullable().optional().describe(DUE_DESC),
+  start: z.string().nullable().optional().describe(START_DESC),
+  allDay: z.boolean().nullable().optional().describe(ALL_DAY_DESC),
+  completed: z.boolean().optional().describe("Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead."),
+};
+
+const NEST_UPDATE_FIELD_PROPERTIES = {
+  title: { type: "string", description: "New title (plain text, HTML tags stripped)" },
+  description: { type: "string", description: CONTENT_DESC },
+  purpose: { type: "string", description: PURPOSE_DESC },
+  parentId: { type: "string", description: "New parent ID (move nest to different location)" },
+  labels: {
+    type: "array",
+    items: { type: "string" },
+    description: "Label IDs to set (e.g., ['project'] to convert an item into a project)",
+  },
+  fields: {
+    type: "object",
+    description: `Field updates (e.g., { 'project.status': 'Current' }). ${FIELD_KEYS_DESC}`,
+  },
+  users: {
+    type: "array",
+    items: { type: "string" },
+    description: "User IDs to assign",
+  },
+  data: {
+    type: "object",
+    description: "Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead.",
+  },
+  due: {
+    type: ["string", "null"],
+    description: DUE_DESC,
+  },
+  start: {
+    type: ["string", "null"],
+    description: START_DESC,
+  },
+  allDay: {
+    type: ["boolean", "null"],
+    description: ALL_DAY_DESC,
+  },
+  completed: {
+    type: "boolean",
+    description: "Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead.",
+  },
+};
+
+const HINTS_DESC =
+  "Contextual hints. 'summary' keeps the per-nest signal (type, severity, count, url, and the "
+  + "`query` that finds every other nest with the same problem) and drops the fixed teaching prose "
+  + "and endpoint list. 'full' is the whole payload. false for none.";
+
+// The response shape of a write tool, stated in its description. The REST response
+// stays under its per-tool key, unchanged, so a client that peels by key keeps
+// working; `_id` is the one key every write result shares.
+const writeReturns = (key: string, what: string, extra = "") =>
+  ` Returns { message, _id, ${extra}${key} }: _id is the ${what}'s id, and ${key} is the API `
+  + `response, { status, data: <the ${what}> }.`;
+
+const STRIP_DESCRIPTION =
+  "Strip description fields to shrink the response. Use for bulk or index reads.";
+
+// Descriptions are stored as HTML. Plain text is the cheaper default, but it flattens
+// paragraphs and line breaks and drops markup, so a code block or anything else whose
+// layout carries meaning needs the stored form.
+const CLEAN_TEXT_DESC =
+  "true (default): descriptions come back as plain text, which flattens paragraphs and line "
+  + "breaks and drops markup. false: descriptions come back as the stored HTML, so line breaks, "
+  + "lists and code blocks survive. Use false when the layout of a description matters.";
+
+// A text tab's body sits in `fields` under `<tabId>_texttab`: a page of notes per row.
+const LIST_TEXT_TAB_NOTE =
+  " Rows leave out text tab bodies (`fields` keys ending in `_texttab`); read those with nestr_get_nest.";
+
 const SORT_DESCRIPTION =
-  "Field to sort by, e.g. 'title', 'createdAt', 'updatedAt', 'due', 'activityAt', 'order' (manual order). Prefix with '-' for descending. For 'recently active' ordering use '-activityAt' (last activity anywhere in the item, including its children); '-updatedAt' only reflects the item's own edits.";
+  "Sort field: title, createdAt, updatedAt, due, activityAt, order. Prefix '-' to reverse. For 'recently active' use '-activityAt' (includes children), not '-updatedAt' (own edits only).";
 
 // Tool input schemas using Zod
+/**
+ * `hints` is a level, not a flag. `summary` keeps what varies per nest and drops the
+ * teaching prose and endpoint list, which are identical for every nest of a type; `full`
+ * is the whole payload. Booleans still work: the API reads a bare `true` on a listing as
+ * `summary`, which is the difference between one paragraph and fifty copies of it.
+ */
+const hintLevelSchema = z.union([z.boolean(), z.enum(["full", "summary"])]).optional();
+
+const hintFilterSchemas = {
+  hintTypes: coerceFromJson(z.array(z.string())).optional()
+    .describe("Keep only these hint types, e.g. ['project_waiting_no_reason','unassigned_role']."),
+  minSeverity: z.enum(["info", "suggestion", "warning", "alert"]).optional()
+    .describe("Drop hints below this severity. 'warning' is the useful floor when sweeping."),
+};
+
+const linkedUsersSchema = z.boolean().optional()
+  .describe("Resolve every user id in the results to a full user, returned once in linked.users.");
+
 export const schemas = {
   listWorkspaces: z.object({
     search: z.string().optional().describe("Search query to filter workspaces"),
     sort: z.string().optional().describe(SORT_DESCRIPTION),
-    limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
+    limit: z.number().optional().describe("Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page."),
     page: z.number().optional().describe("Page number (1-indexed) for pagination"),
+  }),
+
+  listDMs: z.object({
+    withUser: z.string().optional().describe("Only threads with this person: their user id, username or email. Use 'nestr_support' for your Nestradamus conversation. Errors if you cannot message them."),
+    unread: z.boolean().optional().describe("true returns only threads with messages you have not read"),
+    includeCompleted: z.boolean().optional().describe("true also returns closed conversations. They are left out by default."),
+    limit: z.number().optional().describe("Threads per page (default 50, max 200)"),
+    page: z.number().optional().describe("Page number, 1-based"),
+  }),
+
+  startDMThread: z.object({
+    user: z.string().describe("Who to message: their user id, username or email. Must be someone you share a workspace with, or already have a conversation with."),
+    title: z.string().optional().describe("Optional thread title. Defaults to a dated one, as the app uses."),
+  }),
+
+  listQueues: z.object({}),
+
+  listQueueThreads: z.object({
+    key: z.string().describe("Queue key, e.g. 'support'. From nestr_list_queues."),
+    unread: z.boolean().optional().describe("true returns only threads you have not read"),
+  }),
+
+  getDMThread: z.object({
+    threadId: z.string().describe("Thread id"),
+    unread: z.boolean().optional().describe("true embeds the posts you have not read, false the ones you have. Omit for the thread alone."),
+  }),
+
+  updateDMThread: z.object({
+    threadId: z.string().describe("Thread id"),
+    title: z.string().optional().describe("New thread title"),
+    completed: z.boolean().nullable().optional().describe("true closes the conversation, null reopens it. A closed one drops out of nestr_list_dms unless includeCompleted is set, and stays readable and postable by id. Repeating a state changes nothing."),
+    users: z.array(z.string()).optional().describe("The participant list you want, replacing the current one — read it from nestr_get_dm_thread first. Anyone you add sees the whole thread and must be someone you share a workspace with; the bot and the person who raised the thread cannot be removed. Leave a conversation by sending the list without yourself."),
+  }),
+
+  getDMPosts: z.object({
+    threadId: z.string().describe("Thread id"),
+    unread: z.boolean().optional().describe("true for posts you have not read, false for the ones you have. Omit for all."),
+    depth: z.union([z.number(), z.literal("all")]).optional().describe("Include posts on descendant nests"),
+  }),
+
+  createDMPost: z.object({
+    threadId: z.string().describe("Thread id"),
+    body: z.string().describe("Message text. Supports HTML and Markdown."),
+  }),
+
+  markPostRead: z.object({
+    postId: z.string().describe("Post to mark read up to. Everything up to and including it becomes read."),
+  }),
+
+  escalateToSupport: z.object({
+    threadId: z.string().describe("Thread id to escalate. It must be a conversation Nestradamus is in."),
+    reason: z.string().describe("One or two sentences for whoever picks this up: what is needed and what has been tried."),
   }),
 
   getWorkspace: z.object({
@@ -568,20 +1414,25 @@ export const schemas = {
   search: z.object({
     workspaceId: z.string().describe("Workspace ID to search in"),
     query: z.string().describe("Search query"),
+    strict: z.boolean().optional().describe("Reject the search if any operator, label or field filter in it was not recognised, instead of silently returning a broader result. Use it whenever you are counting rather than browsing: without it a typo'd filter reads as a real, larger answer."),
+    linkedUsers: linkedUsersSchema,
     sort: z.string().optional().describe(`${SORT_DESCRIPTION} Takes precedence over sort:/sort-order: operators in the query.`),
-    limit: z.number().optional().describe("Max results per page. Omit on first call to see meta.total count."),
+    limit: z.number().optional().describe("Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page."),
     page: z.number().optional().describe("Page number (1-indexed) for pagination"),
+    cleanText: z.boolean().optional().describe(CLEAN_TEXT_DESC),
     _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Marketing projects\", \"Overdue tasks\"). Omit for default."),
   }),
 
   getNest: z.object({
     nestId: z.string().describe("Nest ID. Supports comma-separated IDs to fetch multiple nests in one call (e.g., 'id1,id2,id3') — returns an array instead of a single object. Keep total URL under 2000 chars to avoid HTTP limits."),
-    fieldsMetaData: z.boolean().optional().describe("Set to true to include field schema metadata (e.g., available options for project.status). Entries carrying proxySource name another nest the field lives on: writes go there and are authorised there"),
-    hints: z.boolean().optional().describe("Include contextual hints on each nest (default: true). Hints surface actionable signals like unassigned roles, stale projects, or unread comments. Set to false for bulk lookups where you only need structural data, not contextual guidance."),
+    fieldsMetaData: z.boolean().optional().describe("Set to true to include the declared field schema of every label on the nest (type, title, code, options, conditions), including fields that hold no value on this nest. nestr_get_label reads the same declarations off the label itself. Entries carrying proxySource name another nest the field lives on: writes go there and are authorised there."),
+    hints: hintLevelSchema.describe("Contextual hints: 'full' (default on a single read), 'summary', or false. 'summary' keeps type, severity, count, url and the sibling query, and drops the teaching prose and endpoints. Hints surface signals like unassigned roles, stale projects or unread comments."),
+    ...hintFilterSchemas,
     provenance: z.boolean().optional().describe("Single-nest only. Include field/property provenance: which label (and circle context) defines each field and property."),
     rights: z.boolean().optional().describe("Single-nest only. Include the caller's composed rights on the nest plus a deny trace naming the profiles that block each op."),
-    forUser: z.string().optional().describe("Single-nest only, with rights=true. Report rights for this user id instead of the caller. Requires the caller to be an admin of the nest."),
+    forUser: z.string().optional().describe("Single nest, with rights=true. Rights for this user id instead of the caller. Caller must be a nest admin."),
     whoCan: z.string().optional().describe("Single-nest only. Comma-separated ops (read,update,delete,create) to list who can perform each on this nest."),
+    cleanText: z.boolean().optional().describe(CLEAN_TEXT_DESC),
   }),
   explainNest: z.object({
     nestId: z.string().describe("The nest to diagnose (a single id)."),
@@ -591,21 +1442,40 @@ export const schemas = {
 
   getNestChildren: z.object({
     nestId: z.string().describe("Parent nest ID"),
+    search: z.string().optional().describe("Search scoped to this nest, full operator syntax. Ask for the subset you want rather than fetching every child and filtering: 'label:role' for a circle's roles, 'label:project fields.project.status:Waiting' for its waiting projects. depth:1 is applied when you set no depth, and the response says so in appliedDefaults."),
     sort: z.string().optional().describe(SORT_DESCRIPTION),
-    limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
+    limit: z.number().optional().describe("Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page."),
     page: z.number().optional().describe("Page number for pagination"),
-    hints: z.boolean().optional().describe("Include contextual hints on each child nest (default: true). Set to false for large result sets or bulk operations where contextual signals aren't needed."),
+    hints: hintLevelSchema.describe("Contextual hints: 'summary' (default on a listing), 'full', or false. A listing at 'full' repeats the same teaching prose once per row."),
+    ...hintFilterSchemas,
+    linkedUsers: linkedUsersSchema,
+    cleanText: z.boolean().optional().describe(CLEAN_TEXT_DESC),
     _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Tasks for Website Redesign\"). Omit for default."),
+  }),
+
+  hintsRollup: z.object({
+    nestId: z.string().describe("Nest to roll up. A circle or workspace root is the useful scope."),
+    hintTypes: coerceFromJson(z.array(z.string())).optional().describe("Count only these hint types."),
+    minSeverity: z.enum(["info", "suggestion", "warning", "alert"]).optional().describe("Drop rules below this severity."),
+    sampleSize: z.number().optional().describe("Example nests per type. Default 10, max 100, 0 for counts only."),
+  }),
+
+  apiSpec: z.object({
+    search: z.string().optional().describe("Filter operations by keyword against path and summary, e.g. 'meeting' or 'tension'."),
+    path: z.string().optional().describe("Return the full schema for one path, e.g. '/nests/{id}/children'."),
   }),
 
   createNest: z.object({
     parentId: z.string().describe("Parent nest ID (workspace, circle, or project)"),
     title: z.string().describe("Title of the new nest (plain text, HTML stripped)"),
     description: z.string().optional().describe("The primary content field — use for project details, task context, acceptance criteria, Definition of Done, and any detailed information. Supports Markdown and HTML."),
-    purpose: z.string().optional().describe("ONLY for workspaces, circles, and roles — a short aspirational statement of the future state this entity serves. Do NOT put project details, task context, or general information here; use description instead. Supports HTML."),
+    purpose: z.string().optional().describe(PURPOSE_DESC),
     labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to apply"),
-    fields: coerceFromJson(z.record(z.unknown())).optional().describe("Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call."),
+    fields: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe(`Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call. ${FIELD_KEYS_DESC}`),
     users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
+    start: z.string().optional().describe(START_DESC),
+    allDay: z.boolean().optional().describe(ALL_DAY_DESC),
+    due: z.string().optional().describe("Due date (ISO 8601). SET THIS whenever the item is meant to happen at a time. It is a field, not a title: the sweep that fires dated work reads `due` and nothing else, so a task called \"Daily digest, 28 Aug\" with no due is invisible to it and simply never runs, with nothing anywhere saying so. For projects/tasks: the deadline, or the end when a start is set."),
     accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes an accountability child nest."),
     domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes a domain child nest."),
     workspaceId: z.string().optional().describe("Workspace ID. Required when creating roles/circles with accountabilities or domains (used to route to the self-organization API)."),
@@ -613,16 +1483,7 @@ export const schemas = {
 
   updateNest: z.object({
     nestId: z.string().describe("Nest ID to update"),
-    title: z.string().optional().describe("New title (plain text, HTML stripped)"),
-    description: z.string().optional().describe("The primary content field — use for project details, task context, acceptance criteria, and any detailed information. Supports Markdown and HTML."),
-    purpose: z.string().optional().describe("ONLY for workspaces, circles, and roles — a short aspirational statement. Do NOT put project details, task context, or general information here; use description instead. Supports HTML."),
-    parentId: z.string().optional().describe("New parent ID (move nest to different location, e.g., move inbox item to a role or project)"),
-    labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to set (e.g., ['project'] to convert an item into a project)"),
-    fields: coerceFromJson(z.record(z.unknown())).optional().describe("Field updates (e.g., { 'project.status': 'Current' })"),
-    users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign"),
-    data: coerceFromJson(z.record(z.unknown())).optional().describe("Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead."),
-    due: z.string().optional().describe("Due date (ISO format). For projects/tasks: deadline. For roles: re-election date. For meetings: start time."),
-    completed: z.boolean().optional().describe("Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead."),
+    ...nestUpdateFieldSchemas,
     accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles for roles/circles (replaces existing). Only used when updating a role or circle. Requires workspaceId."),
     domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles for roles/circles (replaces existing). Only used when updating a role or circle. Requires workspaceId."),
     workspaceId: z.string().optional().describe("Workspace ID. Required when updating accountabilities or domains on roles/circles."),
@@ -634,13 +1495,13 @@ export const schemas = {
 
   addComment: z.object({
     nestId: z.string().describe("Nest ID to comment on"),
-    body: z.string().describe("Comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)."),
-    labels: z.array(z.string()).optional().describe("Optional label IDs to attach to the comment at creation time (e.g., 'decision', 'question', or a custom label ID). Personal labels are auto-scoped to the authenticated user. Use nestr_list_labels / nestr_list_personal_labels to discover IDs."),
+    body: z.string().describe(`Comment text. ${MENTION_DESC}`),
+    labels: z.array(z.string()).optional().describe("Optional label IDs to attach at creation (e.g. 'decision', 'question', or a custom ID). Personal labels are auto-scoped to the caller. Discover IDs via nestr_list_labels / nestr_list_personal_labels."),
   }),
 
   updateComment: z.object({
     commentId: z.string().describe("Comment ID to update"),
-    body: z.string().describe("Updated comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)."),
+    body: z.string().describe(`Updated comment text. ${MENTION_DESC}`),
     labels: z.array(z.string()).optional().describe("Optional full set of label IDs for the comment. When provided, this REPLACES the comment's existing labels. To incrementally add or remove a single label without replacing the rest, use nestr_add_label / nestr_remove_label with the commentId as the nestId."),
   }),
 
@@ -651,7 +1512,7 @@ export const schemas = {
   listCircles: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     sort: z.string().optional().describe(SORT_DESCRIPTION),
-    limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
+    limit: z.number().optional().describe("Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page."),
     page: z.number().optional().describe("Page number for pagination"),
   }),
 
@@ -659,15 +1520,16 @@ export const schemas = {
     workspaceId: z.string().describe("Workspace ID"),
     circleId: z.string().describe("Circle ID"),
     sort: z.string().optional().describe(SORT_DESCRIPTION),
-    limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
+    limit: z.number().optional().describe("Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page."),
     page: z.number().optional().describe("Page number for pagination"),
   }),
 
   listRoles: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     sort: z.string().optional().describe(SORT_DESCRIPTION),
-    limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
+    limit: z.number().optional().describe("Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page."),
     page: z.number().optional().describe("Page number for pagination"),
+    linkedUsers: linkedUsersSchema,
   }),
 
   listUserRoles: z.object({
@@ -691,6 +1553,7 @@ export const schemas = {
   listUsers: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     search: z.string().optional().describe("Search by name or email"),
+    agents: z.enum(["only", "exclude"]).optional().describe("'only' for this workspace's agents, 'exclude' for its people. Omit for both."),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
   }),
@@ -705,14 +1568,17 @@ export const schemas = {
   getProjects: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     sort: z.string().optional().describe(SORT_DESCRIPTION),
-    limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
+    limit: z.number().optional().describe("Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page."),
     page: z.number().optional().describe("Page number for pagination"),
+    linkedUsers: linkedUsersSchema,
+    cleanText: z.boolean().optional().describe(CLEAN_TEXT_DESC),
     _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Engineering projects\"). Omit for default."),
   }),
 
   getComments: z.object({
     nestId: z.string().describe("Nest ID to get comments from. Pass a workspace ID to gather communication across the whole workspace (combine with depth='all')."),
     depth: z.union([z.number(), z.literal("all")]).optional().describe("How deep below the context nest to look for comments. 0 (default) returns only comments directly on this nest; N includes comments on descendants up to N levels deep; 'all' includes comments on this nest and every descendant. Use 'all' on a workspace or circle nest to analyse large sets of communication in one call."),
+    unread: z.boolean().optional().describe("true for comments you have not read, false for the ones you have. Omit for all."),
   }),
 
   getCircle: z.object({
@@ -749,6 +1615,13 @@ export const schemas = {
     workspaceId: z.string().describe("Workspace ID"),
   }),
 
+  workspaceDocs: z.object({
+    workspaceId: z.string().optional(),
+    search: z.string().optional(),
+    fileId: z.string().optional(),
+    offset: z.number().optional(),
+  }),
+
   // Inbox tools (require OAuth token)
   listInbox: z.object({
     completedAfter: z.string().optional().describe("Include completed items from this date (ISO format). If omitted, only non-completed items are returned. For reordering, this default is usually sufficient — nestr_reorder_inbox only requires the IDs of items you want to reposition."),
@@ -768,7 +1641,7 @@ export const schemas = {
     title: z.string().optional().describe("Updated title (plain text, HTML stripped)"),
     description: z.string().optional().describe("Updated description (supports Markdown and HTML)"),
     completed: z.boolean().optional().describe("Mark as completed (processed)"),
-    data: coerceFromJson(z.record(z.unknown())).optional().describe("Custom data storage"),
+    data: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Custom data storage"),
   }),
 
   reorderInbox: z.object({
@@ -822,6 +1695,35 @@ export const schemas = {
     nestIds: coerceFromJson(z.array(z.string())).describe("Array of nest IDs in the desired order"),
   }),
 
+  // Schedule / recurrence
+  setRecurrence: z.object({
+    nestId: z.string().describe("Nest ID to set or remove recurrence on"),
+    rrule: z.string().nullable().describe("RFC-5545 RRULE string (e.g. 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=10') to set recurrence, or null to remove it. Required: pass null explicitly to remove rather than omitting the field."),
+  }),
+
+  listOccurrences: z.object({
+    nestId: z.string().describe("The series, or any occurrence of it. Both resolve to the same series."),
+    direction: z.enum(["future", "past"]).optional().describe("'future' (default) lists upcoming occurrences, soonest first. 'past' lists history, most recent first."),
+    cursor: z.union([z.number(), z.string()]).optional().describe("Walk outward from this instant, exclusive. Pass back the nextCursor from the previous page. Defaults to now."),
+    limit: z.number().optional().describe("Occurrences per page. Default 10, capped at 50."),
+  }),
+
+  skipOccurrence: z.object({
+    nestId: z.string().describe("The series, or any occurrence of it."),
+    instant: occurrenceInstant.describe("Which occurrence. Use the `instant` value from nestr_list_occurrences verbatim."),
+    scope: z.enum(["occurrence", "following"]).optional().describe("'occurrence' (default) skips this one and never ends the series. 'following' deletes this one and every later one."),
+  }),
+
+  updateOccurrence: z.object({
+    nestId: z.string().describe("The series, or any occurrence of it."),
+    instant: occurrenceInstant.describe("Which occurrence. Use the `instant` value from nestr_list_occurrences verbatim."),
+    ...nestUpdateFieldSchemas,
+  }),
+
+  deleteSeries: z.object({
+    nestId: z.string().describe("The series, or any occurrence of it."),
+  }),
+
   // Daily plan (requires OAuth token)
   getDailyPlan: z.object({}),
 
@@ -840,6 +1742,16 @@ export const schemas = {
   userActivity: z.object({
     userId: z.string().describe("The user whose activity to fetch."),
     limit: z.number().optional().describe("Max activity items to return (default 50, max 200)."),
+  }),
+
+  // A nest's activity, with its subtree by default
+  nestActivity: z.object({
+    nestId: z.string().describe("The nest whose activity to fetch. Pass a circle or workspace ID to read everything that happened beneath it."),
+    depth: z.union([z.number(), z.literal("all")]).optional().describe("How far below the nest to look. Omit or 'all' for the nest and everything beneath it (what the Activity tab shows); 0 for the nest itself only; N for N levels down, measured from this nest."),
+    userId: z.string().optional().describe("Only what this user did here, including what an assistant did on their behalf."),
+    limit: z.number().optional().describe("Entries per page, newest first (default 50, max 200)."),
+    before: z.string().optional().describe("The next_cursor from the previous page. Omit for the newest entries."),
+    linkedUsers: z.boolean().optional().describe("Set true to get a linked.users list resolving every userId and agentUserId on the page. Use it whenever the result goes in front of a person."),
   }),
 
   // User tension tools (requires OAuth token)
@@ -882,7 +1794,6 @@ export const schemas = {
     sort: z.string().optional().describe(SORT_DESCRIPTION),
     limit: z.number().optional().describe("Max results to return"),
     page: z.number().optional().describe("Page number for pagination"),
-    order: z.string().optional().describe("Deprecated alias of sort"),
   }),
 
   updateTension: z.object({
@@ -909,14 +1820,15 @@ export const schemas = {
     tensionId: z.string().describe("Tension ID"),
     _id: z.string().optional().describe("ID of an existing governance item to change or remove. Omit to propose a new item."),
     title: z.string().optional().describe("Title for the governance item"),
-    labels: coerceFromJson(z.array(z.string())).optional().describe("Labels defining the item type (e.g., ['role'], ['circle'], ['policy'], ['accountability'], ['domain'])"),
+    labels: coerceFromJson(z.array(z.string())).optional().describe("Item type, e.g. ['role'], ['circle'], ['policy'], ['accountability'], ['domain']"),
     description: z.string().optional().describe("The primary content field — detailed information about the item. Supports Markdown and HTML."),
-    purpose: z.string().optional().describe("ONLY for roles/circles — a short aspirational statement. Do NOT put detailed information here; use description instead. Supports HTML."),
+    purpose: z.string().optional().describe(PURPOSE_DESC),
     parentId: z.string().optional().describe("Parent ID — use to move/restructure items (e.g., move role to different circle)"),
-    users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign. For an election (with roleId), the single user being elected, e.g. [\"userId\"]."),
-    due: z.string().optional().describe("Due date / re-election date (ISO format). For an election (with roleId), the term end — omit to elect without a term."),
-    accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles to set on a role (replaces all — use children endpoint for individual management)"),
-    domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles to set on a role (replaces all — use children endpoint for individual management)"),
+    users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign. For an election (with roleId), the one user being elected."),
+    due: z.string().optional().describe("Due or re-election date, ISO. For an election, the term end; omit for no term."),
+    accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles on a role (replaces all; children tools for individual edits)"),
+    domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles on a role (replaces all; children tools for individual edits)"),
+    role: z.string().optional().describe("The role this output belongs to, for an operational output (pathway 3/4). Pair with users: users is WHO does it, role is the role it is asked of, and the work request names both (\"Ada as Systems: ...\"). A role id, not a title. Distinct from roleId, which is election mode."),
     roleId: z.string().optional().describe("Hold an ELECTION: the electable role to fill (Facilitator/Secretary/Rep Link or any electable role). Assigns or reconfirms the role's filler for a term WITHOUT changing its accountabilities/domains — provide users:[userId] (one person) and optional due (term). Do not combine with _id."),
     removeNest: z.boolean().optional().describe("Set true with _id to propose deletion of the referenced governance item (when the proposal is accepted, the item is removed). Distinct from nestr_remove_tension_part, which undoes a proposal part you already added. Requires _id; other body fields are ignored."),
   }).refine(
@@ -936,13 +1848,14 @@ export const schemas = {
     partId: z.string().describe("Part ID to modify"),
     title: z.string().optional().describe("Updated title"),
     description: z.string().optional().describe("Updated description — the primary content field. Supports Markdown and HTML."),
-    purpose: z.string().optional().describe("ONLY for roles/circles — updated aspirational statement. Do NOT put detailed information here; use description instead. Supports HTML."),
+    purpose: z.string().optional().describe(PURPOSE_DESC),
     labels: coerceFromJson(z.array(z.string())).optional().describe("Updated labels"),
     parentId: z.string().optional().describe("Updated parent ID"),
     users: coerceFromJson(z.array(z.string())).optional().describe("Updated user assignments"),
     due: z.string().optional().describe("Updated due date (ISO format)"),
-    accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Updated accountabilities (replaces all — use children endpoint for individual management)"),
-    domains: coerceFromJson(z.array(z.string())).optional().describe("Updated domains (replaces all — use children endpoint for individual management)"),
+    accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Updated accountabilities (replaces all; children tools for individual edits)"),
+    domains: coerceFromJson(z.array(z.string())).optional().describe("Updated domains (replaces all; children tools for individual edits)"),
+    role: z.string().optional().describe("Updated role for an operational output. A role id; pass an empty string to clear it."),
   }),
 
   removeTensionPart: z.object({
@@ -1036,21 +1949,118 @@ export const schemas = {
     workspaceId: z.string().describe("Workspace ID whose connector catalog to list"),
   }),
 
+  listConnectorTemplates: z.object({
+    workspaceId: z.string().describe("Workspace ID whose available connector templates to list"),
+  }),
+
   registerConnector: z.object({
+    templateId: z.string().optional().describe("Id of a template from nestr_list_connector_templates. Given this, everything else is filled in from the template and you should omit type/config/capabilities/exposure/authStrategy. ALWAYS prefer this over hand-registering a vendor the deployment already knows."),
     workspaceId: z.string().describe("Workspace ID to register the connector in"),
-    type: z.enum(["mcp", "cli", "api"]).describe("Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command)"),
-    name: z.string().describe("Unique connector name within the workspace catalog"),
-    config: coerceFromJson(z.record(z.unknown())).optional().describe("Per-type transport config, no secret. mcp/api need a url (e.g., { url: 'https://...' }); cli needs a command (e.g., { command: 'some-cli' }). Optional non-secret headers go under headers."),
-    capabilities: coerceFromJson(z.record(z.unknown())).optional().describe("Capability descriptor: { discover: boolean, tools: [{ name, description, inputSchema }] }. discover:true lets the connector self-describe its tools at runtime."),
-    exposure: coerceFromJson(z.record(z.unknown())).optional().describe("Exposure policy deciding which owners may bind: { userAgent: boolean, domainGated: boolean }. Set domainGated:true to allow binding to a role's domain."),
+    type: z.enum(["mcp", "cli", "api"]).optional().describe("Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command). Required unless templateId is given."),
+    name: z.string().optional().describe("Unique connector name within the workspace catalog. Required unless templateId is given, where it defaults to the template's own name."),
+    config: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Per-type transport config, no secret. mcp/api need a url (e.g., { url: 'https://...' }); cli needs a command (e.g., { command: 'some-cli' }). Optional non-secret headers go under headers."),
+    capabilities: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Capability descriptor: { discover: boolean, tools: [{ name, description, inputSchema }] }. discover:true lets the connector self-describe its tools at runtime."),
+    exposure: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Exposure policy deciding which owners may bind: { userAgent: boolean, domainGated: boolean }. Set domainGated:true to allow binding to a role's domain."),
     authStrategy: z.enum(["secret", "oauth2"]).optional().describe("How a principal connects: 'secret' (a one-time secret captured via the Connect button) or 'oauth2'. The agent never sees the secret."),
   }),
+
+  createAgent: z.object({
+    workspaceId: z.string().describe("Workspace ID to create the agent in"),
+    name: z.string().describe("The AGENT's own name, as its identity calls it (e.g. 'Collab'). Not the name of the work: that belongs to the role this agent will fill."),
+    description: z.string().optional().describe("What the agent is LIKE: its character and what it is careful about. Not its instructions, which belong in a skill on the role."),
+    roleAssignable: z.boolean().optional().describe("Defaults to true. Pass false to create an ASSISTANT: an agent that can never be assigned to a role, so it can never stop being able to act with the authority of the person it helps."),
+    agentConfig: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Omit for an agent that runs on Nestr's own runtime."),
+  }),
+
+  updateAgent: z.object({
+    workspaceId: z.string().describe("Workspace ID the agent belongs to"),
+    userId: z.string().describe("The agent's user id, from nestr_list_users with agents:'only' or nestr_get_user"),
+    name: z.string().optional().describe("The AGENT's own name, as its identity calls it. Cannot be blank."),
+    description: z.string().optional().describe("What the agent is LIKE: its character and what it is careful about. Shown as its purpose wherever it is listed. Not its instructions, which belong in a skill on the role."),
+    webSearch: z.boolean().optional().describe("Whether the agent may search the web."),
+    status: z.enum(["active", "paused", "disabled"]).optional().describe("active, paused or disabled."),
+    roleAssignable: z.boolean().optional().describe("false makes it an ASSISTANT that can never be assigned to a role. Refused while it still fills one; the error names the roles, so unassign it there first. true makes an assistant assignable again."),
+    agentConfig: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Replaces the stored wiring as a whole."),
+    // Strict, as the description promises: a key this tool does not list is
+    // refused and named, not stripped. Stripped, it would PATCH the known keys
+    // and answer "every field you sent has landed" for one that never left.
+  }).strict(),
 
   bindConnector: z.object({
     workspaceId: z.string().describe("Workspace ID the connector and owner belong to"),
     connectorId: z.string().describe("ID of an enabled connector from nestr_list_connectors"),
-    ownerType: z.enum(["user", "agent", "workspace", "role-domain"]).describe("Owner type. 'role-domain' binds the connector to a role's domain so the role can use it and a credentials field is materialised on the domain."),
-    ownerId: z.string().describe("Owner ID. user/agent: the user ID. workspace: the workspace ID. role-domain: the domain nest ID."),
+    ownerType: z.enum(["role", "role-domain", "workspace", "user", "agent"]).describe("Who gets access. 'role' is usually what you want: pass a role nest ID and the connector's domain is found or created under it. 'role-domain' targets an existing domain directly. 'workspace' gives everyone. 'user' is one person's own account and 'agent' is one bot's own: both are personal, both need a workspace admin, and both are the wrong answer unless the thing really does belong to that one principal. See the tool description."),
+    ownerId: z.string().describe("Owner ID. role: the role nest ID. role-domain: the domain nest ID. workspace: the workspace ID. user: the person's user ID. agent: the bot's user ID."),
+  }),
+
+  updateConnector: z.object({
+    workspaceId: z.string().describe("Workspace ID the connector belongs to"),
+    connectorId: z.string().describe("ID of the connector to update"),
+    type: z.enum(["mcp", "cli", "api"]).optional().describe("Transport"),
+    name: z.string().optional().describe("Unique connector name within the workspace catalog"),
+    config: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Per-type transport config, no secret"),
+    capabilities: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Capability descriptor"),
+    exposure: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Exposure policy: { userAgent, domainGated }"),
+    authStrategy: z.enum(["secret", "oauth2"]).optional().describe("How a principal connects"),
+    enabled: z.boolean().optional().describe("Switch the connector on or off in this workspace"),
+  }),
+
+  removeConnector: z.object({
+    workspaceId: z.string().describe("Workspace ID the connector belongs to"),
+    connectorId: z.string().describe("ID of the connector to remove from the catalog"),
+  }),
+
+  listConnections: z.object({
+    workspaceId: z.string().describe("Workspace ID whose bindings to list"),
+    includeDisabled: z.boolean().optional().describe("Include removed (disabled) bindings. Default false."),
+  }),
+
+  removeConnection: z.object({
+    workspaceId: z.string().describe("Workspace ID the binding belongs to"),
+    connectionId: z.string().describe("ID of the binding to remove, from nestr_list_connections"),
+  }),
+
+  getConnectLink: z.object({
+    workspaceId: z.string().describe("Workspace ID the binding belongs to"),
+    connectionId: z.string().describe("ID of the binding to connect, from nestr_list_connections"),
+  }),
+
+  revokeConnectionCredential: z.object({
+    workspaceId: z.string().describe("Workspace ID the binding belongs to"),
+    connectionId: z.string().describe("ID of the binding whose credential to revoke"),
+  }),
+
+  getAgentConnectorReach: z.object({
+    workspaceId: z.string().describe("Workspace ID the agent belongs to"),
+    agentUserId: z.string().describe("The agent's bot user ID"),
+  }),
+
+  runAgent: z.object({
+    workspaceId: z.string().describe("Workspace ID the agent belongs to"),
+    agentUserId: z.string().describe("The agent's bot user ID"),
+    nestId: z.string().describe("The nest the run is pinned to: a role, a project, a task"),
+    message: z.string().optional().describe("What this run is for. Omit for a plain 'advance this item' run."),
+  }),
+
+  getAgentMode: z.object({
+    nestId: z.string().describe("The role, project or task"),
+    agentUserId: z.string().describe("The agent's bot user ID"),
+  }),
+
+  setAgentMode: z.object({
+    nestId: z.string().describe("The role, project or task this setting is for"),
+    agentUserId: z.string().describe("The agent's bot user ID"),
+    mode: z.enum(["reactive", "autonomous"]).nullable()
+      .describe("reactive (acts when triggered) or autonomous (works on a cadence). null clears this nest's own setting so it inherits again."),
+    recheck: z.string().min(1).optional()
+      .describe("Required when mode is autonomous. \"continuous\" works the item until done or blocked. Otherwise an RRULE such as FREQ=DAILY or FREQ=WEEKLY;BYDAY=MO,WE,FR; hourly, daily and weekly are accepted as shorthand. Nothing more often than hourly."),
+    start: z.string().optional()
+      .describe("ISO date-time the schedule starts at. It also sets the time of day the schedule runs at. A value with no offset is read as local time in tzid. Defaults to now."),
+    tzid: z.string().optional()
+      .describe("IANA time zone the schedule keeps its local time in, such as Europe/Amsterdam. Defaults to UTC."),
+  }).refine((v) => v.mode !== "autonomous" || !!v.recheck, {
+    message: "recheck is required when mode is autonomous",
+    path: ["recheck"],
   }),
 
   // File attachments (a comment id works as the nestId — files are keyed by nestId)
@@ -1088,15 +2098,15 @@ const destructive = { annotations: { readOnlyHint: false, destructiveHint: true 
 export const toolDefinitions = [
   {
     name: "nestr_help",
-    description: "Get Nestr documentation. Three modes: (1) internal MCP-flavoured topic — pass `topic` with one of the curated keys (search, labels, nest-model, inbox, daily-plan, notifications, insights, tension-processing, skills, mcp-apps, authentication, scrum, okr, ...); use topic 'topics' for the full list. (2) Help-article fetch — pass `topic` with a slug from nestr.io/help/articles/<slug>; returns the article as markdown plus a numbered list of its images (with URLs and captions). Images are NOT attached by default. Pass `includeImages: true` to also attach the first `maxImages` (default 3, max 6) content screenshots as renderable image blocks (downscaled; decorative header/thumbnail/uncaptioned images skipped), or `imageIndexes: [..]` to attach specific ones from the numbered list (e.g. a burndown chart further down, ignoring the cap). Use images when the user wants to *see* how something looks. The tool tries internal topics first, then falls back to article fetch. (3) Help-article search — pass `search` with a free-text query; returns ranked matches, each with a title and one-line summary. Search tolerates typos and common synonyms (e.g. kanban/sprint→scrum). Every response opens with a 'Resolved as:' line stating which mode answered, and internal topics and articles cross-link to each other. Call this before unfamiliar operations. Auth: none required.",
+    description: "Nestr documentation, three modes. (1) Internal topic: `topic` with a curated key (search, labels, nest-model, inbox, daily-plan, notifications, insights, tension-processing, skills, mcp-apps, authentication, scrum, okr, ...); 'topics' lists them all. (2) Help article: `topic` with a slug from nestr.io/help/articles/<slug>; returns markdown plus a numbered list of its images. Images are never attached by default: includeImages:true takes the first maxImages screenshots, imageIndexes:[..] takes chosen ones. Attach when the user wants to see how something looks. (3) Search: `search` with free text, **in English whatever language the conversation is in** — the corpus is English and the index scores slugs and keywords, so a query in another language usually returns nothing; returns ranked matches, each a title and one-line summary, tolerant of typos and synonyms (kanban/sprint to scrum). A topic is tried internally first, then as an article. Every response opens with 'Resolved as:' naming the mode, and topics and articles cross-link. Call before unfamiliar operations. No auth.",
     inputSchema: {
       type: "object" as const,
       properties: {
         topic: { type: "string", description: "Internal topic key or help-article slug. Use 'topics' for the full list of internal topics." },
         search: { type: "string", description: "Free-text query against the public help articles. Returns slugs to fetch via `topic`." },
-        includeImages: { type: "boolean", description: "Help-article mode only. Default false (markdown + numbered image-URL list, no image blocks). Set true to attach the first maxImages content screenshots as inline image content (base64, downscaled). Decorative header/thumbnail/uncaptioned images are never auto-attached — use imageIndexes for those. Ignored for internal topics and search." },
-        imageIndexes: { type: "array", items: { type: "integer", minimum: 0 }, description: "Help-article mode only. Attach specific screenshots by their [index] from the numbered 'Images in this article' list in a prior response's footer, e.g. [4,5,6]. Overrides the default selection and the maxImages cap; attaches exactly these indexes in order. Ignored for internal topics and search." },
-        maxImages: { type: "integer", minimum: 1, description: "Help-article mode only. Cap on screenshots in the default selection (first N content images). Default 3, max 6. Ignored when imageIndexes is provided." },
+        includeImages: { type: "boolean", description: "Article mode. Default false (markdown plus a numbered image-URL list). True attaches the first maxImages content screenshots inline, downscaled. Header, thumbnail and uncaptioned images are never auto-attached; reach those with imageIndexes." },
+        imageIndexes: { type: "array", items: { type: "integer", minimum: 0 }, description: "Article mode. Attach screenshots by [index] from the numbered list in a prior response, e.g. [4,5,6]. Overrides the default selection and the maxImages cap, attaching exactly these in order." },
+        maxImages: { type: "integer", minimum: 1, description: "Article mode. Caps the default selection (first N content images). Default 3, max 6. Ignored when imageIndexes is set." },
       },
     },
     ...readOnly,
@@ -1119,9 +2129,9 @@ export const toolDefinitions = [
       properties: {
         search: { type: "string", description: "Search query to filter workspaces" },
         sort: { type: "string", description: SORT_DESCRIPTION },
-        limit: { type: "number", description: "Omit on first call to see meta.total count" },
+        limit: { type: "number", description: "Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page." },
         page: { type: "number", description: "Page number (1-indexed) for pagination" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for bulk/index operations." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
     },
     ...readOnly,
@@ -1133,7 +2143,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
       required: ["workspaceId"],
     },
@@ -1181,17 +2191,20 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_search",
-    description: "Search nests in a workspace. Supports operators like label:, assignee:, createdby:, completed:, in:, sort:. createdby: accepts me, an email address, or a user id. Always use completed:false for active work. See nestr_help('search') for full syntax. Results carry user ids; when presenting to a person, show names and/or emails, resolving ids via nestr_get_user or nestr_list_users.",
+    description: "Search nests in a workspace. Supports operators like label:, assignee:, createdby:, completed:, in:, sort:. createdby: accepts me, an email address, or a user id. Always use completed:false for active work. See nestr_help('search') for full syntax. Results carry user ids; when presenting to a person, show names and/or emails. Pass `linkedUsers: true` to get them all resolved in the same request rather than calling nestr_get_user per id." + LIST_TEXT_TAB_NOTE,
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID to search in" },
         query: { type: "string", description: "Search query with optional operators (e.g., 'label:role', 'assignee:me completed:false')" },
+        strict: { type: "boolean", description: "Reject the search when any operator, label or field filter in it was not recognised, rather than silently returning a broader result. Use it whenever you are counting rather than browsing: without it, a mistyped filter comes back as a real and larger answer with nothing to say the filter was dropped." },
+        linkedUsers: { type: "boolean", description: "Resolve every user id in the results to a full user, returned once in `linked.users`. Prefer this over calling nestr_get_user per id." },
         sort: { type: "string", description: `${SORT_DESCRIPTION} Takes precedence over sort:/sort-order: operators in the query.` },
-        limit: { type: "number", description: "Max results per page. Do NOT set on first call - let API return default with meta.total count showing total matches." },
+        limit: { type: "number", description: "Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page." },
         page: { type: "number", description: "Page number (1-indexed) for fetching additional pages" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for bulk/index operations." },
-        _listTitle: { type: "string", description: "Short descriptive title for the list UI header (2-4 words, e.g., \"Marketing projects\", \"Overdue tasks\", \"Urgent work\"). Describe WHAT is being shown, not the query syntax." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
+        cleanText: { type: "boolean", description: CLEAN_TEXT_DESC },
+        _listTitle: { type: "string", description: "Short title for the list UI header, 2-4 words, e.g. Marketing projects. Say what is shown, not the query." },
       },
       required: ["workspaceId", "query"],
     },
@@ -1201,18 +2214,21 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_nest",
-    description: "Get nest details. Supports comma-separated IDs for batch fetch. Add hints=true for contextual signals, fieldsMetaData=true for field schemas. For a single nest you can also diagnose it: provenance, rights, and whoCan (see explain_nest for a one-shot diagnosis). The users array holds user ids; when presenting to a person, resolve them to names and/or emails via nestr_get_user or nestr_list_users.",
+    description: "Get nest details. Supports comma-separated IDs for batch fetch. Add hints=true for contextual signals, fieldsMetaData=true for the declared field schema of every label on the nest, including fields with no value. For a single nest you can also diagnose it: provenance, rights, and whoCan (see explain_nest for a one-shot diagnosis). The users array holds user ids; when presenting to a person, resolve them to names and/or emails via nestr_get_user or nestr_list_users.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        nestId: { type: "string", description: "Nest ID, or comma-separated IDs to fetch multiple nests at once (e.g., 'id1,id2,id3'). Keep total URL under 2000 chars." },
-        fieldsMetaData: { type: "boolean", description: "Set to true to include field schema metadata (available options, field types, and proxySource when a field lives on another nest)" },
-        hints: { type: "boolean", description: "Include contextual hints (default: true). Set to false for bulk lookups where you only need structural data." },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
-        provenance: { type: "boolean", description: "Single-nest only. Include field/property provenance: which label (and circle context) defines each field and property, e.g. why a role has a given icon." },
-        rights: { type: "boolean", description: "Single-nest only. Include the caller's composed rights on the nest (self read/update/delete) plus a deny trace naming the profiles that block each op, and why." },
-        forUser: { type: "string", description: "Single-nest only, with rights=true. Report rights for this user id instead of the caller. Requires the caller to be an admin of the nest." },
-        whoCan: { type: "string", description: "Single-nest only. Comma-separated ops (read,update,delete,create): list the users who can perform each op on this nest (admins + role-holders), with contact for admin callers." },
+        nestId: { type: "string", description: "Nest ID, or comma-separated IDs for a batch (e.g. 'id1,id2'). Keep the URL under 2000 chars." },
+        fieldsMetaData: { type: "boolean", description: "Set to true to include the declared field schema of every label on the nest (type, title, code, options, conditions), including fields that hold no value on this nest. nestr_get_label reads the same declarations off the label itself. Entries carrying proxySource name another nest the field lives on: writes go there and are authorised there." },
+        hints: { type: ["string", "boolean"], enum: ["summary", "full", true, false], description: `${HINTS_DESC} Defaults to 'full' on a single read, which is what you want when you asked about one nest.` },
+        hintTypes: { type: "array", items: { type: "string" }, description: "Keep only these hint types." },
+        minSeverity: { type: "string", enum: ["info", "suggestion", "warning", "alert"], description: "Drop hints below this severity." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
+        cleanText: { type: "boolean", description: CLEAN_TEXT_DESC },
+        provenance: { type: "boolean", description: "Single nest. Which label and circle context defines each field and property, e.g. why a role has a given icon." },
+        rights: { type: "boolean", description: "Single nest. The caller's composed rights (self read/update/delete) plus a deny trace naming what blocks each op, and why." },
+        forUser: { type: "string", description: "Single nest, with rights=true. Rights for this user id instead of the caller. Caller must be a nest admin." },
+        whoCan: { type: "string", description: "Single nest. Comma-separated ops (read,update,delete,create): who can perform each (admins + role-holders), with contact for admin callers." },
       },
       required: ["nestId"],
     },
@@ -1220,7 +2236,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_explain_nest",
-    description: "Diagnose a single nest: WHY it looks and behaves as it does. Returns field/property provenance (which label and circle defines each field, value, and property such as the icon), the caller's composed rights with a deny trace (why a field is read-only, why you cannot edit), and — when whoCan is given — who can perform an op and who to contact. Use this when a user asks 'why can't I ...', 'why is this read-only', 'where does this field come from', 'why does this role have a different icon', or 'who can change this'. For connection/auth errors use nestr_diagnose instead.",
+    description: "Diagnose a single nest: WHY it looks and behaves as it does. Returns field/property provenance (which label and circle defines each field, value, and property such as the icon), the caller's composed rights with a deny trace (why a field is read-only, why you cannot edit), and — when whoCan is given — who can perform an op and who to contact. Use this when a user asks 'why can't I ...', 'why is this read-only', 'where does this field come from', 'why does this role have a different icon', or 'who can change this'. When a role connector is held back on scheduled runs pending approval of the role's instructions, it says so in a connector_awaiting_instruction_approval hint with who can approve and where. For connection/auth errors use nestr_diagnose instead.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1234,16 +2250,21 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_nest_children",
-    description: "Get children of a nest. Paginated. Add hints=true for contextual signals.",
+    description: "Get children of a nest, or just the ones you want. Pass `search` with the full operator syntax to ask for a subset rather than fetching everything and filtering: `search: 'label:role'` returns a circle's roles in one call. Paginated at 50 per page; read meta.total for the match count." + LIST_TEXT_TAB_NOTE,
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Parent nest ID" },
+        search: { type: "string", description: "Search scoped to this nest, full operator syntax. Ask for the subset you want instead of fetching every child and filtering: `label:role` for a circle's roles, `label:project fields.project.status:Waiting` for its waiting projects. `depth:1` is applied when you set no depth and the response says so in `appliedDefaults`; pass `depth:2` or higher to reach further down." },
         sort: { type: "string", description: SORT_DESCRIPTION },
-        limit: { type: "number", description: "Omit on first call to see meta.total count" },
+        limit: { type: "number", description: "Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page." },
         page: { type: "number", description: "Page number (1-indexed)" },
-        hints: { type: "boolean", description: "Include contextual hints (default: true). Set to false for large result sets or bulk operations." },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for bulk/index operations." },
+        hints: { type: ["string", "boolean"], enum: ["summary", "full", true, false], description: `${HINTS_DESC} Defaults to 'summary' here: a listing at 'full' repeats the same paragraph once per row.` },
+        hintTypes: { type: "array", items: { type: "string" }, description: "Keep only these hint types." },
+        minSeverity: { type: "string", enum: ["info", "suggestion", "warning", "alert"], description: "Drop hints below this severity." },
+        linkedUsers: { type: "boolean", description: "Resolve every user id in the results to a full user, returned once in `linked.users`. One request instead of one per id." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
+        cleanText: { type: "boolean", description: CLEAN_TEXT_DESC },
         _listTitle: { type: "string", description: "Short descriptive title for the list UI header (e.g., \"Tasks for Website Redesign\", \"API project sub-tasks\"). Include the parent name for context." },
       },
       required: ["nestId"],
@@ -1253,15 +2274,42 @@ export const toolDefinitions = [
     ...readOnly,
   },
   {
+    name: "nestr_hints_rollup",
+    description: "Count hints across a whole circle or workspace in one call. A hint on a single nest says \"this one has this problem\"; this says how many have it, which is the question you actually ask of a circle. Answers \"how healthy is this circle\", \"how many projects are waiting with no reason\", \"how many roles have nobody in them\" without reading every nest. Each result carries type, severity, count and a small sample to open. Read `notComputed`: it names every hint type this cannot count in one query, so a type listed there is unknown rather than zero. Do not sum counts across types, one nest can carry several; ask for a single hintTypes when you want a number that adds up.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest to roll up. A circle or the workspace root is the useful scope." },
+        hintTypes: { type: "array", items: { type: "string" }, description: "Count only these hint types. Omit for every type this can compute." },
+        minSeverity: { type: "string", enum: ["info", "suggestion", "warning", "alert"], description: "Drop rules below this severity. 'warning' is the useful floor for \"what needs attention\"." },
+        sampleSize: { type: "number", description: "Example nests per type. Default 10, max 100, 0 for counts only." },
+      },
+      required: ["nestId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_api_spec",
+    description: "The deployment's own OpenAPI document, so you can check whether the API has something rather than concluding \"I did not find it\" and guessing. Call with no arguments for the operation index (method, path, one-line summary). `search` filters by keyword against path and summary. `path` returns the full schema for one operation, including its parameters. Use this to answer \"is there an endpoint for X\" with certainty, and note that a negative here is a real negative: if it is not in the spec, this deployment does not serve it. For the search query language rather than the HTTP surface, use nestr_help('search'); for a filter you are unsure of, `strict: true` on nestr_search tells you whether it applied.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        search: { type: "string", description: "Filter operations by keyword against path and summary, e.g. 'meeting', 'tension', 'duration'." },
+        path: { type: "string", description: "Return the full schema for one path, e.g. '/nests/{id}/children'." },
+      },
+    },
+    ...readOnly,
+  },
+  {
     name: "nestr_create_nest",
-    description: "Create a nest under a parent. Use labels to define type (e.g., ['project'], ['role']). Apply at most ONE prime label per nest (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback, userstory, sprint, epic, milestone) — they define the nest's core identity and cannot coexist. Sole exception: userstory may pair with project (userstory implies project); sprint/epic/milestone may not, and stories link to those containers via graph relations instead. For governance changes in established workspaces, prefer the tension flow. See nestr_help('labels') for available types.",
+    description: `Create a nest under a parent. Labels define the type, e.g. ['project'], ['role']. ${PRIME_LABEL_RULE} Sprint/epic/milestone never pair; stories link to those via graph relations. In established workspaces prefer the tension flow for governance. Meetings attach to a circle that ALREADY exists — the workspace anchor circle counts, and is the right parent when no sub-circle fits. Never create a circle to hold a meeting. Use \`['meeting','circle-meeting']\` for a tactical meeting, \`['meeting','governance']\` for a governance meeting, and set \`due\` to the start time. The server adds a \`task\` label to every nest that can be completed, alongside the labels you pass, unless one of them replaces task (declares \`inverseToggleLabel: "task"\`, as \`project\` does) or declares \`autoTaskLabel: false\`: expect \`task\` in the labels you read back, and do not write it back as if you had chosen it. See nestr_help('labels') and nestr_help('meetings').${writeReturns("nest", "nest")}`,
     inputSchema: {
       type: "object" as const,
       properties: {
         parentId: { type: "string", description: "Parent nest ID (workspace, circle, or project)" },
         title: { type: "string", description: "Title of the new nest (plain text, HTML tags stripped)" },
-        description: { type: "string", description: "The primary content field — use for project details, task context, acceptance criteria, DoD, and any detailed information. Use fields (e.g., project.status) for structured data and comments for progress updates. Supports Markdown and HTML." },
-        purpose: { type: "string", description: "ONLY for workspaces, circles, and roles — a short aspirational statement of the future state this entity serves. Do NOT put project details, task context, or general information here; use description instead. Supports HTML." },
+        description: { type: "string", description: CONTENT_DESC },
+        purpose: { type: "string", description: PURPOSE_DESC },
         labels: {
           type: "array",
           items: { type: "string" },
@@ -1269,12 +2317,24 @@ export const toolDefinitions = [
         },
         fields: {
           type: "object",
-          description: "Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call.",
+          description: `Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call. ${FIELD_KEYS_DESC}`,
         },
         users: {
           type: "array",
           items: { type: "string" },
           description: "User IDs to assign. ALWAYS set this for projects and tasks — use the role filler's user ID. Placing a nest under a role does NOT auto-assign it.",
+        },
+        start: {
+          type: "string",
+          description: START_DESC,
+        },
+        allDay: {
+          type: "boolean",
+          description: ALL_DAY_DESC,
+        },
+        due: {
+          type: "string",
+          description: "Due date (ISO 8601). SET THIS whenever the item is meant to happen at a time. It is a field, not a title: the sweep that fires dated work reads `due` and nothing else, so a task called \"Daily digest, 28 Aug\" with no due is invisible to it and simply never runs, with nothing anywhere saying so. For projects/tasks: the deadline, or the end when a start is set.",
         },
         accountabilities: {
           type: "array",
@@ -1297,41 +2357,12 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_nest",
-    description: "Update nest properties. Set parentId to move. Only send fields you want to change. When replacing `labels`, keep at most ONE prime label (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback, userstory, sprint, epic, milestone) — they define the nest's core identity. Sole exception: userstory may pair with project (userstory implies project). For governance changes, prefer tensions. See nestr_help('nest-model') for fields and data namespacing.",
+    description: `Update nest properties. Set parentId to move. Send only what changes. When replacing labels: ${PRIME_LABEL_RULE} Prefer tensions for governance. See nestr_help('nest-model') for fields and data namespacing.${writeReturns("nest", "nest")}`,
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID to update" },
-        title: { type: "string", description: "New title (plain text, HTML tags stripped)" },
-        description: { type: "string", description: "The primary content field — use for details, context, acceptance criteria, and any information about the nest. Use fields for structured data, comments for progress. Supports Markdown and HTML." },
-        purpose: { type: "string", description: "ONLY for workspaces, circles, and roles — a short aspirational statement. Do NOT put project details, task context, or general information here; use description instead. Supports HTML." },
-        parentId: { type: "string", description: "New parent ID (move nest to different location)" },
-        labels: {
-          type: "array",
-          items: { type: "string" },
-          description: "Label IDs to set (e.g., ['project'] to convert an item into a project)",
-        },
-        fields: {
-          type: "object",
-          description: "Field updates (e.g., { 'project.status': 'Current' })",
-        },
-        users: {
-          type: "array",
-          items: { type: "string" },
-          description: "User IDs to assign",
-        },
-        data: {
-          type: "object",
-          description: "Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead.",
-        },
-        due: {
-          type: "string",
-          description: "Due date (ISO format). For projects/tasks: deadline. For roles: re-election date. For meetings: start time.",
-        },
-        completed: {
-          type: "boolean",
-          description: "Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead.",
-        },
+        ...NEST_UPDATE_FIELD_PROPERTIES,
         accountabilities: {
           type: "array",
           items: { type: "string" },
@@ -1353,7 +2384,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_delete_nest",
-    description: "Delete a nest. For governance items in established workspaces, use tensions instead.",
+    description: "Delete a nest. For governance items in established workspaces, use tensions instead. On a recurring item this deletes only that one nest and never ends the series: deleting an occurrence skips it, and deleting the series nest hands the series to its next occurrence, which carries on as the series. To skip an occurrence use nestr_skip_occurrence, to delete it and every later one use nestr_skip_occurrence with scope 'following', and to delete the whole series use nestr_delete_series. The delete is checked against the rights of the person behind the token, including a workspace-bound OAuth or agent token, so a caller who could not delete the nest themselves is refused with 403.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1365,16 +2396,16 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_comment",
-    description: "Add a comment to a nest. Supports HTML and @mentions — **mentions MUST be wrapped in literal curly braces** (e.g. `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`); without the braces the user is not notified. Prefer `@{userId:roleId}` so the recipient knows which role they're being addressed in. Use for progress updates and discussion. Optionally attach labels at creation time via the `labels` parameter.",
+    description: "Add a comment to a nest, for progress updates and discussion. Mentions need literal curly braces, see `body`. Optionally attach labels at creation." + writeReturns("post", "comment", "placement?, "),
     inputSchema: {
       type: "object" as const,
       properties: {
-        nestId: { type: "string", description: "ID of the nest or conversation the comment belongs to. Passing a comment ID instead replies to that comment, inside its thread. A direct-message conversation is flat and holds no threads, so a message ID there is moved onto the conversation and the response says where the comment landed." },
-        body: { type: "string", description: "Comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)." },
+        nestId: { type: "string", description: "Nest or conversation the comment belongs to. A comment ID instead replies inside that thread. Direct-message conversations are flat, so a message ID there lands on the conversation and the response says where." },
+        body: { type: "string", description: `Comment text. ${MENTION_DESC}` },
         labels: {
           type: "array",
           items: { type: "string" },
-          description: "Optional label IDs to attach to the comment at creation time (e.g., 'decision', 'question', or a custom label ID). Personal labels are auto-scoped to the authenticated user. Use nestr_list_labels / nestr_list_personal_labels to discover IDs.",
+          description: "Optional label IDs to attach at creation (e.g. 'decision', 'question', or a custom ID). Personal labels are auto-scoped to the caller. Discover IDs via nestr_list_labels / nestr_list_personal_labels.",
         },
       },
       required: ["nestId", "body"],
@@ -1383,12 +2414,12 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_comment",
-    description: "Update an existing comment's body and/or labels. Supports HTML and @mentions — **mentions MUST be wrapped in literal curly braces** (e.g. `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`); without the braces the user is not notified. When `labels` is provided it REPLACES the existing label set — use nestr_add_label / nestr_remove_label for incremental changes.",
+    description: "Update an existing comment's body and/or labels. Supports HTML and @mentions — **mentions MUST be wrapped in literal curly braces** (e.g. `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`); without the braces the user is not notified. When `labels` is provided it REPLACES the existing label set — use nestr_add_label / nestr_remove_label for incremental changes." + writeReturns("comment", "comment"),
     inputSchema: {
       type: "object" as const,
       properties: {
         commentId: { type: "string", description: "Comment ID to update" },
-        body: { type: "string", description: "Updated comment text. Supports HTML and @mentions. **Mentions MUST be wrapped in literal curly braces** — write `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`. Without the braces the platform will not link the mention or notify the user. Forms: `@{userId:roleId}` (preferred — addresses the user in a specific role/circle), `@{userId}` (legacy — no role context), `@{email}`, `@{circle}` (all role fillers in nearest ancestor circle)." },
+        body: { type: "string", description: `Updated comment text. ${MENTION_DESC}` },
         labels: {
           type: "array",
           items: { type: "string" },
@@ -1419,9 +2450,9 @@ export const toolDefinitions = [
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         sort: { type: "string", description: SORT_DESCRIPTION },
-        limit: { type: "number", description: "Omit on first call to see meta.total count" },
+        limit: { type: "number", description: "Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page." },
         page: { type: "number", description: "Page number (1-indexed)" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large workspaces." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
       required: ["workspaceId"],
     },
@@ -1436,9 +2467,9 @@ export const toolDefinitions = [
         workspaceId: { type: "string", description: "Workspace ID" },
         circleId: { type: "string", description: "Circle ID" },
         sort: { type: "string", description: SORT_DESCRIPTION },
-        limit: { type: "number", description: "Omit on first call to see meta.total count" },
+        limit: { type: "number", description: "Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page." },
         page: { type: "number", description: "Page number (1-indexed)" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large circles." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
       required: ["workspaceId", "circleId"],
     },
@@ -1464,13 +2495,148 @@ export const toolDefinitions = [
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         sort: { type: "string", description: SORT_DESCRIPTION },
-        limit: { type: "number", description: "Omit on first call to see meta.total count" },
+        limit: { type: "number", description: "Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page." },
         page: { type: "number", description: "Page number (1-indexed)" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large workspaces." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
+        linkedUsers: { type: "boolean", description: "Resolve every user id in the results to a full user, returned once in `linked.users`. One request instead of one per id." },
       },
       required: ["workspaceId"],
     },
     ...readOnly,
+  },
+  // ---- Direct messages ----
+  // A thread is the unit and its id is the whole address. There is no container to fetch
+  // first: start from nestr_list_dms, optionally narrowed to one person with withUser.
+  {
+    name: "nestr_list_dms",
+    description: "List your open direct-message threads, most recently posted first. Closed ones are left out unless includeCompleted is set. Pass withUser to see only the ones with a particular person; withUser:'nestr_support' is your Nestradamus conversation. Each thread carries participants, so a flat list still tells you who you are talking to.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        withUser: { type: "string", description: "Only threads with this person: user id, username or email" },
+        unread: { type: "boolean", description: "Only threads with messages you have not read" },
+        includeCompleted: { type: "boolean", description: "Also return closed conversations (left out by default)" },
+        limit: { type: "number", description: "Threads per page (default 50, max 200)" },
+        page: { type: "number", description: "Page number, 1-based" },
+      },
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_start_dm_thread",
+    description: "Start a new direct-message thread with someone. Use it for a new subject rather than reopening an old thread. You must share a workspace with them, or already have a conversation with them. A DM needs at least one PERSON in it: agents cannot hold a private conversation with each other, and the server refuses one. That is the wrong channel rather than a missing permission, so do not ask anyone to widen anything. To reach another agent, comment on the work itself and mention them there, or raise a tension to the role that owns it, which keeps the exchange where the people accountable for the work can read it.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        user: { type: "string", description: "Who to message: user id, username or email" },
+        title: { type: "string", description: "Optional title. Defaults to a dated one, as the app uses." },
+      },
+      required: ["user"],
+    },
+    ...mutating,
+  },
+  // ---- Support queues ----
+  // A queue is a label on threads across many DM spaces, not a space itself. It hands
+  // back thread ids, and a thread id is the whole address: nestr_get_dm_thread /
+  // nestr_get_dm_posts take it directly.
+  {
+    name: "nestr_list_queues",
+    description: "List the support queues you can see: the ones you monitor, plus any you have raised a thread in. Each carries `subscribed`, which decides what nestr_list_queue_threads returns for you.",
+    inputSchema: { type: "object" as const, properties: {} },
+    ...readOnly,
+  },
+  {
+    name: "nestr_list_queue_threads",
+    description: "List threads in a support queue, most recently posted first. If you subscribe to the queue you get every thread in it; otherwise you get only the ones you raised, which is how you find your own open support tickets. Pass unread:true for just what has moved. Read one with nestr_get_dm_thread using the id you get back.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        key: { type: "string", description: "Queue key, e.g. 'support'" },
+        unread: { type: "boolean", description: "Only threads you have not read" },
+      },
+      required: ["key"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_get_dm_thread",
+    description: "Get a direct-message thread as a nest, with hints. Pass unread:true to embed the posts you have not read in the same call, which is usually what you want when picking a thread back up.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        threadId: { type: "string", description: "Thread id" },
+        unread: { type: "boolean", description: "true embeds unread posts, false embeds read ones" },
+      },
+      required: ["threadId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_update_dm_thread",
+    description: "Update a direct-message thread: rename it, close or reopen it, or change who is in it. Send only the keys you want changed, as with nestr_update_nest. completed:true closes a conversation once it is dealt with, which takes it out of nestr_list_dms without losing it; completed:null reopens. `users` is the participant list you want, so read the thread first and send the list with someone added or removed; the bot and the person who raised the thread cannot be removed. Answers with the updated thread.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        threadId: { type: "string", description: "Thread id" },
+        title: { type: "string", description: "New thread title" },
+        completed: { type: ["boolean", "null"], description: "true closes the conversation, null reopens it" },
+        users: { type: "array", items: { type: "string" }, description: "The participant list you want, replacing the current one" },
+      },
+      required: ["threadId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_get_dm_posts",
+    description: "Read the posts in a direct-message thread, oldest first, each with its nested replies. Pass unread:true for just what is new, false for the rest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        threadId: { type: "string", description: "Thread id" },
+        unread: { type: "boolean", description: "true for unread posts, false for read ones. Omit for all." },
+        depth: { type: ["number", "string"], description: "Include posts on descendant nests, or 'all'" },
+      },
+      required: ["threadId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_post_dm_message",
+    description: "Post a message into a direct-message thread.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        threadId: { type: "string", description: "Thread id" },
+        body: { type: "string", description: "Message text. Supports HTML and Markdown." },
+      },
+      required: ["threadId", "body"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_mark_post_read",
+    description: "Mark a conversation read up to and including this post. Works for any post, not only direct messages. The marker never moves backwards, so calling it on an older post is harmless.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        postId: { type: "string", description: "Post to mark read up to" },
+      },
+      required: ["postId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_escalate_to_support",
+    description: "Bring a human from Nestr support into a Nestradamus conversation. Use it when the person asks for a human, when you have answered the wrong question more than once, or when something needs Nestr staff to look at their account. Find the thread with nestr_list_dms({withUser:'nestr_support'}). Safe to call twice; a thread already waiting stays as it is. Only works on a conversation Nestradamus is in.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        threadId: { type: "string", description: "Thread id to escalate" },
+        reason: { type: "string", description: "One or two sentences for whoever picks this up: what is needed and what has been tried. They can read the thread, so do not summarise it." },
+      },
+      required: ["threadId", "reason"],
+    },
+    ...mutating,
   },
   {
     name: "nestr_get_insights",
@@ -1503,12 +2669,17 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_users",
-    description: "List members of a workspace. Response includes meta.total showing total matching count. Also the tool to resolve user ids in bulk: when presenting users to a person, show names and/or emails, never bare ids.",
+    description: "List members of a workspace: its people, its agents, or both. Response includes meta.total showing total matching count. Also the tool to resolve user ids in bulk: when presenting users to a person, show names and/or emails, never bare ids. With agents:'only' this is how you find out which other agents exist and what each is for: an agent carries bot:true, its purpose in profile.agentDescription, and assistant:true when it may never fill a role. An assistant is the one to hand work to that needs a person's OWN credentials, which a role-filling agent cannot reach.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         search: { type: "string", description: "Search by name or email" },
+        agents: {
+          type: "string",
+          enum: ["only", "exclude"],
+          description: "'only' for this workspace's agents, 'exclude' for its people. Omit for both.",
+        },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
       },
@@ -1518,7 +2689,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_labels",
-    description: "List available labels in a workspace. Response includes meta.total showing total matching count.",
+    description: "List available labels in a workspace. Each row carries only `_id` and `title`: for a label's fields, its `display` settings and autoComplete call nestr_get_label. Response includes meta.total showing total matching count. The list does not carry autoComplete, so it mixes labels a person can pick with internal machinery they cannot. Call nestr_get_label before offering a label as a choice to somebody.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1533,16 +2704,18 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_projects",
-    description: "List all projects in a workspace. Check fields['project.status'] for status (Future/Current/Waiting/Done). Paginated.",
+    description: "List all projects in a workspace. Check fields['project.status'] for status (Future/Current/Waiting/Done). Paginated." + LIST_TEXT_TAB_NOTE,
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         sort: { type: "string", description: SORT_DESCRIPTION },
-        limit: { type: "number", description: "Omit on first call to see meta.total count" },
+        limit: { type: "number", description: "Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page." },
         page: { type: "number", description: "Page number (1-indexed)" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size. Ideal for large workspaces." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
+        cleanText: { type: "boolean", description: CLEAN_TEXT_DESC },
         _listTitle: { type: "string", description: "Short descriptive title for the list UI header (e.g., \"Engineering projects\", \"All projects\"). Omit for default." },
+        linkedUsers: { type: "boolean", description: "Resolve every user id in the results to a full user, returned once in `linked.users`. One request instead of one per id." },
       },
       required: ["workspaceId"],
     },
@@ -1551,7 +2724,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_comments",
-    description: "Get comments and discussion history on a nest, including full nested reply threads. By default returns only comments posted directly on the given nest. Widen with depth to also include comments on descendant nests, or pass a workspace/circle nest ID with depth='all' to gather large sets of communication for analysis.",
+    description: "Get comments and discussion history on a nest, including full nested reply threads. By default returns only comments posted directly on the given nest. Widen with depth to also include comments on descendant nests, or pass a workspace/circle nest ID with depth='all' to gather large sets of communication for analysis. Carries an unread_posts hint when you have not read everything; nestr_mark_post_read acknowledges up to a given post, on any nest, not just direct messages.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1560,6 +2733,7 @@ export const toolDefinitions = [
           oneOf: [{ type: "number" }, { type: "string", enum: ["all"] }],
           description: "How deep below the context nest to look for comments. 0 (default) returns only comments directly on this nest; N includes comments on descendants up to N levels deep; 'all' includes comments on this nest and every descendant.",
         },
+        unread: { type: "boolean", description: "true for comments you have not read, false for the ones you have. Omit for all. Combine with depth to sweep a circle for what you have missed." },
       },
       required: ["nestId"],
     },
@@ -1573,7 +2747,7 @@ export const toolDefinitions = [
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         circleId: { type: "string", description: "Circle ID" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
       required: ["workspaceId", "circleId"],
     },
@@ -1594,7 +2768,17 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_workspace_user",
-    description: "Add a user to a workspace by email. Creates account if needed.",
+    description:
+      "Adds a user to a workspace by email, creating the account if needed. It SENDS A REAL INVITE "
+      + "EMAIL, so confirm with the requester first. Covers seats, membership, plan headcount, adding "
+      + "a colleague. It provisions only domains the workspace added and Nestr verified: personal "
+      + "providers (gmail.com) are always refused, and an added domain stays refused until verified. "
+      + "That limits this tool, not the workspace. The in-app invite (Workspace settings, Users, "
+      + "\"Invite users\") accepts any address with no domain check, so offer it first on a refusal. "
+      + "NEVER suggest clearing the workspace domain list: it keeps the requirement, kills the only "
+      + "way to meet it, and breaks auto-join. Suggest adding a domain only when they control that "
+      + "company domain. Nestr review "
+      + "takes up to 24 hours.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1609,7 +2793,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_label",
-    description: "Get details of a specific label.",
+    description: "Get details of a specific label, including fields, properties, group and autoComplete. `autoComplete: false` marks a system label: it is withheld from the label picker, and an already-applied one is hidden from the label tags on the nest too, so the person cannot see it in either place. Do not suggest such a label to a user, apply it as if they had chosen it, or tell them to click it on an item, because there is nothing there to click. It is not unreachable though: typing the id verbatim in the add/remove label modal still matches it, and a `label:` search on the id still finds the items carrying it, so offer those two routes rather than saying it cannot be done. Every check tests for an explicit false, so a label that omits the property is shown normally: treat missing as visible, not as unknown. Only this single-label read returns autoComplete; nestr_list_labels does not.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1638,7 +2822,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_workspace_apps",
-    description: "List enabled apps/features in a workspace. Check before using features that require specific apps (e.g., Insights).",
+    description: "List a workspace's apps/features. Returns the FULL catalogue, each entry `{ _id, title, enabled }` — a disabled app is present with `enabled: false`, never absent, so test `enabled` and not presence. Note the field is `_id`, not `id`. Check before using features that require specific apps (e.g., Insights, Scrum, Meetings).",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1656,7 +2840,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         completedAfter: { type: "string", description: "Include completed items from this date (ISO format). If omitted, only non-completed items are returned. For reordering, this default is usually sufficient — nestr_reorder_inbox only requires the IDs of items you want to reposition." },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
     },
     _meta: completableListUi,
@@ -1664,7 +2848,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_inbox_item",
-    description: "Quick capture: add an item to the inbox for later processing. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
+    description: "Quick capture: add an item to the inbox for later processing. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose." + writeReturns("item", "inbox item"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1682,7 +2866,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Inbox item ID" },
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
       required: ["nestId"],
     },
@@ -1690,7 +2874,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_inbox_item",
-    description: "Update an inbox item. Set completed:true when processed. Use nestr_update_nest with parentId to move out of inbox. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
+    description: "Update an inbox item. Set completed:true when processed. Use nestr_update_nest with parentId to move out of inbox. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose." + writeReturns("item", "inbox item"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1746,7 +2930,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_personal_label",
-    description: "Create a personal label. Can be used across workspaces. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
+    description: "Create a personal label. Can be used across workspaces. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose." + writeReturns("label", "label"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1791,6 +2975,94 @@ export const toolDefinitions = [
     },
     ...mutating,
   },
+  {
+    name: "nestr_set_recurrence",
+    description: "Set or remove a task/project/meeting's recurrence rule. Pass an RFC-5545 RRULE string (e.g. 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=10') to set it, or rrule: null to remove it. Setting a rule creates NO nests: occurrences are computed from the rule and stay virtual until something touches one (completing it, moving its dates, opening it), at which point that occurrence alone becomes a real nest. Do not tell the user their occurrences have been created. The rule expands from the nest's start, or its due when it has no start, and is refused when it has neither, so set a date first. An invalid RRULE is rejected before anything is written. Removing the rule stops future occurrences and keeps anything already materialized, detached from the series. Do not use this to leave out dates: bounding the series with a COUNT or UNTIL and creating a second recurring nest after the gap leaves two nests with the same title, and a later change to the pattern reaches only one of them. To skip an occurrence, use nestr_skip_occurrence; to edit one occurrence, nestr_update_occurrence.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Nest ID to set or remove recurrence on" },
+        rrule: {
+          type: ["string", "null"],
+          description: "RFC-5545 RRULE string to set recurrence, or null to remove it. Required: pass null explicitly rather than omitting the field.",
+        },
+      },
+      required: ["nestId", "rrule"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_list_occurrences",
+    description: "List the occurrences of a recurring task, project or meeting, so you can name the one you want to act on. This is the ONLY way to see them: occurrences beyond the next one are virtual, meaning the rule produces the instant and no nest exists for it, so nestr_search and nestr_get_nest_children find nothing and asking them is not evidence the occurrences are missing. Returns one page mixing both kinds in date order, each entry carrying `instant` (epoch milliseconds, the key that identifies one occurrence), `virtual` (false means a real nest exists and `nestId` names it), `excluded` (this instant is skipped by the series) and `completed`. Cursor-paged, not page-paged: a rule with no end produces occurrences forever, so there is no total. Pass `nextCursor` back as `cursor` while `hasMore` is true, and `direction: 'past'` to read history. What to do with an `instant`: skip that occurrence with nestr_skip_occurrence (scope 'following' deletes it and every later one), edit that one occurrence with nestr_update_occurrence, or delete the whole series with nestr_delete_series.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The series, or any occurrence of it. Both resolve to the same series." },
+        direction: {
+          type: "string",
+          enum: ["future", "past"],
+          description: "'future' (default) lists upcoming occurrences, soonest first. 'past' lists history, most recent first.",
+        },
+        cursor: {
+          type: ["number", "string"],
+          description: "Walk outward from this instant, exclusive. Pass back nextCursor from the previous page. Defaults to now.",
+        },
+        limit: { type: "number", description: "Occurrences per page. Default 10, capped at 50." },
+      },
+      required: ["nestId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_skip_occurrence",
+    description: "Skip ONE occurrence of a recurring series, or with scope 'following' delete it and every later one. With scope 'occurrence' (the default) it is for the person away that week, the meeting cancelled once, the task that does not apply this time. It excludes that single instant and nothing else. It does NOT end the series (unless the occurrence skipped is the first and nothing follows it, see below), does not change the rule, does not move any other occurrence, and does not destroy history: every past occurrence stays exactly as it was, and the skipped instant stays visible in nestr_list_occurrences marked `excluded`, so the skip is a visible decision rather than a silent gap. If the occurrence already exists as a real nest it is deleted along with the exclusion. The first occurrence is the series item itself: skipping it deletes that nest and hands the series to its next occurrence, which is the series nest from then on, and a series with nothing after it ends; the response then carries `restoreId`, and `seriesId` only when the series carries on. Skipping an instant that is already skipped succeeds and changes nothing. This is NOT the same as splitting the series in two: bounding the rule with a COUNT and creating a second recurring nest after the gap leaves two nests with the same title, and a later edit to the pattern reaches only one of them. Use this instead. With scope 'following' it deletes this occurrence and every later one: the series is split at the instant, the occurrences before it keep their history under a rule that now ends there, and cutting at the first occurrence ends the whole series. It answers with `restoreId`, the nest to restore in the Nestr app: restoring it brings back that nest only, and the occurrences deleted with it are restored separately. `instant` must be an occurrence the series actually has: read it from nestr_list_occurrences and pass it through unchanged. An instant off by a second or by a timezone is refused, not silently accepted. A skip needs update rights on the series, plus delete rights on the occurrence if it already exists as a nest. Skipping the first occurrence deletes the series item itself, so it needs delete rights on the series item. It is refused for workspaces and for governance items unless the caller is a governance admin. Scope 'following' needs delete rights on the series and on every occurrence it removes, and a refusal writes nothing.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The series, or any occurrence of it." },
+        instant: {
+          type: ["number", "string"],
+          description: "Which occurrence: the `instant` value from nestr_list_occurrences, in epoch milliseconds. An ISO-8601 date is accepted only with a Z or an offset, and must be the exact instant the rule produces.",
+        },
+        scope: {
+          type: "string",
+          enum: ["occurrence", "following"],
+          description: "'occurrence' (default) skips this one occurrence and never ends the series. 'following' deletes this occurrence and every later one, keeping the history before it.",
+        },
+      },
+      required: ["nestId", "instant"],
+    },
+    ...destructive,
+  },
+  {
+    name: "nestr_update_occurrence",
+    description: "Edit ONE occurrence of a recurring series: move this week's meeting, retitle one instance, assign one occurrence to someone else. Takes the same edit fields as nestr_update_nest, but not accountabilities, domains or workspaceId. If the occurrence is still virtual it is materialized first, then the changes are applied to that occurrence only; the rule and every other occurrence are untouched. With no fields it only materializes the occurrence. Answers with the nest: use its `_id` with every other nest tool from then on. Not all-or-nothing: the occurrence is materialized before the changes are applied, so if the edit is refused the occurrence may already exist as a real nest, and nestr_list_occurrences shows its `nestId`. The first occurrence is the series item itself and is refused here: change it with nestr_update_nest on the series nest, which also changes occurrences not created yet. A skipped occurrence is refused too, since there is nothing to change. To change the pattern of the whole series, use nestr_set_recurrence instead. `instant` must be an occurrence the series actually has: read it from nestr_list_occurrences and pass it through unchanged.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The series, or any occurrence of it." },
+        instant: {
+          type: ["number", "string"],
+          description: "Which occurrence: the `instant` value from nestr_list_occurrences, in epoch milliseconds. An ISO-8601 date is accepted only with a Z or an offset, and must be the exact instant the rule produces.",
+        },
+        ...NEST_UPDATE_FIELD_PROPERTIES,
+      },
+      required: ["nestId", "instant"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_delete_series",
+    description: "Delete a whole recurring series: the series nest and every occurrence, past ones included. Use only when the series and its history should go. To stop repeating but keep the nests, use nestr_set_recurrence with rrule: null. To skip one occurrence, or remove one and every later one while keeping history, use nestr_skip_occurrence. Answers with `restoreId`, the series nest: restoring it in the Nestr app brings back that nest only, and the occurrences deleted with it are restored separately. Needs delete rights on the series and on every occurrence it removes, and a refusal writes nothing. Refused when the nest has no recurrence.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The series, or any occurrence of it." },
+      },
+      required: ["nestId"],
+    },
+    ...destructive,
+  },
   // Daily plan (requires OAuth token)
   {
     name: "nestr_get_daily_plan",
@@ -1798,7 +3070,7 @@ export const toolDefinitions = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        stripDescription: { type: "boolean", description: "Set true to strip description fields from response, significantly reducing size." },
+        stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
       },
     },
     _meta: completableListUi,
@@ -1831,10 +3103,31 @@ export const toolDefinitions = [
     },
     ...readOnly,
   },
+  // A nest's activity feed (the Activity tab over the API)
+  {
+    name: "nestr_get_nest_activity",
+    description: "What happened on a nest and, by default, everything beneath it, newest first: the Activity tab over the API. Each entry carries who did it (userId, agentUserId when an assistant acted), the sentence the app shows, and the same change as data in `changes`: one row per field with its value before and after, named as nestr_get_nest names them (title, users, parentId, data.<key>, fields.<label>.<code>). Agent runs appear as considerations with their summary, tools and outcome. Use depth to narrow (0 for the nest alone, N for N levels) and userId for one person's work. Paging is by cursor: read `has_more` and pass `next_cursor` back as `before`; there is no total. Pass a circle or workspace ID with the default depth to review everything that happened in it.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The nest whose activity to fetch. Pass a circle or workspace ID to read everything that happened beneath it." },
+        depth: {
+          oneOf: [{ type: "number" }, { type: "string", enum: ["all"] }],
+          description: "How far below the nest to look. Omit or 'all' for the nest and everything beneath it; 0 for the nest itself only; N for N levels down, measured from this nest.",
+        },
+        userId: { type: "string", description: "Only what this user did here, including what an assistant did on their behalf." },
+        limit: { type: "number", description: "Entries per page, newest first (default 50, max 200)." },
+        before: { type: "string", description: "The next_cursor from the previous page. Omit for the newest entries." },
+        linkedUsers: { type: "boolean", description: "Set true to get a linked.users list resolving every userId and agentUserId on the page." },
+      },
+      required: ["nestId"],
+    },
+    ...readOnly,
+  },
   // Label management
   {
     name: "nestr_add_label",
-    description: "Add a label to a nest. Personal labels (like 'now') are automatically scoped to the authenticated user by the API. Will reject any attempt to add a prime label (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback) to a nest that already has one — a nest can only have one core identity.",
+    description: "Add a label to a nest. Personal labels (like 'now') are automatically scoped to the authenticated user by the API. Will reject any attempt to add a prime label (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback) to a nest that already has one — a nest can only have one core identity." + writeReturns("nest", "nest"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1847,7 +3140,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_remove_label",
-    description: "Remove a label from a nest. Personal labels (like 'now') are automatically scoped to the authenticated user by the API.",
+    description: "Remove a label from a nest. Personal labels (like 'now') are automatically scoped to the authenticated user by the API." + writeReturns("nest", "nest"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1953,7 +3246,7 @@ export const toolDefinitions = [
   // Tension tools
   {
     name: "nestr_create_tension",
-    description: "Create a tension on a role or circle. Tensions drive organizational change. See nestr_help('tension-processing') for guidance on placement and pathways.",
+    description: "Create a tension on a role or circle. Tensions drive organizational change. See nestr_help('tension-processing') for guidance on placement and pathways." + writeReturns("tension", "tension"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1982,7 +3275,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_tensions",
-    description: "List tensions for a circle or role. Supports search filtering.",
+    description: "List tensions for a circle or role. Supports search filtering." + LIST_TEXT_TAB_NOTE,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1991,9 +3284,6 @@ export const toolDefinitions = [
         sort: { type: "string", description: SORT_DESCRIPTION },
         limit: { type: "number", description: "Max results to return" },
         page: { type: "number", description: "Page number (1-indexed)" },
-        // The legacy `order` alias is deliberately not advertised — the Zod
-        // schema still accepts it so existing callers keep working, but new
-        // clients should only learn the canonical `sort` param.
       },
       required: ["nestId"],
     },
@@ -2001,7 +3291,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_tension",
-    description: "Update a tension's title, description, feeling, or needs.",
+    description: "Update a tension's title, description, feeling, or needs." + writeReturns("tension", "tension"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2044,7 +3334,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_tension_part",
-    description: "Add a governance proposal part to a tension. Four modes: (1) propose a new item — omit _id, provide title/labels/etc.; (2) propose changes to an existing item — provide _id plus the fields to change (note: editing a role this way copies its existing accountabilities/domains into the proposal, so it reads as a full role edit); (3) propose deletion of an existing item — provide _id and removeNest:true; (4) hold an election — provide roleId (the electable role to fill) plus users:[userId] and optional due (term), which assigns/reconfirms the role's filler WITHOUT changing its accountabilities/domains. See nestr_help('tension-processing').",
+    description: "Add a part to a tension. A part is either the operational work the tension asks for or a governance change it proposes. Modes: OPERATIONAL OUTPUT (title, description, users, role, and no governance label) is what a work request is made of, and is the common case; new governance item (omit _id, give title plus a governance label such as ['role'] or ['policy']); change one (_id plus the changed fields; editing a role copies its accountabilities/domains in, so it reads as a full role edit); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities/domains untouched). The part you get back has its own _id and a sourceId, the output nest underneath it; nestr_modify_tension_part takes the part _id, not the sourceId. See nestr_help('tension-processing')." + writeReturns("part", "part"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2052,16 +3342,17 @@ export const toolDefinitions = [
         tensionId: { type: "string", description: "Tension ID" },
         _id: { type: "string", description: "ID of an existing governance item to change or remove. Omit to propose a new item." },
         title: { type: "string", description: "Title for the governance item" },
-        labels: { type: "array", items: { type: "string" }, description: "Labels defining the item type (e.g., ['role'], ['circle'], ['policy'], ['accountability'], ['domain'])" },
+        labels: { type: "array", items: { type: "string" }, description: "Item type, e.g. ['role'], ['circle'], ['policy'], ['accountability'], ['domain']" },
         description: { type: "string", description: "The primary content field — detailed information about the item. Supports Markdown and HTML." },
-        purpose: { type: "string", description: "ONLY for roles/circles — a short aspirational statement. Do NOT put detailed information here; use description instead. Supports HTML." },
+        purpose: { type: "string", description: PURPOSE_DESC },
         parentId: { type: "string", description: "Parent ID — use to move/restructure items (e.g., move role to different circle)" },
-        users: { type: "array", items: { type: "string" }, description: "User IDs to assign. For an election (with roleId), the single user being elected, e.g. [\"userId\"]." },
-        due: { type: "string", description: "Due date / re-election date (ISO format). For an election (with roleId), the term end — omit to elect without a term." },
-        accountabilities: { type: "array", items: { type: "string" }, description: "Accountability titles to set on a role (replaces all — use children endpoint for individual management)" },
-        domains: { type: "array", items: { type: "string" }, description: "Domain titles to set on a role (replaces all — use children endpoint for individual management)" },
-        roleId: { type: "string", description: "Hold an ELECTION: the electable role to fill (Facilitator/Secretary/Rep Link or any electable role). Assigns/reconfirms the role's filler for a term WITHOUT changing its accountabilities/domains — provide users:[userId] (one person) and optional due (term). Do not combine with _id." },
-        removeNest: { type: "boolean", description: "Set true with _id to propose deletion of the referenced governance item (when the proposal is accepted, the item is removed). Distinct from nestr_remove_tension_part, which undoes a proposal part you already added." },
+        users: { type: "array", items: { type: "string" }, description: "User IDs to assign. For an election (with roleId), the one user being elected." },
+        due: { type: "string", description: "Due or re-election date, ISO. For an election, the term end; omit for no term." },
+        accountabilities: { type: "array", items: { type: "string" }, description: "Accountability titles on a role (replaces all; children tools for individual edits)" },
+        domains: { type: "array", items: { type: "string" }, description: "Domain titles on a role (replaces all; children tools for individual edits)" },
+        role: { type: "string", description: "The role this output belongs to, for an operational output (pathway 3/4). Pair with users: users is WHO does it, role is the role it is asked of, and the work request names both (\"Ada as Systems: ...\"). A role id, not a title. Distinct from roleId, which is election mode." },
+        roleId: { type: "string", description: "ELECTION mode: the electable role to fill (Facilitator, Secretary, Rep Link or any electable role). Pair with users:[oneUserId] and optional due. Never with _id." },
+        removeNest: { type: "boolean", description: "With _id, propose deleting that governance item; it goes when the proposal is accepted. Not nestr_remove_tension_part, which undoes a part you already added." },
       },
       required: ["nestId", "tensionId"],
     },
@@ -2069,7 +3360,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_modify_tension_part",
-    description: "Modify an existing proposal part. For individual accountability/domain changes, use the children tools.",
+    description: "Modify an existing proposal part. For individual accountability/domain changes, use the children tools." + writeReturns("part", "part"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2078,13 +3369,14 @@ export const toolDefinitions = [
         partId: { type: "string", description: "Part ID to modify" },
         title: { type: "string", description: "Updated title" },
         description: { type: "string", description: "Updated description — the primary content field. Supports Markdown and HTML." },
-        purpose: { type: "string", description: "ONLY for roles/circles — updated aspirational statement. Do NOT put detailed information here; use description instead. Supports HTML." },
+        purpose: { type: "string", description: PURPOSE_DESC },
         labels: { type: "array", items: { type: "string" }, description: "Updated labels" },
         parentId: { type: "string", description: "Updated parent ID" },
         users: { type: "array", items: { type: "string" }, description: "Updated user assignments" },
         due: { type: "string", description: "Updated due date (ISO format)" },
-        accountabilities: { type: "array", items: { type: "string" }, description: "Updated accountabilities (replaces all — use children endpoint for individual management)" },
-        domains: { type: "array", items: { type: "string" }, description: "Updated domains (replaces all — use children endpoint for individual management)" },
+        role: { type: "string", description: "Updated role for an operational output. A role id; pass an empty string to clear it." },
+        accountabilities: { type: "array", items: { type: "string" }, description: "Updated accountabilities (replaces all; children tools for individual edits)" },
+        domains: { type: "array", items: { type: "string" }, description: "Updated domains (replaces all; children tools for individual edits)" },
       },
       required: ["nestId", "tensionId", "partId"],
     },
@@ -2116,10 +3408,11 @@ export const toolDefinitions = [
       },
       required: ["nestId", "tensionId", "partId"],
     },
+    ...readOnly,
   },
   {
     name: "nestr_create_tension_part_child",
-    description: "Add a new accountability or domain to a proposal part. When the proposal is enacted, this creates a new accountability/domain on the role.",
+    description: "Add a new accountability or domain to a proposal part. When the proposal is enacted, this creates a new accountability/domain on the role." + writeReturns("child", "child"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2134,7 +3427,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_tension_part_child",
-    description: "Rename an accountability or domain within a proposal part. When the proposal is enacted, the original accountability/domain is updated.",
+    description: "Rename an accountability or domain within a proposal part. When the proposal is enacted, the original accountability/domain is updated." + writeReturns("child", "child"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2190,7 +3483,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_tension_status",
-    description: "Submit a tension for voting ('proposed') or retract to 'draft'. Submitting notifies circle members.",
+    description: "Submit a tension for consent ('proposed') or retract it to 'draft'. Proposing asks every other member of the circle to consent and notifies them. When there is nobody else to ask, the server enacts the tension at once and answers `status: \"enacted\"`: a governance proposal in a single-member circle, or a work request with no output or whose requester is its only assignee. Otherwise resolution happens through those consent votes, in a governance meeting or in the Nestr app, not through this tool. To observe the outcome, read nestr_get_tension_status, which reports `accepted` once the tension is resolved and `escalated` when someone objected.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2205,13 +3498,13 @@ export const toolDefinitions = [
   // Graph link tools
   {
     name: "nestr_get_graph_links",
-    description: "Get nests linked via a named graph relation. Use 'meeting' relation to get agenda items or linked meetings.",
+    description: "Get nests linked via a named graph relation. Links are directed: each row says whether it is outgoing (this nest links to it) or incoming (it links to this nest). Use 'meeting' relation to get agenda items or linked meetings. For Timeline dependencies use 'depends_on': outgoing are the predecessors this nest waits for, incoming are the nests waiting on it.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID to get graph links for" },
         relation: { type: "string", description: "Relation name (e.g., 'meeting' for meeting agenda items)" },
-        direction: { type: "string", enum: ["outgoing", "incoming"], description: "Link direction: 'outgoing' (default) = links FROM this nest, 'incoming' = links TO this nest" },
+        direction: { type: "string", enum: ["outgoing", "incoming"], description: "Link direction: 'outgoing' = links FROM this nest, 'incoming' = links TO this nest. Omit for both." },
         limit: { type: "number", description: "Max results per page (default 50)" },
         page: { type: "number", description: "Page number for pagination" },
       },
@@ -2221,7 +3514,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_graph_link",
-    description: "Create a bidirectional graph link between two nests. E.g., link a tension to a meeting as an agenda item.",
+    description: "Create a directed graph link from nestId to targetId. It reads as outgoing on nestId and incoming on targetId. E.g., link a tension to a meeting as an agenda item. For a Timeline dependency use relation 'depends_on' with nestId the item that waits and targetId the one it waits for: the same link dragging between two bars makes. A depends_on that would create a cycle, or tie a parent to its own child, is refused.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2235,7 +3528,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_remove_graph_link",
-    description: "Remove a graph link between two nests. For example, remove a tension from a meeting's agenda by removing the 'meeting' relation.",
+    description: "Remove the graph link from nestId to targetId. A link running the other way is left alone, and the error names the call that removes it. For example, remove a tension from a meeting's agenda by removing the 'meeting' relation.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2260,43 +3553,121 @@ export const toolDefinitions = [
     ...readOnly,
   },
   {
-    name: "nestr_register_connector",
-    description: "Register a connector in the workspace catalog: a reusable mcp / cli / api template that holds no secret. Workspace-admin only. A non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error). Provide type ('mcp' or 'api' need a url in config; 'cli' needs a command) and a unique name; optionally capabilities, exposure ({ userAgent, domainGated }), and authStrategy ('secret' or 'oauth2'). This only creates the template. Typical flow: register here, then bind it to a role's domain with nestr_bind_connector, then a human or agent connects the account via the credentials field's Connect button. The secret is captured out-of-band through that button, never by the agent.",
+    name: "nestr_list_connector_templates",
+    description: "The connector templates this deployment can add in one click, filtered to the ones it can actually offer. Each carries the vendor's real endpoint, transport, auth strategy and the deployment's OAuth client.\n\nCALL THIS FIRST, before nestr_register_connector, whenever the tool is a known vendor (Xero, HubSpot, Slack, Stripe, GitHub, Notion, Linear and so on). Hand-registering means guessing an endpoint, and a wrong guess authorises cleanly and then fails every call: a Xero connector registered against api.xero.com instead of the template's mcp.xero.com looked healthy in every record and returned 403 forever. Pass the id you find here as templateId to nestr_register_connector. Workspace-admin only.",
     inputSchema: {
       type: "object" as const,
       properties: {
+        workspaceId: { type: "string", description: "Workspace ID whose available connector templates to list" },
+      },
+      required: ["workspaceId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_register_connector",
+    description: "Register a connector in the workspace catalog. PREFER A TEMPLATE: call nestr_list_connector_templates first and pass its id as templateId, which fills in the vendor's real endpoint, transport, auth strategy and this deployment's OAuth client. Hand-registering a known vendor means guessing an endpoint, and a wrong guess authorises cleanly and then fails every call. Only describe the transport yourself for something the deployment has no template for. A reusable mcp / cli / api template that holds no secret. Workspace-admin only. A non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error). Provide type ('mcp' or 'api' need a url in config; 'cli' needs a command) and a unique name; optionally capabilities, exposure ({ userAgent, domainGated }), and authStrategy ('secret' or 'oauth2'). This only creates the template. Typical flow: register here, then bind it to a role's DOMAIN with nestr_bind_connector (create one under the role with nestr_create_nest and labels ['circleplus-domain'] if the role has none yet: the bind refuses a role id), then a human or agent connects the account via the credentials field's Connect button. The secret is captured out-of-band through that button, never by the agent.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        templateId: {
+          type: "string",
+          description: "Id of a template from nestr_list_connector_templates. Given this, everything else is filled in from the template and you should omit type/config/capabilities/exposure/authStrategy. ALWAYS prefer this over hand-registering a vendor the deployment already knows.",
+        },
         workspaceId: { type: "string", description: "Workspace ID to register the connector in" },
         type: {
           type: "string",
           enum: ["mcp", "cli", "api"],
-          description: "Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command)",
+          description: "Transport: 'mcp' (MCP server over a url), 'api' (REST endpoint over a url), or 'cli' (a command). Required unless templateId is given.",
         },
-        name: { type: "string", description: "Unique connector name within the workspace catalog" },
+        name: {
+          type: "string",
+          description: "Unique connector name within the workspace catalog. Required unless templateId is given, where it defaults to the template's own name.",
+        },
         config: {
           type: "object",
-          description: "Per-type transport config, no secret. mcp/api need a url (e.g., { url: 'https://...' }); cli needs a command (e.g., { command: 'some-cli' }). Optional non-secret headers go under headers.",
+          description: "Transport config, no secret. mcp/api need a url, cli a command. Optional non-secret headers go under headers.",
         },
         capabilities: {
           type: "object",
-          description: "Capability descriptor: { discover: boolean, tools: [{ name, description, inputSchema }] }. discover:true lets the connector self-describe its tools at runtime.",
+          description: "{ discover: boolean, tools: [{ name, description, inputSchema }] }. discover:true lets the connector self-describe its tools at runtime.",
         },
         exposure: {
           type: "object",
-          description: "Exposure policy deciding which owners may bind: { userAgent: boolean, domainGated: boolean }. Set domainGated:true to allow binding to a role's domain.",
+          description: "Which owners may bind: { userAgent: boolean, domainGated: boolean }. domainGated:true allows binding to a role's domain.",
         },
         authStrategy: {
           type: "string",
           enum: ["secret", "oauth2"],
-          description: "How a principal connects: 'secret' (a one-time secret captured via the Connect button) or 'oauth2'. The agent never sees the secret.",
+          description: "How a principal connects: 'secret' (one-time, via the Connect button) or 'oauth2'. The agent never sees it.",
         },
       },
-      required: ["workspaceId", "type", "name"],
+      // workspaceId only: with a templateId the transport comes from the template,
+      // and demanding type and name here is what made the whole template path
+      // unreachable from a client that reads the schema.
+      required: ["workspaceId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_create_agent",
+    description: "Create an agent user in the workspace. Workspace-admin only; a non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error).\n\nWhat decides how an agent behaves at run time is not this flag: it is whether the agent FILLS ANY ROLE in the workspace at that moment. Filling one and assisting are exclusive, and the test is not 'does it fill THIS role' but 'does it fill any', so one role anywhere makes every one of its runs a role-filler run, acting with that role's authority and reaching only the role's connectors. An agent that fills none assists whoever engages it, acting with THAT person's authority and reaching what they reach, their own connectors included.\n\nroleAssignable decides whether that can ever change. Default (true) is an ordinary agent: it assists while it holds no role, and becomes a filler the moment anyone assigns it to one. Pass false for an ASSISTANT: it can never be assigned to a role, so it can never stop being able to act for a person. Prefer false whenever the agent exists to help people with work that follows them, because otherwise a single well-meant role assignment silently ends that.\n\nEither way, work that follows a PERSON (their mailbox, their drive, their queue) puts the agent on the TASK beside them and never in the role's users. Assigning it to the role is the specific mistake: it then cannot reach anything of theirs, reports that it holds no external tool sources, and suggests binding their account to the role, which would hand it to whoever fills that role next.\n\nAn agent and the role it fills are two different things, named differently: the agent carries its own name (Collab), the role is named for the WORK (Marketing). Do not name the role after the agent. Keeping them apart is what lets the agent be replaced without the role losing its purpose, accountabilities and history, and lets one agent fill several roles.\n\nThe agent's instructions do not go here: they belong in a skill nest under the role, which loads whenever the role acts. agentConfig is runtime wiring only.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID to create the agent in" },
+        name: {
+          type: "string",
+          description: "The AGENT's own name, as its identity calls it (e.g. 'Collab'). Not the name of the work: that belongs to the role this agent will fill.",
+        },
+        description: {
+          type: "string",
+          description: "What the agent is LIKE: its character and what it is careful about. Not its instructions, which belong in a skill on the role.",
+        },
+        roleAssignable: {
+          type: "boolean",
+          description: "Defaults to true, meaning it MAY be assigned to a role. It still assists while it holds none; assigning it to one is what ends that. Pass false for an ASSISTANT, which can never be assigned and so can never stop acting for a person. See the tool description.",
+        },
+        agentConfig: {
+          type: "object",
+          description: "Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Omit for an agent that runs on Nestr's own runtime.",
+        },
+      },
+      required: ["workspaceId", "name"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_update_agent",
+    description: "Change an existing agent's settings: its name, its description, whether it may search the web, its status, whether it may be assigned to roles, and its runtime config. Send only the fields to change; the rest are left as they are. Workspace-admin only; a non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error).\n\nThe description is what the agent is LIKE, shown as its purpose wherever it is listed. It is not the agent's instructions: what the agent should DO lives in a skill nest under the role it fills, so a stale description is fixed here and a stale instruction is fixed on the skill. This tool changes the agent, never the work it is on: to move it to other work, change the role's users with nestr_update_nest.\n\nroleAssignable:false turns the agent into an ASSISTANT, one that can never be assigned to a role and so can never stop acting with the authority of the person it helps. It is refused while the agent still fills a role, and the error names the roles: unassign it there first (nestr_update_nest users on the role), then call again. roleAssignable:true makes an assistant assignable again; it keeps assisting until someone assigns it to a role.\n\nA field this tool does not list, and a call that changes nothing, are refused with VALIDATION rather than ignored, so a success answer means every field you sent has landed. There is no need to read the agent back to check.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the agent belongs to" },
+        userId: { type: "string", description: "The agent's user id, from nestr_list_users with agents:'only' or nestr_get_user" },
+        name: { type: "string", description: "The AGENT's own name, as its identity calls it. Cannot be blank." },
+        description: {
+          type: "string",
+          description: "What the agent is LIKE: its character and what it is careful about. Shown as its purpose wherever it is listed. Not its instructions, which belong in a skill on the role.",
+        },
+        webSearch: { type: "boolean", description: "Whether the agent may search the web." },
+        status: { type: "string", enum: ["active", "paused", "disabled"], description: "active, paused or disabled." },
+        roleAssignable: {
+          type: "boolean",
+          description: "false makes it an ASSISTANT that can never be assigned to a role. Refused while it still fills one; the error names the roles, so unassign it there first. true makes an assistant assignable again.",
+        },
+        agentConfig: {
+          type: "object",
+          description: "Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Replaces the stored wiring as a whole.",
+        },
+      },
+      required: ["workspaceId", "userId"],
     },
     ...mutating,
   },
   {
     name: "nestr_bind_connector",
-    description: "Bind a registered connector to an owner so that owner can use it. Owner types: 'user' or 'agent' (ownerId is the user ID), 'workspace' (ownerId is the workspace ID), or 'role-domain' (ownerId is the domain nest ID). A 'role-domain' owner also materialises a credentials field on the domain nest, so the role can use the connector and the Connect button renders there; the response then includes credentialsField { domainId, fieldId, fieldCode }. After binding, a human or agent connects the account via that Connect button. The secret is captured out-of-band and is never seen by the agent. Workspace-admin only: a non-admin caller gets AUTH_SCOPE_INSUFFICIENT. The connector must already be registered (nestr_register_connector) and enabled.",
+    description: "Bind a registered connector to an owner so that owner can use it. Owner types: 'role' (ownerId is the role nest ID — the server finds or creates the connector's domain under it), 'role-domain' (ownerId is an existing domain nest ID), 'workspace' (ownerId is the workspace ID), 'user' (ownerId is a person's user ID, for their own account), or 'agent' (ownerId is a bot's user ID, for its own). A 'role' or 'role-domain' owner materialises a credentials field on the domain nest, so the role can use the connector and the Connect button renders there; the response then carries domainId (and domainCreated when the bind created it). After binding, a human or agent connects the account via that Connect button. The secret is captured out-of-band and is never seen by the agent. Workspace-admin only: a non-admin caller gets AUTH_SCOPE_INSUFFICIENT. The connector must already be registered (nestr_register_connector) and enabled.\n\nBIND TO THE ROLE, not to whoever fills it. A role binding is the governance act: the access belongs to the work, survives the filler changing, and is visible to the circle. Reach for 'role' by default — it is the usual onboarding path: pass the role nest ID and the server does the domain lookup. Use 'role-domain' only when you already have the domain nest ID and want to target it directly.\n\n'user' is for what is genuinely one person's: their own mailbox, their own drive. Binding that to a role would hand it to whoever fills the role next, which is the opposite of what they asked for, so this is the one case where a role binding is wrong. It needs a workspace admin and the connector has to be open to user owners in the catalog; if either is missing, say which and what the admin has to do rather than falling back to a role binding. The work on a personal connection is then done by an agent that fills NO role, because filling a role and assisting are exclusive and only an assistant can act with a person's own access.\n\n'agent' is the same shape for a bot's own account, used where a provider gives the agent its own login rather than borrowing a person's. It is the rarest of the four: prefer 'role', so the access belongs to the work and survives the filler changing. Both personal types are workspace-admin only and both need the connector open to user/agent owners, so a caller who is not an admin gets AUTH_SCOPE_INSUFFICIENT and should say which of the two is missing rather than binding to a role instead. Be careful arranging one agent's credential from another agent's run: it is a decision about what that agent may reach, so name what you are about to do and why before doing it.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2304,12 +3675,12 @@ export const toolDefinitions = [
         connectorId: { type: "string", description: "ID of an enabled connector from nestr_list_connectors" },
         ownerType: {
           type: "string",
-          enum: ["user", "agent", "workspace", "role-domain"],
-          description: "Owner type. 'role-domain' binds the connector to a role's domain so the role can use it and a credentials field is materialised on the domain.",
+          enum: ["role", "workspace", "role-domain", "user", "agent"],
+          description: "Owner type. 'role' is the usual path: pass the role nest ID and the server finds or creates the connector's domain under it. 'role-domain' targets an existing domain directly. 'workspace' gives everyone. 'user' is one person's own account and 'agent' is one bot's own: both are personal, both are workspace-admin only, and both are wrong unless the thing really belongs to that single principal.",
         },
         ownerId: {
           type: "string",
-          description: "Owner ID. user/agent: the user ID. workspace: the workspace ID. role-domain: the domain nest ID.",
+          description: "Owner ID. role: the role nest ID. role-domain: the domain nest ID. workspace: the workspace ID. user: the person's user ID. agent: the bot's user ID.",
         },
       },
       required: ["workspaceId", "connectorId", "ownerType", "ownerId"],
@@ -2317,8 +3688,178 @@ export const toolDefinitions = [
     ...mutating,
   },
   {
+    name: "nestr_update_connector",
+    description: "Update a connector in the workspace catalog, or switch it on and off with `enabled`. Workspace-admin only. Switching it off, or narrowing its exposure, takes effect immediately everywhere it is used: the policy is re-read every time a credential is handed out, not only when access was given.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the connector belongs to" },
+        connectorId: { type: "string", description: "ID of the connector to update" },
+        type: { type: "string", enum: ["mcp", "cli", "api"], description: "Transport" },
+        name: { type: "string", description: "Unique connector name within the workspace catalog" },
+        config: { type: "object", description: "Per-type transport config, no secret" },
+        capabilities: { type: "object", description: "Capability descriptor" },
+        exposure: { type: "object", description: "Exposure policy: { userAgent, domainGated }" },
+        authStrategy: { type: "string", enum: ["secret", "oauth2"], description: "How a principal connects" },
+        enabled: { type: "boolean", description: "Switch the connector on or off in this workspace" },
+      },
+      required: ["workspaceId", "connectorId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_remove_connector",
+    description: "Remove a connector from the workspace catalog. Workspace-admin only. Bindings that named it stop resolving, so prefer nestr_update_connector with enabled:false when you only want to pause it.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the connector belongs to" },
+        connectorId: { type: "string", description: "ID of the connector to remove" },
+      },
+      required: ["workspaceId", "connectorId"],
+    },
+    ...destructive,
+  },
+  {
+    name: "nestr_list_connections",
+    ...readOnly,
+    description: "List who has access to what in this workspace: each binding's connector, its owner (a role's domain, a person, an agent, or the whole workspace), and who holds a credential on it. Shows when an agent is using a person's account, and never returns a secret. Use it to check whether access already exists before giving more, and to find the connectionId for nestr_get_connect_link. A row with pendingInstructionApprovals is held back on scheduled runs until a person in its audience approves the role's latest instructions; its instructionApprovalNote says who can release it and how.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID whose bindings to list" },
+        includeDisabled: { type: "boolean", description: "Include removed bindings. Default false." },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "nestr_remove_connection",
+    description: "Take a connector off an owner: the binding is removed and every credential on it revoked. Workspace-admin only. A domain left holding nothing goes back to being an ordinary descriptive domain.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the binding belongs to" },
+        connectionId: { type: "string", description: "Binding ID from nestr_list_connections" },
+      },
+      required: ["workspaceId", "connectionId"],
+    },
+    ...destructive,
+  },
+  {
+    name: "nestr_get_connect_link",
+    description: "Get a link a PERSON opens to connect an account for a binding. This is how you finish setting up access: you can register a connector and give a role access, but you must never handle a raw token, so the sign-in or key entry happens behind this link. The link carries no authority — whoever opens it is checked then. Give it to the user in your reply.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the binding belongs to" },
+        connectionId: { type: "string", description: "Binding ID from nestr_list_connections" },
+      },
+      required: ["workspaceId", "connectionId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_revoke_connection_credential",
+    description: "Revoke the calling user's credential on a binding. The binding stays, so access can be restored by connecting again. Use nestr_remove_connection to remove the access entirely.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the binding belongs to" },
+        connectionId: { type: "string", description: "Binding ID from nestr_list_connections" },
+      },
+      required: ["workspaceId", "connectionId"],
+    },
+    ...destructive,
+  },
+  {
+    name: "nestr_get_agent_connectors",
+    ...readOnly,
+    description: "What an agent can and cannot use, and why. Groups each connector by where the grant comes from (its own binding, the workspace, or a role it fills) and, when unavailable, names the reason: no credential yet, the connector is disabled, it has no usable tools, or it no longer allows this kind of access. Reach for this when an agent seems to be missing something it should have.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the agent belongs to" },
+        agentUserId: { type: "string", description: "The agent's bot user ID" },
+      },
+      required: ["workspaceId", "agentUserId"],
+    },
+  },
+  {
+    name: "nestr_run_agent",
+    description: "Run an agent now on a nest, optionally saying what the run is for. This is how one agent asks another to do something. The run is pinned to the nest you name and reports back there. You need assign rights on that nest and the agent must fill or be assigned to it, so this cannot run an agent anywhere in the workspace.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the agent belongs to" },
+        agentUserId: { type: "string", description: "The agent's bot user ID" },
+        nestId: { type: "string", description: "The nest the run is pinned to: a role, a project, a task" },
+        message: { type: "string", description: "What this run is for. Omit for a plain 'advance this item' run." },
+      },
+      required: ["workspaceId", "agentUserId", "nestId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_get_agent_mode",
+    description: "How one agent operates on one nest: reactive (acts when mentioned, messaged or handed work) or autonomous on a cadence. `recheck` is \"continuous\" or an RRULE; `start` and `tzid` anchor it and `nextRunAt` is when it fires next. The mode is always per nest, never a setting of the agent as a whole, and items inherit it from their role or circle unless they set their own. `source` says which: own, inherited, or default.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The role, project or task" },
+        agentUserId: { type: "string", description: "The agent's bot user ID" },
+      },
+      required: ["nestId", "agentUserId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_set_agent_mode",
+    description: "Set how one agent operates on one nest: reactive, or autonomous on a cadence. The cadence (`recheck`) is \"continuous\" or an RRULE. Put the time of day in `start` and the zone in `tzid`, never in BYHOUR: weekdays at 09:00 Amsterdam time is recheck FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR with start 2026-10-12T09:00:00+02:00 and tzid Europe/Amsterdam. Applies to this nest and to the items under it that set nothing of their own; mode null clears this nest's own setting. A cadence re-checks one item until it is done, so it fits keeping an open-ended role or project moving. For a job that should happen again and again, such as a weekly report, do not use a cadence: create a task assigned to the agent with a due date and set a repeat with nestr_set_recurrence, so each occurrence runs when it comes due. You need assign rights on the nest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The role, project or task this setting is for" },
+        agentUserId: { type: "string", description: "The agent's bot user ID" },
+        mode: {
+          type: ["string", "null"],
+          enum: ["reactive", "autonomous", null],
+          description: "reactive or autonomous. null clears this nest's own setting so it inherits again.",
+        },
+        recheck: {
+          type: "string",
+          description: "Required when mode is autonomous. \"continuous\", or an RRULE such as FREQ=WEEKLY;BYDAY=MO,WE,FR. hourly, daily and weekly are accepted as shorthand.",
+        },
+        start: {
+          type: "string",
+          description: "ISO date-time the schedule starts at; sets the time of day it runs at. A value with no offset is read as local time in tzid. Defaults to now.",
+        },
+        tzid: {
+          type: "string",
+          description: "IANA time zone, such as Europe/Amsterdam. Defaults to UTC.",
+        },
+      },
+      required: ["nestId", "agentUserId", "mode"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_workspace_docs",
+    description: "The workspace's reference documents: an organisation constitution, a staff handbook, an onboarding guide, whatever this workspace uploaded for its agents to draw on. CALL THIS WITH NO ARGUMENTS FIRST to see what exists — the index lists each document with a description of what it holds and when to read it, and costs almost nothing. Then `search` across them for the passage that answers a question, or `fileId` to read one document. Prefer `search` over reading a whole document: the large ones run past half a million characters, and the answer is usually one section. These are the organisation's own words about how it works, so they outrank your general knowledge about how organisations work; where a document covers the question, quote it rather than reasoning from first principles. Nothing here is guaranteed to exist: a workspace that uploaded nothing returns an empty index, which is an answer, not an error. Auth: any valid token with access to the workspace.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace whose documents to read. Omit when you can only reach one." },
+        search: { type: "string", description: "Find the passages across all the documents that match this. Use words the document would use, not the user's phrasing." },
+        fileId: { type: "string", description: "Read one document, from the index or from a search hit." },
+        offset: { type: "number", description: "With fileId, continue from a previous nextOffset, or from a search hit's offset." },
+      },
+    },
+    ...readOnly,
+  },
+  {
     name: "nestr_get_nest_files",
-    description: "List a nest's file attachments. Images pasted into the nest's text are deliberately excluded — they belong to the text that references them; the inline_images hint counts those and their ids come from the references in the content. A comment ID works too — files are keyed by nestId, so pass a comment ID to see files attached to that comment. Returns each file's id, name, contentType and size. Use nestr_read_file with a returned id to read one (images come back as viewable image content). Auth: any valid token with access to the nest.",
+    description: "List a nest's file attachments. Images pasted into the nest's text are deliberately excluded — they belong to the text that references them; the inline_images hint counts those and their ids come from the references in the content. A comment ID works too — files are keyed by nestId, so pass a comment ID to see files attached to that comment. Returns each file's id, name, contentType and size. Use nestr_read_file with a returned id to read one (JPEG/PNG/GIF/WebP come back as viewable image content; SVG comes back as its markup). Auth: any valid token with access to the nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2330,7 +3871,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_read_file",
-    description: "Read a single file attachment on a nest (or comment). Branches on contentType: images (image/*) return as viewable image content so you can see them (very large images return metadata only); JSON and text (application/json, text/*) return as decoded UTF-8 text (large text is truncated); PDFs and other types return their metadata only (cannot be inlined yet). Get file ids from nestr_get_nest_files, or, for an image pasted into a nest's text, from the ![name](/file/download?id=FILE_ID&name=NAME) reference in its content — those are not listed by nestr_get_nest_files but are readable here. A comment ID works as the nestId. Auth: any valid token with access to the nest.",
+    description: "Read a single file attachment on a nest (or comment). Branches on contentType: JPEG, PNG, GIF and WebP return as viewable image content so you can see them (very large images return metadata only); JSON, XML and text (application/json, text/*, and SVG, which is markup) return as decoded UTF-8 text (large text is truncated); PDFs, other image formats and everything else return their metadata only (cannot be inlined). Get file ids from nestr_get_nest_files, or, for an image pasted into a nest's text, from the ![name](/file/download?id=FILE_ID&name=NAME) reference in its content — those are not listed by nestr_get_nest_files but are readable here. A comment ID works as the nestId. Auth: any valid token with access to the nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2371,6 +3912,16 @@ export const toolDefinitions = [
     ...destructive,
   },
 ];
+
+// The read-only surface (/mcp/readonly) serves an authenticated bearer but only
+// tools that cannot change anything. Derived from the annotations rather than a
+// hand-kept list, so a new tool is denied until someone marks it readOnly: the
+// failure mode of forgetting is a missing capability, not a silent write.
+export const READONLY_TOOL_NAMES: ReadonlySet<string> = new Set(
+  toolDefinitions
+    .filter((t) => (t as { annotations?: { readOnlyHint?: boolean } }).annotations?.readOnlyHint === true)
+    .map((t) => t.name),
+);
 
 // Tool handler type
 export type ToolResult = {
@@ -2483,6 +4034,12 @@ export interface ToolCallContext {
    * payload without contacting the Nestr API. Any other tool is refused.
    */
   isPublic?: boolean;
+  /**
+   * When true, this call came in on the READ-ONLY MCP surface. The bearer is
+   * real and workspace data is readable, but only READONLY_TOOL_NAMES are
+   * permitted. Anything that could change state is refused.
+   */
+  isReadOnly?: boolean;
 }
 
 export async function handleToolCall(
@@ -2537,6 +4094,19 @@ async function _handleToolCall(
       }
     }
 
+    // READ-ONLY surface gate (defense in depth — the readonly route also filters
+    // the advertised tool list). Anything not marked readOnlyHint is refused,
+    // including tools carrying no annotation at all.
+    if (context?.isReadOnly && !READONLY_TOOL_NAMES.has(name)) {
+      return formatError({
+        error: true,
+        code: "AUTH_SCOPE_INSUFFICIENT",
+        message: `Tool '${name}' is not available on the read-only Nestr MCP. This workspace is out of AI credit, so the agent can read but not change anything.`,
+        retryable: false,
+        hint: "Add AI credit, or raise the monthly ceiling if that is what was reached, to restore the full toolset.",
+      });
+    }
+
     switch (name) {
       case "nestr_help": {
         const parsed = schemas.help.parse(args);
@@ -2552,7 +4122,7 @@ async function _handleToolCall(
             const entries = await loadArticleIndex();
             const hits = searchArticleIndex(entries, parsed.search, 8);
             if (hits.length === 0) {
-              return { content: [{ type: "text", text: `_Resolved as: help-article search._\n\nNo help articles matched "${parsed.search}". Try broader terms or a synonym, or call nestr_help({ topic: "topics" }) for internal MCP topics.` }] };
+              return { content: [{ type: "text", text: `_Resolved as: help-article search._\n\nNo help articles matched "${parsed.search}". **The corpus and the index are English. If you searched in another language, translate the query and search again before concluding anything** — that is the single most common reason for an empty result, and one retry usually fixes it. Beyond that: the index scores article slugs and curated keywords, not article bodies, so an exact feature, operator or field name often misses even when the docs cover it. Try broader terms or a synonym, or call nestr_help({ topic: "topics" }) for internal MCP topics. An empty result is not evidence the thing does not exist: say you could not find it documented, never that it is unsupported. Never fill the gap from memory on anything a customer could check — prices, limits and plan names above all.` }] };
             }
             // Enrich the top hits with a title + one-line summary so the caller
             // can pick the right article without a blind fetch. Best-effort:
@@ -2752,12 +4322,13 @@ async function _handleToolCall(
         const directives = extractSearchDirectives(parsed.query);
         const results = await client.searchWorkspace(
           parsed.workspaceId,
-          parsed.query,
+          withStrict(parsed.query, parsed.strict),
           {
             sort: parsed.sort ?? directives.sort,
             limit: parsed.limit ?? directives.limit,
             page: parsed.page,
-            cleanText: true,
+            cleanText: parsed.cleanText ?? true,
+            linkedUsers: parsed.linkedUsers,
           }
         );
         return formatResult(completableResponse(compactResponse(results), "search", parsed._listTitle || `Search: ${parsed.query}`));
@@ -2766,9 +4337,11 @@ async function _handleToolCall(
       case "nestr_get_nest": {
         const parsed = schemas.getNest.parse(args);
         const nest = await client.getNest(parsed.nestId, {
-          cleanText: true,
+          cleanText: parsed.cleanText ?? true,
           fieldsMetaData: parsed.fieldsMetaData,
-          hints: parsed.hints !== false,
+          hints: resolveHintLevel(parsed.hints, "full"),
+          hintTypes: parsed.hintTypes,
+          minSeverity: parsed.minSeverity,
           provenance: parsed.provenance,
           rights: parsed.rights,
           forUser: parsed.forUser,
@@ -2782,7 +4355,10 @@ async function _handleToolCall(
         const nest = await client.getNest(parsed.nestId, {
           cleanText: true,
           fieldsMetaData: true,
-          hints: false,
+          // The one hint that answers "why does this role's agent not have Gmail on its
+          // scheduled runs": it is not a rights question, so the rights trace cannot say it.
+          hints: "full",
+          hintTypes: ["connector_awaiting_instruction_approval"],
           provenance: true,
           rights: true,
           forUser: parsed.forUser,
@@ -2794,13 +4370,33 @@ async function _handleToolCall(
       case "nestr_get_nest_children": {
         const parsed = schemas.getNestChildren.parse(args);
         const children = await client.getNestChildren(parsed.nestId, {
+          search: parsed.search,
           sort: parsed.sort,
           limit: parsed.limit,
           page: parsed.page,
-          cleanText: true,
-          hints: parsed.hints !== false,
+          cleanText: parsed.cleanText ?? true,
+          hints: resolveHintLevel(parsed.hints, "summary"),
+          hintTypes: parsed.hintTypes,
+          minSeverity: parsed.minSeverity,
+          linkedUsers: parsed.linkedUsers,
         });
         return formatResult(completableResponse(compactResponse(enrichHints(children)), "children", parsed._listTitle || "Sub-items"));
+      }
+
+      case "nestr_hints_rollup": {
+        const parsed = schemas.hintsRollup.parse(args);
+        const rollup = await client.getHintsRollup(parsed.nestId, {
+          hintTypes: parsed.hintTypes,
+          minSeverity: parsed.minSeverity,
+          sampleSize: parsed.sampleSize,
+        });
+        return formatResult(rollup);
+      }
+
+      case "nestr_api_spec": {
+        const parsed = schemas.apiSpec.parse(args);
+        const spec = await client.getApiSpec();
+        return formatResult(summariseApiSpec(spec, parsed));
       }
 
       case "nestr_create_nest": {
@@ -2840,7 +4436,7 @@ async function _handleToolCall(
             );
           }
           const nest = Array.isArray(result) ? result[0] : result;
-          return formatResult({ message: "Nest created successfully", nest });
+          return formatResult({ message: "Nest created successfully", _id: writtenId(nest), nest });
         }
 
         const nest = await client.createNest({
@@ -2851,8 +4447,11 @@ async function _handleToolCall(
           labels: parsed.labels,
           fields: parsed.fields,
           users: parsed.users,
+          due: parsed.due,
+          start: parsed.start,
+          allDay: parsed.allDay,
         });
-        return formatResult({ message: "Nest created successfully", nest });
+        return formatResult({ message: "Nest created successfully", _id: writtenId(nest), nest });
       }
 
       case "nestr_update_nest": {
@@ -2884,7 +4483,7 @@ async function _handleToolCall(
           const nest = isCircle
             ? await client.updateCircle(parsed.workspaceId, parsed.nestId, updates)
             : await client.updateRole(parsed.workspaceId, parsed.nestId, updates);
-          return formatResult({ message: "Nest updated successfully", nest });
+          return formatResult(updatedNestResult(nest));
         }
 
         const nest = await client.updateNest(parsed.nestId, {
@@ -2897,15 +4496,26 @@ async function _handleToolCall(
           users: parsed.users,
           data: parsed.data as Record<string, unknown> | undefined,
           due: parsed.due,
+          start: parsed.start,
+          allDay: parsed.allDay,
           completed: parsed.completed,
         });
-        return formatResult({ message: "Nest updated successfully", nest });
+        return formatResult(updatedNestResult(nest));
       }
 
       case "nestr_delete_nest": {
         const parsed = schemas.deleteNest.parse(args);
-        await client.deleteNest(parsed.nestId);
-        return formatResult({ message: `Nest ${parsed.nestId} deleted successfully` });
+        const response = await client.deleteNest(parsed.nestId);
+        const restoreId = response?.data?.restoreId;
+        // A recurring target answers with a recurring_series hint naming the series routes.
+        const hints = Array.isArray(response?.hints) && response.hints.length > 0
+          ? enrichHints({ hints: response.hints }).hints
+          : undefined;
+        return formatResult({
+          message: `Nest ${parsed.nestId} deleted successfully`,
+          ...(restoreId ? { restoreId } : {}),
+          ...(hints ? { hints } : {}),
+        });
       }
 
       case "nestr_add_comment": {
@@ -2916,6 +4526,7 @@ async function _handleToolCall(
         const placement = commentPlacementNote(parsed.nestId, post);
         return formatResult({
           message: "Comment added successfully",
+          _id: writtenId(post),
           ...(placement ? { placement } : {}),
           post,
         });
@@ -2927,7 +4538,7 @@ async function _handleToolCall(
           title: parsed.body,
           ...(parsed.labels !== undefined ? { labels: parsed.labels } : {}),
         });
-        return formatResult({ message: "Comment updated successfully", comment: updated });
+        return formatResult({ message: "Comment updated successfully", _id: writtenId(updated), comment: updated });
       }
 
       case "nestr_delete_comment": {
@@ -2964,6 +4575,7 @@ async function _handleToolCall(
           limit: parsed.limit,
           page: parsed.page,
           cleanText: true,
+          linkedUsers: parsed.linkedUsers,
         });
         return formatResult(compactResponse(roles, "role"));
       }
@@ -3004,6 +4616,7 @@ async function _handleToolCall(
         const parsed = schemas.listUsers.parse(args);
         const users = await client.listUsers(parsed.workspaceId, {
           search: parsed.search,
+          agents: parsed.agents,
           limit: parsed.limit,
           page: parsed.page,
         });
@@ -3026,7 +4639,8 @@ async function _handleToolCall(
           sort: parsed.sort,
           limit: parsed.limit,
           page: parsed.page,
-          cleanText: true,
+          cleanText: parsed.cleanText ?? true,
+          linkedUsers: parsed.linkedUsers,
         });
         return formatResult(completableResponse(compactResponse(projects), "projects", parsed._listTitle || "Projects"));
       }
@@ -3035,8 +4649,12 @@ async function _handleToolCall(
         const parsed = schemas.getComments.parse(args);
         const comments = await client.getNestPosts(parsed.nestId, {
           depth: parsed.depth,
+          unread: parsed.unread,
         });
-        return formatResult(comments);
+        // enrichHints turns the unread_posts hint's endpoint into a nestr_mark_post_read
+        // call. Without it the hint still arrives, but as a raw URL the model has to
+        // recognise and hand-assemble.
+        return formatResult(enrichHints(comments));
       }
 
       case "nestr_get_circle": {
@@ -3106,7 +4724,7 @@ async function _handleToolCall(
           title: parsed.title,
           description: parsed.description,
         });
-        return formatResult({ message: "Inbox item created successfully", item });
+        return formatResult({ message: "Inbox item created successfully", _id: writtenId(item), item });
       }
 
       case "nestr_get_inbox_item": {
@@ -3123,7 +4741,7 @@ async function _handleToolCall(
           completed: parsed.completed,
           data: parsed.data as Record<string, unknown> | undefined,
         });
-        return formatResult({ message: "Inbox item updated successfully", item });
+        return formatResult({ message: "Inbox item updated successfully", _id: writtenId(item), item });
       }
 
       case "nestr_reorder_inbox": {
@@ -3157,7 +4775,105 @@ async function _handleToolCall(
           color: parsed.color,
           icon: parsed.icon,
         });
-        return formatResult({ message: "Personal label created successfully", label });
+        return formatResult({ message: "Personal label created successfully", _id: writtenId(label), label });
+      }
+
+      // Direct messages
+      case "nestr_list_dms": {
+        const parsed = schemas.listDMs.parse(args);
+        const result = await client.listDMs({
+          withUser: parsed.withUser,
+          unread: parsed.unread,
+          includeCompleted: parsed.includeCompleted,
+          limit: parsed.limit,
+          page: parsed.page,
+        });
+        return formatResult({ threads: result });
+      }
+
+      case "nestr_start_dm_thread": {
+        const parsed = schemas.startDMThread.parse(args);
+        const result = await client.createDMThread(parsed.user, parsed.title);
+        return formatResult({ message: "Thread started", thread: result });
+      }
+
+      case "nestr_list_queues": {
+        schemas.listQueues.parse(args ?? {});
+        const result = await client.listQueues();
+        return formatResult({ queues: result });
+      }
+
+      case "nestr_list_queue_threads": {
+        const parsed = schemas.listQueueThreads.parse(args);
+        const result = await client.listQueueThreads(parsed.key, { unread: parsed.unread });
+        return formatResult(enrichHints(result));
+      }
+
+      case "nestr_get_dm_thread": {
+        const parsed = schemas.getDMThread.parse(args);
+        const result = await client.getDMThread(parsed.threadId, { unread: parsed.unread });
+        return formatResult(enrichHints(result));
+      }
+
+      case "nestr_update_dm_thread": {
+        const parsed = schemas.updateDMThread.parse(args);
+        // `completed` is meaningful as null, so presence is the test rather than truth.
+        const setsCompleted = args !== null
+          && typeof args === "object"
+          && Object.prototype.hasOwnProperty.call(args, "completed");
+        if (parsed.title === undefined && !setsCompleted && parsed.users === undefined) {
+          throw new Error("Pass at least one of title, completed or users.");
+        }
+        const result = await client.updateDMThread(parsed.threadId, {
+          ...(parsed.title !== undefined ? { title: parsed.title } : {}),
+          ...(setsCompleted ? { completed: parsed.completed ?? null } : {}),
+          ...(parsed.users !== undefined ? { users: parsed.users } : {}),
+        });
+        return formatResult({
+          message: setsCompleted && parsed.completed
+            ? "Conversation closed"
+            : "Thread updated",
+          thread: result,
+        });
+      }
+
+      case "nestr_get_dm_posts": {
+        const parsed = schemas.getDMPosts.parse(args);
+        const result = await client.getDMPosts(parsed.threadId, {
+          unread: parsed.unread,
+          depth: parsed.depth,
+        });
+        return formatResult(enrichHints(result));
+      }
+
+      case "nestr_post_dm_message": {
+        const parsed = schemas.createDMPost.parse(args);
+        const result = await client.createDMPost(parsed.threadId, parsed.body);
+        return formatResult({ message: "Message posted", post: result });
+      }
+
+      case "nestr_mark_post_read": {
+        const parsed = schemas.markPostRead.parse(args);
+        const result = await client.markPostRead(parsed.postId);
+        return formatResult({ message: "Marked read", read: result });
+      }
+
+      case "nestr_escalate_to_support": {
+        const parsed = schemas.escalateToSupport.parse(args);
+        const result = await client.escalateDMThread(parsed.threadId, parsed.reason);
+        const { alreadyQueued, statusMessagePosted } = result as {
+          alreadyQueued?: boolean;
+          statusMessagePosted?: boolean;
+        };
+        let message = "A human has been brought in. Tell them so, and keep helping in the meantime.";
+        if (alreadyQueued) {
+          message = "Already with a human; nothing more to do.";
+        } else if (statusMessagePosted) {
+          // Nestr posted its own confirmation into the thread, so saying it again is the
+          // double message this flag exists to avoid.
+          message = "A human has been brought in and the thread already says so. Do not repeat it; carry on helping.";
+        }
+        return formatResult({ message, escalation: result });
       }
 
       // Reorder tools
@@ -3177,6 +4893,104 @@ async function _handleToolCall(
         return formatResult({ message: "Nests reordered successfully", nests: result });
       }
 
+      case "nestr_set_recurrence": {
+        const parsed = schemas.setRecurrence.parse(args);
+        const result = await client.setRecurrence(parsed.nestId, parsed.rrule);
+        // The server returns the stored rule and nothing else. It does not
+        // create occurrence nests, so there is no count to report: saying one
+        // would tell the user work exists that does not.
+        const message = "removed" in result
+          ? "Recurrence removed. Future occurrences stop; anything already materialized is kept, detached from the series."
+          : `Recurrence set to ${result.rrule}. Occurrences stay virtual until one is touched.`;
+        return formatResult({ message, recurrence: result });
+      }
+
+      case "nestr_list_occurrences": {
+        const parsed = schemas.listOccurrences.parse(args);
+        const page = await client.listOccurrences(parsed.nestId, {
+          direction: parsed.direction,
+          cursor: parsed.cursor,
+          limit: parsed.limit,
+        });
+        if (!page.seriesId) {
+          return formatResult({
+            message: "This nest has no recurrence rule, so it has no occurrences. Set one with nestr_set_recurrence.",
+            ...page,
+          });
+        }
+        // Named, because the count an agent reports back is the count of rows it
+        // can see, not the size of the series: an open-ended rule has no end and
+        // the route returns no total.
+        const virtual = page.occurrences.filter((o) => o.virtual).length;
+        const message = `${page.occurrences.length} occurrence(s) on this page, ${virtual} of them virtual (no nest exists yet).`
+          + " Act on one by its `instant`: nestr_skip_occurrence to skip it, nestr_update_occurrence to edit it."
+          + (page.hasMore ? " More beyond this page: pass nextCursor back as cursor." : "");
+        return formatResult({ message, ...page });
+      }
+
+      case "nestr_skip_occurrence": {
+        const parsed = schemas.skipOccurrence.parse(args);
+        const result = await client.skipOccurrence(parsed.nestId, parsed.instant, parsed.scope);
+        const at = new Date(parsed.instant).toISOString();
+        if (result && "deleted" in result) {
+          const restore = `Restoring nest ${result.restoreId} in the Nestr app brings back that nest only; the occurrences deleted with it are restored separately.`;
+          // A cut at the first occurrence leaves no history, so the whole series is gone.
+          const message = result.restoreId === result.seriesId
+            ? `The cut at ${at} was the first occurrence, so the whole series was deleted. ${restore}`
+            : `Occurrence at ${at} and every later one deleted. The history before it is kept, under a rule that now ends there. ${restore}`;
+          return formatResult({ message, occurrence: result });
+        }
+        if (result?.restoreId) {
+          const restore = `Restoring nest ${result.restoreId} in the Nestr app brings back that nest only; the occurrences deleted with it are restored separately.`;
+          const outcome = result.seriesId
+            ? `so it was deleted and the series continues from nest ${result.seriesId}.`
+            : "so it was deleted, and nothing followed it, so the series has ended.";
+          return formatResult({
+            message: `Occurrence at ${at} skipped. The first occurrence is the series item itself, ${outcome} ${restore}`,
+            occurrence: result,
+          });
+        }
+        return formatResult({
+          message: `Occurrence at ${at} skipped. The series continues: the rule is unchanged and every other occurrence, past and future, is untouched.`,
+          occurrence: result,
+        });
+      }
+
+      case "nestr_update_occurrence": {
+        const { nestId, instant, ...updates } = schemas.updateOccurrence.parse(args);
+        validatePrimeLabels(updates.labels);
+        updates.labels = ensureMeetingModifier(updates.labels);
+        const edited = Object.values(updates).some((value) => value !== undefined);
+        try {
+          const nest = await client.updateOccurrence(nestId, instant, {
+            ...updates,
+            data: updates.data as Record<string, unknown> | undefined,
+          });
+          const at = new Date(instant).toISOString();
+          const message = `${edited ? "Occurrence updated" : "Occurrence materialized"} at ${at}. Only this occurrence changed.`
+            + (nest?._id ? ` It is nest ${nest._id} now: use that id with every other nest tool.` : "");
+          return formatResult({ message, nest });
+        } catch (err) {
+          // The route materializes before it applies the body, so a refused edit is not a no-op.
+          // Except the two refusals that write nothing: the first occurrence and a skipped one.
+          const writesNothing = err instanceof NestrApiError
+            && /series item itself|has been skipped/i.test(err.message);
+          if (err instanceof NestrApiError && err.status >= 400 && err.status < 500 && !writesNothing) {
+            err.hint = `${err.hint ? `${err.hint} ` : ""}The occurrence may already be materialized even though the edit was refused: nestr_list_occurrences shows its nestId.`;
+          }
+          throw err;
+        }
+      }
+
+      case "nestr_delete_series": {
+        const parsed = schemas.deleteSeries.parse(args);
+        const result = await client.deleteSeries(parsed.nestId);
+        return formatResult({
+          message: `Series deleted: the series nest and every occurrence, past ones included. Restoring nest ${result.restoreId} in the Nestr app brings back that nest only; the occurrences deleted with it are restored separately.`,
+          series: result,
+        });
+      }
+
       // Label management
       case "nestr_add_label": {
         const parsed = schemas.addLabel.parse(args);
@@ -3188,13 +5002,13 @@ async function _handleToolCall(
           validatePrimeLabels([...(existingNest?.labels ?? []), parsed.labelId]);
         }
         const nest = await client.addLabel(parsed.nestId, parsed.labelId);
-        return formatResult({ message: `Label '${parsed.labelId}' added successfully`, nest: compactResponse(nest) });
+        return formatResult({ message: `Label '${parsed.labelId}' added successfully`, _id: writtenId(nest), nest: compactResponse(nest) });
       }
 
       case "nestr_remove_label": {
         const parsed = schemas.removeLabel.parse(args);
         const nest = await client.removeLabel(parsed.nestId, parsed.labelId);
-        return formatResult({ message: `Label '${parsed.labelId}' removed successfully`, nest: compactResponse(nest) });
+        return formatResult({ message: `Label '${parsed.labelId}' removed successfully`, _id: writtenId(nest), nest: compactResponse(nest) });
       }
 
       case "nestr_add_to_daily_plan": {
@@ -3241,6 +5055,25 @@ async function _handleToolCall(
           limit: parsed.limit,
         });
         return formatResult({ count: activity.length, activity });
+      }
+
+      case "nestr_get_nest_activity": {
+        const parsed = schemas.nestActivity.parse(args);
+        const page = await client.getNestActivity(parsed.nestId, {
+          depth: parsed.depth,
+          userId: parsed.userId,
+          limit: parsed.limit,
+          before: parsed.before,
+          linkedUsers: parsed.linkedUsers,
+        });
+        // The API hands the next page as a URL carrying `before`; the model needs
+        // only the cursor, to pass straight back into this tool.
+        return formatResult({
+          ...page.meta,
+          next_cursor: nextCursorOf(page.links?.next),
+          ...(page.linked ? { linked: page.linked } : {}),
+          activity: page.data,
+        });
       }
 
       // Current user identity and workspace context
@@ -3355,7 +5188,7 @@ async function _handleToolCall(
           description: parsed.description,
           ...(Object.keys(fields).length > 0 ? { fields } : {}),
         });
-        return formatResult({ message: "Tension created successfully", tension: enrichHints(tension) });
+        return formatResult({ message: "Tension created successfully", _id: writtenId(tension), tension: enrichHints(tension) });
       }
 
       case "nestr_get_tension": {
@@ -3374,9 +5207,7 @@ async function _handleToolCall(
           parsed.nestId,
           parsed.search,
           {
-            // `order` is the legacy name for this option — it was never honored
-            // by the API (which reads `sort`), so route both through sort.
-            sort: parsed.sort ?? parsed.order,
+            sort: parsed.sort,
             limit: parsed.limit,
             page: parsed.page,
             cleanText: true,
@@ -3399,7 +5230,7 @@ async function _handleToolCall(
             ...(Object.keys(fields).length > 0 ? { fields } : {}),
           }
         );
-        return formatResult({ message: "Tension updated successfully", tension });
+        return formatResult({ message: "Tension updated successfully", _id: writtenId(tension), tension });
       }
 
       case "nestr_delete_tension": {
@@ -3431,19 +5262,19 @@ async function _handleToolCall(
             users: body.users ?? [],
             ...(body.due !== undefined ? { due: body.due } : {}),
           });
-          return formatResult({ message: "Election added to the tension successfully", part });
+          return formatResult({ message: "Election added to the tension successfully", _id: writtenId(part), part });
         } else if (body._id && removeNest === true) {
           // Propose deletion of an existing structural item.
           const part = await client.proposeTensionDeletion(nestId, tensionId, body._id);
-          return formatResult({ message: "Deletion proposal added successfully", part });
+          return formatResult({ message: "Deletion proposal added successfully", _id: writtenId(part), part });
         } else if (body._id) {
           // Propose change to existing item (existing children auto-copied if accountabilities/domains not provided)
           const part = await client.proposeTensionChange(nestId, tensionId, body);
-          return formatResult({ message: "Change proposal added successfully", part });
+          return formatResult({ message: "Change proposal added successfully", _id: writtenId(part), part });
         } else {
           // Propose new item
           const part = await client.createTensionPart(nestId, tensionId, body);
-          return formatResult({ message: "New item proposal added successfully", part });
+          return formatResult({ message: "New item proposal added successfully", _id: writtenId(part), part });
         }
       }
 
@@ -3451,7 +5282,7 @@ async function _handleToolCall(
         const parsed = schemas.modifyTensionPart.parse(args);
         const { nestId, tensionId, partId, ...data } = parsed;
         const part = await client.modifyTensionPart(nestId, tensionId, partId, data);
-        return formatResult({ message: "Tension part modified successfully", part });
+        return formatResult({ message: "Tension part modified successfully", _id: writtenId(part), part });
       }
 
       case "nestr_remove_tension_part": {
@@ -3478,7 +5309,7 @@ async function _handleToolCall(
           parsed.partId,
           { title: parsed.title, labels: parsed.labels }
         );
-        return formatResult({ message: "Child created successfully", child });
+        return formatResult({ message: "Child created successfully", _id: writtenId(child), child });
       }
 
       case "nestr_update_tension_part_child": {
@@ -3490,7 +5321,7 @@ async function _handleToolCall(
           parsed.childId,
           { title: parsed.title }
         );
-        return formatResult({ message: "Child updated successfully", child });
+        return formatResult({ message: "Child updated successfully", _id: writtenId(child), child });
       }
 
       case "nestr_delete_tension_part_child": {
@@ -3527,7 +5358,12 @@ async function _handleToolCall(
           parsed.tensionId,
           parsed.status
         );
-        return formatResult({ message: `Tension status updated to '${parsed.status}'`, status });
+        // Proposing with nobody else to ask enacts on the spot: { status, data: { status: "enacted", message } }.
+        const outcome = (status as { data?: { status?: string; message?: string } } | null)?.data;
+        const message = outcome?.status === "enacted"
+          ? `Tension enacted at once, not submitted for consent: ${outcome.message ?? "there was nobody else to ask"}`
+          : `Tension status updated to '${parsed.status}'`;
+        return formatResult({ message, status });
       }
 
       // Graph link tools
@@ -3538,7 +5374,7 @@ async function _handleToolCall(
           limit: parsed.limit,
           page: parsed.page,
         });
-        return formatResult(compactResponse(result));
+        return formatResult(compactResponse(result, "graph"));
       }
 
       case "nestr_add_graph_link": {
@@ -3560,9 +5396,50 @@ async function _handleToolCall(
         return formatResult(connectors);
       }
 
+      case "nestr_list_connector_templates": {
+        const parsed = schemas.listConnectorTemplates.parse(args);
+        const listed = await client.listConnectorTemplates(parsed.workspaceId);
+        const templates = listed.templates;
+        if (!Array.isArray(templates) || templates.length === 0) {
+          return { content: [{ type: "text", text: "This deployment offers no connector templates." }] };
+        }
+        // Enriched so the hint arrives as the register call itself, pre-filled
+        // with the template id, the same treatment every other hint gets.
+        const enrichedTemplates = enrichHints({
+          workspaceId: parsed.workspaceId,
+          ...(listed.hints ? { hints: listed.hints } : {}),
+        });
+        return formatResult({
+          message: "Pass the id of the one you want as templateId to nestr_register_connector. It carries the vendor's endpoint, transport and auth strategy, so nothing has to be guessed. Do not rebuild one of these by hand: a hand-built copy has no OAuth client and fails at first use.",
+          templates,
+          ...(enrichedTemplates.hints ? { hints: enrichedTemplates.hints } : {}),
+        });
+      }
+
       case "nestr_register_connector": {
         const parsed = schemas.registerConnector.parse(args);
-        const connector = await client.registerConnector(parsed.workspaceId, {
+        if (parsed.templateId) {
+          const fromTemplate = await client.registerConnector(parsed.workspaceId, {
+            templateId: parsed.templateId,
+            ...(parsed.name ? { name: parsed.name } : {}),
+          });
+          return formatResult({
+            message: "Connector registered from a template, so its endpoint and auth strategy are the vendor's own. Next, bind it to a role's DOMAIN with nestr_bind_connector, then a human connects the account via the Connect button.",
+            connector: fromTemplate.connector,
+            // The route's hints say what to do next (a Connect link, a missing
+            // OAuth client); dropping them cost the model its follow-up.
+            ...(fromTemplate.hints ? { hints: fromTemplate.hints } : {}),
+          });
+        }
+        if (!parsed.type || !parsed.name) {
+          return formatError({
+            error: true,
+            code: "VALIDATION",
+            message: "Without templateId, both type and name are required. Call nestr_list_connector_templates first: a known vendor almost always has one.",
+            retryable: false,
+          });
+        }
+        const registered = await client.registerConnector(parsed.workspaceId, {
           type: parsed.type,
           name: parsed.name,
           config: parsed.config,
@@ -3570,10 +5447,72 @@ async function _handleToolCall(
           exposure: parsed.exposure,
           authStrategy: parsed.authStrategy,
         });
-        return formatResult({
-          message: "Connector registered. Next, bind it to an owner with nestr_bind_connector (e.g. a role's domain), then a human or agent connects the account via the credentials field's Connect button.",
-          connector,
+        // Enriched so a template hint arrives as a tool call the model can make,
+        // the same treatment every other hint gets. workspaceId is on the entry,
+        // which is what lets enrichHints work on something that is not a nest.
+        const enriched = enrichHints({
+          ...(registered.connector as unknown as Record<string, unknown>),
+          ...(registered.hints ? { hints: registered.hints } : {}),
         });
+        return formatResult({
+          message: "Connector registered. It does nothing yet: nobody has access to it. Give a ROLE access with nestr_bind_connector { ownerType: 'role', ownerId: <role nest id> } and its domain is created under that role, which is the usual onboarding path. Then get a link with nestr_get_connect_link and give it to a person to open, since the credential must never pass through you.",
+          connector: enriched,
+        });
+      }
+
+      case "nestr_create_agent": {
+        const parsed = schemas.createAgent.parse(args);
+        const agent = await client.createAgent(parsed.workspaceId, {
+          name: parsed.name,
+          description: parsed.description,
+          roleAssignable: parsed.roleAssignable,
+          agentConfig: parsed.agentConfig,
+        });
+        // Two different next steps, because the two kinds of agent are put to
+        // work in different places and saying "assign it to the role" to
+        // someone who just made an assistant is the mistake this tool exists to
+        // stop.
+        const nextStep = parsed.roleAssignable === false
+          ? "Assistant created: it can never be assigned to a role, so it will always act with the authority of whoever it is helping. Put it on the TASK beside that person (nestr_update_nest users on the task, naming both), and leave the role's users to them alone. Its instructions belong in a skill nest under the role."
+          : "Agent created, and assignable to roles. It assists while it holds none; assigning it to a role is what makes it act as that role instead. To have it fill work: create or find a role named for the WORK (not for the agent) with nestr_create_nest, then assign it with nestr_update_nest users. To have it help a person with work that follows THEM, leave it out of every role and put it on the task beside them. Its instructions belong in a skill nest under the role, not on the agent.";
+        return formatResult({ message: nextStep, agent });
+      }
+
+      case "nestr_update_agent": {
+        // MCPcat adds a `context` argument to every tool's advertised schema
+        // when tracking is on, models fill it in, and mcpcat 0.1.17 reads it
+        // for the event's userIntent without removing it before the handler
+        // runs. The schema is strict, so that one key is set aside here rather
+        // than counted as a field the caller sent; it never reaches the route.
+        const { context: _userIntent, ...input } = args;
+        const parsed = schemas.updateAgent.parse(input);
+        const { workspaceId, userId, ...rest } = parsed;
+        // Only what the caller actually sent. A key holding undefined is not a
+        // change, and the route refuses an empty body rather than answering 200
+        // to a write that changed nothing, so the same refusal is made here
+        // before a request goes out.
+        const updates = Object.fromEntries(
+          Object.entries(rest).filter(([, value]) => value !== undefined)
+        ) as Parameters<NestrClient["updateAgent"]>[2];
+        if (Object.keys(updates).length === 0) {
+          return formatError({
+            error: true,
+            code: "VALIDATION",
+            message: "Nothing to update: pass at least one of name, description, webSearch, status, roleAssignable, agentConfig.",
+            retryable: false,
+          });
+        }
+        const agent = await client.updateAgent(workspaceId, userId, updates);
+        // A success means every field sent has landed: the route refuses what it
+        // cannot write instead of dropping it, which is what used to make an
+        // assistant re-read the agent after every write.
+        let message = "Agent updated. Every field you sent has landed; the rest are unchanged.";
+        if (updates.roleAssignable === false) {
+          message = "Agent updated: it is now an assistant and can never be assigned to a role, so it always acts with the authority of whoever it is helping. Put it on the TASK beside that person (nestr_update_nest users on the task), never in a role's users.";
+        } else if (updates.roleAssignable === true) {
+          message = "Agent updated: it may be assigned to roles again. It assists while it holds none; assigning it to a role (nestr_update_nest users on the role) is what makes it act as that role instead.";
+        }
+        return formatResult({ message, agent });
       }
 
       case "nestr_bind_connector": {
@@ -3582,13 +5521,215 @@ async function _handleToolCall(
           connectorId: parsed.connectorId,
           owner: { type: parsed.ownerType, id: parsed.ownerId },
         });
-        // For a role-domain binding the API materialises a credentials field on
-        // the domain; surface that explicitly so the caller knows the Connect
-        // button now renders there and the secret is captured out-of-band.
-        const message = parsed.ownerType === "role-domain"
-          ? "Connector bound to the role's domain. A credentials field was materialised on the domain (see credentialsField) so the role can use the connector and the Connect button renders. A human or agent now connects the account via that button; the secret is captured out-of-band and never by the agent."
-          : "Connector bound to the owner. The owner now connects the account out-of-band; the secret is never seen by the agent.";
+        // A role binding creates the connector's domain when there isn't one, so
+        // say where the access landed. The credential is always a separate,
+        // out-of-band step: hand the human a link from nestr_get_connect_link.
+        const message = parsed.ownerType === "role" || parsed.ownerType === "role-domain"
+          ? "Access given to the role's domain. Nobody can use it until an account is connected: get a link with nestr_get_connect_link and give it to a person to open. The secret is captured out-of-band and never by the agent."
+          : "Access given to the owner. Nobody can use it until an account is connected: get a link with nestr_get_connect_link and give it to a person to open. The secret is never seen by the agent.";
         return formatResult({ message, connection });
+      }
+
+      case "nestr_update_connector": {
+        const parsed = schemas.updateConnector.parse(args);
+        const { workspaceId, connectorId, ...updates } = parsed;
+        if (Object.keys(updates).length === 0) {
+          return formatError({
+            error: true,
+            code: "VALIDATION",
+            message: "Nothing to update: pass at least one field to change.",
+            retryable: false,
+          });
+        }
+        const connector = await client.updateConnector(workspaceId, connectorId, updates);
+        return formatResult({ message: "Connector updated.", connector });
+      }
+
+      case "nestr_remove_connector": {
+        const parsed = schemas.removeConnector.parse(args);
+        await client.removeConnector(parsed.workspaceId, parsed.connectorId);
+        return formatResult({
+          message: "Connector removed from the catalog. Bindings that named it stop resolving.",
+          connectorId: parsed.connectorId,
+        });
+      }
+
+      case "nestr_list_connections": {
+        const parsed = schemas.listConnections.parse(args);
+        const connections = await client.listConnections(parsed.workspaceId, {
+          includeDisabled: parsed.includeDisabled,
+        });
+        return formatResult(withInstructionApprovalNotes(connections));
+      }
+
+      case "nestr_remove_connection": {
+        const parsed = schemas.removeConnection.parse(args);
+        const result = await client.removeConnection(parsed.workspaceId, parsed.connectionId);
+        return formatResult({
+          message: `Access removed. ${result.revokedCount} credential(s) revoked.`,
+          connectionId: parsed.connectionId,
+        });
+      }
+
+      case "nestr_get_connect_link": {
+        const parsed = schemas.getConnectLink.parse(args);
+        const link = await client.getConnectLink(parsed.workspaceId, parsed.connectionId);
+        return formatResult({
+          message: "Give this link to a person to open. They complete the sign-in or paste the key there, so the secret never passes through you.",
+          ...link,
+        });
+      }
+
+      case "nestr_revoke_connection_credential": {
+        const parsed = schemas.revokeConnectionCredential.parse(args);
+        await client.revokeConnectionCredential(parsed.workspaceId, parsed.connectionId);
+        return formatResult({
+          message: "Credential revoked. The binding stays; connect again to restore access.",
+          connectionId: parsed.connectionId,
+        });
+      }
+
+      case "nestr_get_agent_connectors": {
+        const parsed = schemas.getAgentConnectorReach.parse(args);
+        const reach = await client.getAgentConnectorReach(parsed.workspaceId, parsed.agentUserId);
+        return formatResult(reach);
+      }
+
+      case "nestr_run_agent": {
+        const parsed = schemas.runAgent.parse(args);
+        const result = await client.runAgent(parsed.workspaceId, parsed.agentUserId, {
+          nestId: parsed.nestId,
+          message: parsed.message,
+        });
+        // A run somebody else asked for is invisible to them until someone says
+        // where it is happening, and this tool's caller is the only party in a
+        // position to. Naming the handover, not just the url, because a link
+        // that reaches the model and not the person is a link nobody sees.
+        const watching = result.watchUrl
+          ? ` Tell whoever asked for this that they can watch it at ${result.watchUrl}, where the agent reports back as it works.`
+          : " It reports back on the item it was run on.";
+        return formatResult({
+          message: `The agent was dispatched.${watching}`,
+          ...result,
+        });
+      }
+
+      case "nestr_get_agent_mode": {
+        const parsed = schemas.getAgentMode.parse(args);
+        return formatResult(await client.getAgentMode(parsed.nestId, parsed.agentUserId));
+      }
+
+      case "nestr_set_agent_mode": {
+        const parsed = schemas.setAgentMode.parse(args);
+        // The cadence only travels with autonomous: the server ignores it on
+        // reactive, and sending it there reads as a schedule that was never set.
+        const body = parsed.mode === "autonomous"
+          ? {
+            mode: parsed.mode,
+            recheck: parsed.recheck,
+            ...(parsed.start ? { start: parsed.start } : {}),
+            ...(parsed.tzid ? { tzid: parsed.tzid } : {}),
+          }
+          : { mode: parsed.mode };
+        const { result, hints } = await client.setAgentMode(parsed.nestId, parsed.agentUserId, body);
+        return formatResult({ ...result, ...(hints && hints.length ? { hints } : {}) });
+      }
+
+      case "nestr_workspace_docs": {
+        const parsed = schemas.workspaceDocs.parse(args);
+        const CONTEXT = "nestradamus_files";
+
+        // A key scoped to one workspace should not have to name it, and a user
+        // with exactly one has nothing to disambiguate. More than one and we ask
+        // rather than guess: reading the wrong organisation's constitution is a
+        // confident wrong answer, not a missing one.
+        let workspaceId = parsed.workspaceId;
+        if (!workspaceId) {
+          // unwrapList, not the raw body: /workspaces answers the rows inside a
+          // { status, meta, data } envelope, whose `length` is undefined, so both
+          // branches below missed and every call without a workspaceId reached
+          // `.map` on an object. A token that sees exactly one workspace never
+          // got its own fast path.
+          const workspaces = unwrapList(await client.listWorkspaces({ limit: 5, cleanText: true }));
+          if (workspaces.length === 1) {
+            workspaceId = workspaces[0]._id;
+          } else if (workspaces.length === 0) {
+            return { content: [{ type: "text", text: "No workspace is reachable with this token." }] };
+          } else {
+            const names = workspaces.map((w) => `- ${w._id} — ${w.title || "Untitled"}`).join("\n");
+            return {
+              content: [{
+                type: "text",
+                text: `_Resolved as: needs a workspace._\n\nThis token reaches several workspaces, so name one rather than have me pick:\n\n${names}`,
+              }],
+            };
+          }
+        }
+
+        // Read one document.
+        if (parsed.fileId) {
+          const doc = await client.getNestFileText(workspaceId, parsed.fileId, parsed.offset);
+          const more = doc.nextOffset === null
+            ? "End of document."
+            : `More to read: nestr_workspace_docs({ fileId: "${parsed.fileId}", offset: ${doc.nextOffset} }). Prefer a search if you are looking for something specific.`;
+          return {
+            content: [{
+              type: "text",
+              text: `_Resolved as: document read._\n\n**${doc.name}** (${doc.offset}–${doc.offset + doc.text.length} of ${doc.total} characters)\n\n${doc.text}\n\n---\n${more}`,
+            }],
+          };
+        }
+
+        const files = await client.getNestFiles(workspaceId, {
+          context: CONTEXT,
+          search: parsed.search,
+        });
+
+        // Search.
+        if (parsed.search) {
+          if (files.length === 0) {
+            return {
+              content: [{
+                type: "text",
+                text: `_Resolved as: document search._\n\nNothing in this workspace's reference documents matches "${parsed.search}". The search reads the documents' text, so an exact phrase can miss where a synonym would hit. An empty result is not evidence the organisation has no position on this: say you could not find it documented, never that it does not exist.`,
+              }],
+            };
+          }
+          const blocks = files.map((f) => {
+            const hits = (f.matches || [])
+              .map((m) => `> ${m.excerpt}\n\n_Read on from here: nestr_workspace_docs({ fileId: "${f.id}", offset: ${m.offset} })_`)
+              .join("\n\n");
+            return `### ${f.name}\n\n${hits}`;
+          });
+          return {
+            content: [{
+              type: "text",
+              text: `_Resolved as: document search._\n\nPassages matching "${parsed.search}" in ${files.length} document${files.length === 1 ? "" : "s"}. These are the organisation's own words, so prefer them to your general knowledge.\n\n${blocks.join("\n\n")}`,
+            }],
+          };
+        }
+
+        // The index.
+        if (files.length === 0) {
+          return {
+            content: [{
+              type: "text",
+              text: "_Resolved as: document index._\n\nThis workspace has uploaded no reference documents. That is an answer, not a failure: there is nothing here to consult, so do not keep looking.",
+            }],
+          };
+        }
+        const lines = files.map((f) => {
+          const described = f.description
+            ? f.description
+            : "No description yet, so the filename is the only clue to what it holds.";
+          return `- **${f.name}** (id: ${f.id}, ${formatBytes(f.size)})\n  ${described}`;
+        });
+        return {
+          content: [{
+            type: "text",
+            text: `_Resolved as: document index._\n\n${files.length} reference document${files.length === 1 ? "" : "s"} in this workspace. Search them with nestr_workspace_docs({ search: "..." }) rather than reading one whole.\n\n${lines.join("\n")}`,
+          }],
+        };
       }
 
       case "nestr_get_nest_files": {
@@ -3608,12 +5749,17 @@ async function _handleToolCall(
         const parsed = schemas.readFile.parse(args);
         const file = await client.getNestFile(parsed.nestId, parsed.fileId);
         const contentType = file.contentType || "application/octet-stream";
+        const baseType = normalizeMimeType(contentType);
 
-        // Images: return as a viewable image content item (mirrors nestr_help).
-        // Guard the size first — an image over MAX_IMAGE_INLINE_BYTES exceeds the
+        // Images the model can actually take: return as a viewable image content
+        // item (mirrors nestr_help). Gated on modelImageMimeType, not an `image/`
+        // prefix — an unsupported type (SVG, BMP, AVIF, HEIC) is a 400 that fails
+        // the agent's whole request, not just this block.
+        // Guard the size too — an image over MAX_IMAGE_INLINE_BYTES exceeds the
         // per-image limit of the model API the agent forwards it to, so inlining
         // the base64 would just make that call fail. Degrade to a metadata note.
-        if (contentType.startsWith("image/")) {
+        const imageMime = modelImageMimeType(contentType);
+        if (imageMime) {
           // Not `??`: size can legitimately be 0 when a legacy file's metadata was
           // lost (the API descriptor falls back to 0), and there we want the real
           // byte length so the cap still applies. `> 0` recomputes on a zero/missing
@@ -3632,15 +5778,20 @@ async function _handleToolCall(
           return {
             content: [
               { type: "text", text: `File: ${file.name} (${contentType}, ${formatBytes(file.size)})` },
-              { type: "image", data: file.dataBase64, mimeType: contentType },
+              { type: "image", data: file.dataBase64, mimeType: imageMime },
             ],
           };
         }
 
-        // JSON / text / CSV: decode to UTF-8 and return as a text block.
+        // JSON / text / CSV / SVG: decode to UTF-8 and return as a text block.
+        // SVG is markup, so its source is the useful form anyway — and it is the
+        // one image type an agent asked to work with brand assets reaches for.
         if (
-          contentType.startsWith("text/") ||
-          contentType.startsWith("application/json")
+          baseType.startsWith("text/") ||
+          baseType === "application/json" ||
+          baseType.endsWith("+json") ||
+          baseType.endsWith("+xml") ||
+          baseType === "application/xml"
         ) {
           const decoded = Buffer.from(file.dataBase64, "base64").toString("utf-8");
           const { text: body, truncated } = capText(decoded);
@@ -3654,13 +5805,17 @@ async function _handleToolCall(
           };
         }
 
-        // PDFs and everything else: metadata only. The ToolResult content type
-        // supports text + image blocks, so a non-image binary can't be inlined yet.
+        // PDFs, unsupported image formats and everything else: metadata only.
+        // The ToolResult content type supports text + image blocks, so a binary
+        // the model cannot read as an image can't be inlined yet.
+        const why = isImageMimeType(contentType)
+          ? `Models only accept ${MODEL_IMAGE_MIME_TYPES.join(", ")} as images; convert it to one of those and attach that.`
+          : `Only images (returned as viewable image content) and text/JSON/XML (returned as decoded text) can be inlined.`;
         return {
           content: [
             {
               type: "text",
-              text: `File: ${file.name}\nContent type: ${contentType}\nSize: ${formatBytes(file.size)}\n\nThis file type can't be inlined yet — only images (returned as viewable image content) and text/JSON (returned as decoded text) are supported.`,
+              text: `File: ${file.name}\nContent type: ${contentType}\nSize: ${formatBytes(file.size)}\n\nThis file type can't be inlined. ${why}`,
             },
           ],
         };
@@ -3710,7 +5865,7 @@ async function _handleToolCall(
       return formatError({
         error: true,
         code: "VALIDATION",
-        message: error.errors.map(e => `${e.path.join(".")}: ${e.message}`).join("; "),
+        message: error.issues.map(e => `${e.path.join(".")}: ${e.message}`).join("; "),
         retryable: false,
         hint: "Check the tool parameters match the expected schema.",
         correlationId: getCorrelationId(),
@@ -3787,6 +5942,19 @@ function formatBytes(bytes: number): string {
     unit++;
   }
   return `${size.toFixed(1)} ${units[unit]}`;
+}
+
+/**
+ * The `before` cursor out of a paging link, or null when there is no next page.
+ * The base lets a relative link parse too; it is ignored for an absolute one.
+ */
+export function nextCursorOf(nextLink: string | undefined): string | null {
+  if (!nextLink) return null;
+  try {
+    return new URL(nextLink, "http://localhost").searchParams.get("before");
+  } catch {
+    return null;
+  }
 }
 
 function formatResult(data: unknown): ToolResult {
