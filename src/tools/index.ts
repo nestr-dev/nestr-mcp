@@ -3,7 +3,7 @@
  * Defines all available tools and their handlers
  */
 
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { z } from "zod";
 import { NestrApiError, tokenFingerprint, unwrapList, type NestrClient, type Nest, type ToolError, type ErrorCode, type ListEnvelope, type MaybeListEnvelope, type ConnectionListing, type PendingInstructionApproval } from "../api/client.js";
 import { appResources } from "../apps/index.js";
@@ -4067,6 +4067,19 @@ export interface ToolCallContext {
 }
 
 // The stdio build advertises filePath on nestr_upload_file; the hosted server never does.
+// Well above the server's own cap (default 10MB), which still applies; this only keeps a
+// huge file from being read into memory and base64-encoded before the API can refuse it.
+export const LOCAL_FILE_MAX_BYTES = 100 * 1024 * 1024;
+
+async function localFileRefusal(filePath: string): Promise<string | null> {
+  const info = await stat(filePath);
+  if (!info.isFile()) return `${filePath} is not a regular file.`;
+  if (info.size > LOCAL_FILE_MAX_BYTES) {
+    return `${filePath} is ${info.size} bytes, far over the upload limit (10MB by default), so it was not read.`;
+  }
+  return null;
+}
+
 type ToolDefinition = { name: string; description: string; inputSchema: { properties?: Record<string, unknown> } };
 
 export function withLocalFileTools<T extends ToolDefinition>(definitions: readonly T[]): T[] {
@@ -5876,6 +5889,18 @@ async function _handleToolCall(
             hint: "Call nestr_get_upload_url and upload the file with the curl command it returns, or send content or dataBase64.",
             correlationId: getCorrelationId(),
           });
+        }
+        if (parsed.filePath !== undefined) {
+          const refusal = await localFileRefusal(parsed.filePath);
+          if (refusal) {
+            return formatError({
+              error: true,
+              code: "VALIDATION",
+              message: refusal,
+              retryable: false,
+              correlationId: getCorrelationId(),
+            });
+          }
         }
         // The REST API takes base64 bytes; encode here so the model never has to.
         const dataBase64 = parsed.filePath !== undefined

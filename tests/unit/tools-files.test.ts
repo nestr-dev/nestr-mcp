@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  handleToolCall, toolDefinitions, withLocalFileTools, READONLY_TOOL_NAMES,
+  handleToolCall, toolDefinitions, withLocalFileTools, READONLY_TOOL_NAMES, LOCAL_FILE_MAX_BYTES,
 } from "../../src/tools/index.js";
 import { NestrClient } from "../../src/api/client.js";
 
@@ -469,6 +469,32 @@ describe("file attachment tools", () => {
         nestId: "nest-1", name: "x.png", contentType: "image/png", filePath: join(dir, "nope.png"),
       }, { allowLocalFiles: true });
       expect(result.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("refuses a file far over the limit without reading it", async () => {
+      // Sparse, so the test writes no real bytes.
+      const big = join(dir, "big.bin");
+      writeFileSync(big, "");
+      truncateSync(big, LOCAL_FILE_MAX_BYTES + 1);
+      const result = await handleToolCall(client, "nestr_upload_file", {
+        nestId: "nest-1", name: "big.bin", contentType: "application/octet-stream", filePath: big,
+      }, { allowLocalFiles: true });
+      expect(result.isError).toBe(true);
+      const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+      expect(parsed.code).toBe("VALIDATION");
+      expect(parsed.message).toContain("was not read");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("refuses a directory with a clear message", async () => {
+      mkdirSync(join(dir, "folder"));
+      const result = await handleToolCall(client, "nestr_upload_file", {
+        nestId: "nest-1", name: "folder", contentType: "application/octet-stream", filePath: join(dir, "folder"),
+      }, { allowLocalFiles: true });
+      const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+      expect(parsed.code).toBe("VALIDATION");
+      expect(parsed.message).toContain("not a regular file");
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
