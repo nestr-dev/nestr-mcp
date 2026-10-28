@@ -38,6 +38,7 @@ const pairs: Array<[string, keyof typeof schemas]> = [
   ["nestr_register_connector", "registerConnector"],
   ["nestr_bind_connector", "bindConnector"],
   ["nestr_create_agent", "createAgent"],
+  ["nestr_update_agent", "updateAgent"],
   ["nestr_skip_occurrence", "skipOccurrence"],
   ["nestr_update_occurrence", "updateOccurrence"],
   ["nestr_delete_series", "deleteSeries"],

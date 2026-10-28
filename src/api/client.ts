@@ -300,7 +300,8 @@ export type NestUpdates = Partial<{
   fields: Record<string, unknown>;
   users: string[];
   data: Record<string, unknown>;
-  due: string;
+  /** ISO 8601 or yyyy-mm-dd; null clears. */
+  due: string | null;
   /** ISO 8601 or yyyy-mm-dd; null clears. */
   start: string | null;
   allDay: boolean | null;
@@ -460,6 +461,30 @@ export interface Connection {
   updatedAt?: string;
 }
 
+/**
+ * A scheduled run waiting for someone in a role connector's audience to approve the role's
+ * latest instructions (GET /workspaces/:id/connections/list, per row). Nestr holds the
+ * connector back on runs nobody started until then; manual runs still get it.
+ */
+export interface PendingInstructionApproval {
+  /** The nest the ask was posted on: the role, or a task the role's agent ran on. */
+  nestId: string;
+  nestTitle?: string;
+  connectionId?: string;
+  connectorName?: string;
+  askedAt: string | null;
+  agentUserId?: string | null;
+  roleNestId?: string | null;
+  skillIds?: string[];
+  commentId?: string | null;
+  /** App path of the ask comment, `/n/{nestId}?comment={commentId}`: a page for a person. */
+  commentPath?: string | null;
+  commentUrl?: string | null;
+  approvers?: string[];
+  /** Whether the CALLER is someone the connector is shared with, and so may approve. */
+  canApprove?: boolean;
+}
+
 /** A binding as the workspace listing reports it, with who holds a credential. */
 export interface ConnectionListing {
   connectionId: string;
@@ -486,6 +511,8 @@ export interface ConnectionListing {
     authorizedBy: string | null;
     authorizedByName: string | null;
   }>;
+  /** Scheduled runs this connector is held back on, pending instruction approval. */
+  pendingInstructionApprovals?: PendingInstructionApproval[];
 }
 
 /**
@@ -534,23 +561,35 @@ export interface AgentConnectorReach {
 }
 
 /**
- * One entry in the authenticated user's cross-workspace activity feed
- * (GET /users/me/activity). Newest first.
+ * One entry of an activity feed: a nest's (GET /nests/:id/activity) or a
+ * user's (GET /users/me/activity, GET /users/:userId/activity). Newest first.
  *
  * Two shapes share this type, discriminated by `type`:
  * - Agent internal considerations: `type: "consideration"` with `summary`,
  *   `tools`, `outcome`, `considerationCount`, `dm`, and `redacted` when the
  *   substance was withheld (DM privacy — see getMyActivity's withUser option).
- * - Everything else: `type: <verb>` with a human-readable `description`.
+ * - Everything else: `type: <verb>` with a human-readable `description` and
+ *   the same change as data in `changes`.
  */
 export interface ActivityItem {
+  id?: string;
   date: string;
+  /** Who did it. "SYSTEM" when the server itself wrote it. */
+  userId?: string;
+  /** The agent that wrote it on the user's behalf, when an assistant did. */
+  agentUserId?: string;
   workspaceId: string;
   nestId: string;
   nestTitle: string;
   type: string;
   /** Human-readable line for non-consideration activity. */
   description?: string;
+  /**
+   * The entry as data: one row per changed field, named as GET /nests/:id names
+   * it (title, users, parentId, data.<key>, fields.<label>.<code>). Empty for
+   * uploads, label edits and considerations.
+   */
+  changes?: TensionChange[];
   /** consideration: short summary of what the agent considered/did. */
   summary?: string;
   /** consideration: tool names invoked during the run. */
@@ -567,13 +606,23 @@ export interface ActivityItem {
 }
 
 export interface Tension extends Nest {
-  status?: "draft" | "proposed" | "accepted" | "objected";
+  status?: "draft" | "proposed" | "accepted" | "escalated";
 }
 
 export interface TensionPart {
   _id: string;
   title?: string;
   items?: Array<Record<string, unknown>>;
+}
+
+/** The page GET /nests/:id/activity answers with. */
+export interface NestActivityEnvelope {
+  status: string;
+  meta: { depth: number | "all"; limit: number; count: number; has_more: boolean };
+  /** `next` is the request URL with the next page's `before` cursor set. */
+  links?: { next?: string };
+  linked?: { users?: User[] };
+  data: ActivityItem[];
 }
 
 export interface TensionChange {
@@ -584,10 +633,10 @@ export interface TensionChange {
 }
 
 export interface TensionStatus {
-  status: "draft" | "proposed" | "accepted" | "objected";
+  status: "draft" | "proposed" | "accepted" | "escalated";
   responses?: Array<{
     userId: string;
-    response: "none" | "accepted" | "objected";
+    response: "none" | "accepted" | "escalated";
     votedAt?: string;
   }>;
   autoapprove?: string;
@@ -1222,7 +1271,7 @@ export class NestrClient {
       users?: string[];
       fields?: Record<string, unknown>;
       data?: Record<string, unknown>;
-      due?: string;
+      due?: string | null;
       accountabilities?: string[];
       domains?: string[];
     }
@@ -1253,7 +1302,7 @@ export class NestrClient {
       users?: string[];
       fields?: Record<string, unknown>;
       data?: Record<string, unknown>;
-      due?: string;
+      due?: string | null;
       accountabilities?: string[];
       domains?: string[];
     }
@@ -1880,7 +1929,7 @@ export class NestrClient {
   ): Promise<Nest & { searchOrder?: number; order?: number }> {
     const response = await this.fetch<{ status: string; data: Nest & { searchOrder?: number; order?: number } }>(
       `/nests/${nestId}/reorder/${position}/${relatedNestId}`,
-      { method: "POST" }
+      { method: "PATCH" }
     );
     return response.data;
   }
@@ -1914,7 +1963,7 @@ export class NestrClient {
   ): Promise<Nest & { searchOrder?: number; order?: number }> {
     const response = await this.fetch<{ status: string; data: Nest & { searchOrder?: number; order?: number } }>(
       `/users/me/inbox/${nestId}/reorder/${position}/${relatedNestId}`,
-      { method: "POST" }
+      { method: "PATCH" }
     );
     return response.data;
   }
@@ -2479,6 +2528,35 @@ export class NestrClient {
   }
 
   /**
+   * A nest's activity and, by default, everything beneath it, newest first.
+   * Wraps GET /nests/:id/activity. Paging is a cursor: the response's
+   * `links.next` carries the next page's `before`, and `meta.has_more` says
+   * whether there is one. There is no total.
+   */
+  async getNestActivity(
+    nestId: string,
+    options?: {
+      depth?: number | "all";
+      userId?: string;
+      limit?: number;
+      before?: string;
+      linkedUsers?: boolean;
+    }
+  ): Promise<NestActivityEnvelope> {
+    const params = new URLSearchParams();
+    if (options?.depth !== undefined) params.set("depth", options.depth.toString());
+    if (options?.userId) params.set("userId", options.userId);
+    if (options?.limit !== undefined) params.set("limit", options.limit.toString());
+    if (options?.before) params.set("before", options.before);
+    if (options?.linkedUsers) params.set("linkedUsers", "true");
+
+    const query = params.toString();
+    return this.fetch<NestActivityEnvelope>(
+      `/nests/${encodeURIComponent(nestId)}/activity${query ? `?${query}` : ""}`
+    );
+  }
+
+  /**
    * Get the current authenticated user's info.
    * Requires OAuth token - does not work with workspace API keys.
    * Used for analytics to get user_id for session stitching.
@@ -2552,6 +2630,42 @@ export class NestrClient {
       `/workspaces/${workspaceId}/agents`,
       {
         method: "POST",
+        body: JSON.stringify(body),
+      }
+    );
+    return response.data;
+  }
+
+  /**
+   * Change an existing agent's settings. Workspace-admin only: the REST route
+   * enforces it and returns 403 (mapped to AUTH_SCOPE_INSUFFICIENT) for a
+   * non-admin caller.
+   *
+   * Only the fields sent are changed. The route refuses a field it does not
+   * know, an empty body, a blank name, and roleAssignable:false while the agent
+   * still fills a role, all with a 422 whose message says why (the last one
+   * names the roles), so the message is worth relaying as it is.
+   *
+   * Wraps PATCH /workspaces/:workspaceId/agents/:userId. The route returns
+   * { status, data }; this unwraps to the updated agent user.
+   */
+  async updateAgent(
+    workspaceId: string,
+    userId: string,
+    body: {
+      name?: string;
+      description?: string;
+      webSearch?: boolean;
+      status?: "active" | "paused" | "disabled";
+      /** false makes an assistant: never assignable to a role. */
+      roleAssignable?: boolean;
+      agentConfig?: Record<string, unknown>;
+    }
+  ): Promise<User> {
+    const response = await this.fetch<{ status: string; data: User }>(
+      `/workspaces/${workspaceId}/agents/${userId}`,
+      {
+        method: "PATCH",
         body: JSON.stringify(body),
       }
     );

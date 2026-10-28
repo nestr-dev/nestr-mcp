@@ -255,6 +255,37 @@ describe("NestrClient", () => {
 
   // ─── Connectors ─────────────────────────────────────────────────
 
+  it("getNestActivity builds the query and returns the page envelope as is", async () => {
+    const page = {
+      status: "success",
+      meta: { depth: 1, limit: 2, count: 2, has_more: true },
+      links: { next: "https://api.test.io/api/nests/n1/activity?depth=1&limit=2&before=abc" },
+      data: [{ id: "a1", date: "2026-10-20T00:00:00.000Z", type: "change", nestId: "n1", changes: [] }],
+    };
+    mockFetch.mockResolvedValue(mockResponse(200, page));
+    const client = createClient();
+
+    const result = await client.getNestActivity("n1", {
+      depth: 1, userId: "u1", limit: 2, before: "cur", linkedUsers: true,
+    });
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/n1/activity?depth=1&userId=u1&limit=2&before=cur&linkedUsers=true");
+    expect(opts.method ?? "GET").toBe("GET");
+    expect(result).toEqual(page);
+  });
+
+  it("getNestActivity sends nothing it was not asked for, and depth=0 as 0", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", meta: {}, data: [] }));
+    const client = createClient();
+
+    await client.getNestActivity("n1");
+    expect(mockFetch.mock.calls[0][0]).toBe("https://api.test.io/api/nests/n1/activity");
+
+    await client.getNestActivity("n1", { depth: 0, linkedUsers: false });
+    expect(mockFetch.mock.calls[1][0]).toBe("https://api.test.io/api/nests/n1/activity?depth=0");
+  });
+
   it("listConnectors GETs the catalog and unwraps data", async () => {
     const entries = [
       { _id: "c1", workspaceId: "ws1", type: "mcp", name: "Slack", enabled: true },
@@ -453,6 +484,32 @@ describe("NestrClient", () => {
 
     const [url] = mockFetch.mock.calls[0];
     expect(url).toBe("https://api.test.io/api/workspaces/ws1/projects?cleanText=true");
+  });
+
+  // ─── Reorder ────────────────────────────────────────────────────
+
+  it("reorderInboxItem PATCHes the single-item inbox reorder route", async () => {
+    // The API defines this route as PATCH only, so a POST never reaches it.
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: { _id: "n1" } }));
+    const client = createClient();
+
+    await client.reorderInboxItem("n1", "before", "n2");
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/users/me/inbox/n1/reorder/before/n2");
+    expect(opts.method).toBe("PATCH");
+  });
+
+  it("reorderNest PATCHes the nest reorder route", async () => {
+    // Same as the inbox route: the API defines it as PATCH only.
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: { _id: "n1" } }));
+    const client = createClient();
+
+    await client.reorderNest("n1", "after", "n2");
+
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/n1/reorder/after/n2");
+    expect(opts.method).toBe("PATCH");
   });
 
   // ─── Elections ──────────────────────────────────────────────────

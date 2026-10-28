@@ -4,9 +4,10 @@
  */
 
 import { z } from "zod";
-import { NestrApiError, tokenFingerprint, unwrapList, type NestrClient, type Nest, type ToolError, type ErrorCode, type ListEnvelope, type MaybeListEnvelope } from "../api/client.js";
+import { NestrApiError, tokenFingerprint, unwrapList, type NestrClient, type Nest, type ToolError, type ErrorCode, type ListEnvelope, type MaybeListEnvelope, type ConnectionListing, type PendingInstructionApproval } from "../api/client.js";
 import { appResources } from "../apps/index.js";
 import { getCorrelationId } from "../util/request-context.js";
+import { MODEL_IMAGE_MIME_TYPES, isImageMimeType, modelImageMimeType, normalizeMimeType } from "../util/image-types.js";
 import { VERSION } from "../version.js";
 import type { DiagnoseSnapshot } from "../util/diagnose.js";
 import { PRIME_LABELS, PrimeLabelConflictError, validatePrimeLabels, ensureMeetingModifier } from "./validation.js";
@@ -69,6 +70,12 @@ const COMPACT_FIELDS = {
     "_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description",
     "due", "start", "allDay", "users", "hints",
   ],
+  // Nest rows only (nest, role, graph). `fields` is where a status, a channel id or
+  // any custom value lives. The server sends it on list rows; dropping it here made
+  // every row read as "no value", so a filter on a search row starved with no error.
+  // Kept as sent, only when present, minus text tab bodies (see withoutTextTabs). A
+  // label's `fields` is its schema and a user is not a nest, so those rows leave it out.
+  nest: ["fields"],
   // Additional fields for roles
   role: ["accountabilities", "domains"],
   // Additional fields for users. `bot` and `assistant` are not optional trim:
@@ -107,6 +114,7 @@ export function compactResponse<T>(
 
   const allowedFields = new Set([
     ...COMPACT_FIELDS.base,
+    ...(type === "label" || type === "user" ? [] : COMPACT_FIELDS.nest),
     ...(type === "role" ? COMPACT_FIELDS.role : []),
     ...(type === "user" ? COMPACT_FIELDS.user : []),
     ...(type === "label" ? COMPACT_FIELDS.label : []),
@@ -116,12 +124,28 @@ export function compactResponse<T>(
   return data.map((item) => {
     const compact: Partial<T> = {};
     for (const key of Object.keys(item as object)) {
-      if (allowedFields.has(key)) {
-        (compact as Record<string, unknown>)[key] = (item as Record<string, unknown>)[key];
+      if (!allowedFields.has(key)) continue;
+      const value = (item as Record<string, unknown>)[key];
+      if (key === "fields") {
+        const fields = withoutTextTabs(value);
+        if (fields) (compact as Record<string, unknown>).fields = fields;
+      } else {
+        (compact as Record<string, unknown>)[key] = value;
       }
     }
     return compact;
   });
+}
+
+// The server copies each text tab's body into `fields` as `<tabId>_texttab`: meeting
+// notes or a spec, as long as it was written. Fine on one nest, a document per row on
+// a list. Undefined when nothing else is left.
+function withoutTextTabs(fields: unknown): unknown {
+  if (!fields || typeof fields !== "object" || Array.isArray(fields)) return fields;
+  const kept = Object.fromEntries(
+    Object.entries(fields).filter(([key]) => { return !key.endsWith("_texttab"); }),
+  );
+  return Object.keys(kept).length > 0 ? kept : undefined;
 }
 
 // URL-to-tool mapping for hint enrichment.
@@ -292,6 +316,34 @@ const HINT_TYPE_TOOL_CALLS: Record<
   },
 };
 
+// Guidance for hints where the label says WHAT happened but a model reliably gets the
+// follow-up wrong. Added to the hint as `guidance` by enrichHints.
+//
+// The instruction-approval pair is the case that earned this. A role connector held back
+// on scheduled runs looks, from the outside, like a broken connection, and the obvious
+// moves are all wrong: reconnecting as the wrong person, changing the connector's or the
+// tool's own settings, or the agent trying to approve for someone. What releases it is a
+// person in the connector's audience approving, and saying that once here is cheaper than
+// every caller rediscovering it. Kept short: a listing carries one copy per nest.
+export const HINT_TYPE_GUIDANCE: Record<string, string> = {
+  connector_awaiting_instruction_approval:
+    "The credential is fine and changing the connector's or the tool's own settings will not help: "
+    + "Nestr withholds it on scheduled runs (runs nobody started) because this role's instructions were "
+    + "edited by someone outside the connector's audience, or by an author Nestr cannot name. Manual runs "
+    + "still get it. Only a PERSON releases it: someone the connector is shared with, or a workspace admin, "
+    + "presses Approve on the request comment (`url`, or `connectors[].commentUrl`) or on the role page; a "
+    + "reconnect by someone it is shared with also counts as approving (a reconnect by anyone else does "
+    + "not). Approving re-runs the paused run. You cannot approve on anyone's behalf: tell the person you "
+    + "are helping, name `connectors[].approvers` as who can, and give them the link.",
+  connector_paused_by_instruction_edit:
+    "Your edit was saved. Tell the person you are helping, once, in this reply: the connectors named here "
+    + "will now be withheld on scheduled runs of these roles until someone they are shared with, or a "
+    + "workspace admin, approves the new instructions. Manual runs still work. The next scheduled run posts "
+    + "an Approve request on the item; approving there or on the role page, or a reconnect by someone it is "
+    + "shared with, releases it. You cannot approve it yourself, and changing the connector's settings does "
+    + "not help.",
+};
+
 /**
  * Single endpoint object the API returns inside hint.endpoints.
  * `body_example` is intentionally snake_case — it's a passthrough from the API.
@@ -320,6 +372,14 @@ interface Hint {
   severity: string;
   count?: number;
   url?: string;
+  detail?: string;
+  helpTopic?: string;
+  // Carried by the instruction-approval hints: which role connectors are held back, where
+  // each was asked about, and (on the read-side hint) who can approve it. Passed through.
+  connectors?: Array<Record<string, unknown>>;
+  // Added here, not by Nestr: what the model should do with a hint whose label alone
+  // does not say it. Survives `hints: 'summary'`, which drops `detail`.
+  guidance?: string;
   endpoints?: ApiHintEndpoint[];
   lastPost?: string;
   readAt?: string;
@@ -630,14 +690,114 @@ export function translateEndpoint(endpoint: ApiHintEndpoint): EnrichedToolCall |
   return null;
 }
 
+// Hints a write route put on its response ENVELOPE ({ status, data, hints }), lifted out and
+// enriched so a model sees them beside the write's message rather than buried in `nest`.
+// PUT/PATCH nests/:id answers this way when an edit to instructions (title, description,
+// purpose) changes what a role's agents may use; that is advice about the write the model
+// has to pass on now, not something to find later. `rest` is the response without them.
+export function writeEnvelopeHints(result: unknown): { hints?: Hint[]; rest: unknown; tellThePerson?: string } {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return { rest: result };
+  const envelope = result as Record<string, unknown>;
+  // Only an envelope: a bare nest's own `hints` are about the nest, and stay on it.
+  if (!("data" in envelope) || !Array.isArray(envelope.hints) || envelope.hints.length === 0) {
+    return { rest: result };
+  }
+  const { hints: raw, ...rest } = envelope;
+  const hints = (enrichHints({ hints: raw }) as { hints: Hint[] }).hints;
+  const paused = hints.filter((hint) => { return hint.type === "connector_paused_by_instruction_edit"; });
+  return {
+    hints,
+    rest,
+    ...(paused.length
+      ? { tellThePerson: paused.map((hint) => { return hint.label; }).join(" ") }
+      : {}),
+  };
+}
+
+// The result of an update, with any write-time hints lifted to the top (see above).
+function updatedNestResult(nest: unknown): Record<string, unknown> {
+  const { hints, rest, tellThePerson } = writeEnvelopeHints(nest);
+  return {
+    message: tellThePerson
+      ? "Nest updated successfully. Before anything else, tell the person you are helping what this edit paused (see tellThePerson)."
+      : "Nest updated successfully",
+    _id: writtenId(nest),
+    ...(tellThePerson ? { tellThePerson } : {}),
+    ...(hints ? { hints } : {}),
+    nest: rest,
+  };
+}
+
+// What a connection row with pendingInstructionApprovals means, said once per row that has
+// them. The row's `health` still reads as working, because manual runs do work, so without
+// this the one thing wrong with the connector is an array a model has to interpret.
+export const INSTRUCTION_APPROVAL_NOTE =
+  "Held back on scheduled runs until someone this connector is shared with, or a workspace admin, "
+  + "approves the role's latest instructions (they were edited by someone outside its audience, or by an "
+  + "author Nestr cannot name). The credential is fine, manual runs still work, and changing the "
+  + "connector's settings will not release it. To release it, a person opens commentUrl and presses "
+  + "Approve (or uses Approve on the role page), or someone it is shared with reconnects it. Approving "
+  + "re-runs the paused run. canApprove says whether you, the caller, are in its audience; an agent "
+  + "cannot approve on a person's behalf, so tell the person you are helping and give them the link.";
+
+// A page path made a link a person can click; anything already absolute is left as it is.
+function absoluteWebUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  return path.startsWith("/") ? `${NESTR_WEB_BASE}${path}` : path;
+}
+
+// The instruction-approval hints tell the model to hand over these links, so they must be clickable
+// whether the API sent them absolute or as app paths.
+const INSTRUCTION_APPROVAL_HINT_TYPES = new Set([
+  "connector_awaiting_instruction_approval",
+  "connector_paused_by_instruction_edit",
+]);
+
+// Each pending approval's ask-comment path made absolute, so it is a link to hand over, and
+// the note above added to every row that has any. Rows without are returned untouched.
+export function withInstructionApprovalNotes<T>(connections: T): T {
+  if (!Array.isArray(connections)) return connections;
+  return connections.map((row) => {
+    const pending = row && (row as ConnectionListing).pendingInstructionApprovals;
+    if (!Array.isArray(pending) || pending.length === 0) return row;
+    return {
+      ...row,
+      instructionApprovalNote: INSTRUCTION_APPROVAL_NOTE,
+      pendingInstructionApprovals: pending.map((entry: PendingInstructionApproval) => {
+        return { ...entry, commentUrl: absoluteWebUrl(entry.commentUrl || entry.commentPath) };
+      }),
+    };
+  }) as T;
+}
+
+// The id of the object a write tool just created or updated. REST writes answer
+// { status, data: <object> }, a few client methods unwrap that, and the
+// self-organization routes can answer with a list, so look in each place, and only
+// there: one envelope level down and no further. A nest's own `data` store and its
+// `fields` hold objects too, and a peel that kept descending would land in one of them.
+export function writtenId(result: unknown): string | undefined {
+  const own = idOf(result);
+  if (own !== undefined) return own;
+  const top = Array.isArray(result) ? result[0] : result;
+  return top && typeof top === "object" ? idOf((top as { data?: unknown }).data) : undefined;
+}
+
+function idOf(value: unknown): string | undefined {
+  const obj = Array.isArray(value) ? value[0] : value;
+  if (!obj || typeof obj !== "object") return undefined;
+  const id = (obj as { _id?: unknown })._id;
+  return typeof id === "string" ? id : undefined;
+}
+
 // Nestr re-points a comment aimed at a message inside a DM onto the conversation, since
 // DM threads are flat. The created post carries the parent it actually landed on, so say
 // so when it differs from the id the caller passed.
 export function commentPlacementNote(
   requestedNestId: string,
-  post: { parentId?: string } | null | undefined
+  post: { parentId?: string; data?: { parentId?: string } } | null | undefined
 ): string | null {
-  const landedOn = post?.parentId;
+  // POST /nests/:id/posts answers { status, data: <post> }; a bare post is accepted too.
+  const landedOn = post?.data?.parentId ?? post?.parentId;
   if (!landedOn || landedOn === requestedNestId) return null;
   return (
     `Placed on ${landedOn}, not the ${requestedNestId} you passed. ` +
@@ -807,8 +967,11 @@ export function enrichHints<T>(data: T): T {
         rawUrl = rawUrl.replace(/^\/api(?=\/)/, "");
         const [path, queryString] = rawUrl.split("?");
         const searchParams = new URLSearchParams(queryString || "");
-        let matched = false;
-        for (const { pattern, tool, params } of HINT_URL_PATTERNS) {
+        // `/n/...` is a page a PERSON opens (the instruction-approval hint points at its
+        // ask comment this way), not a route: there is no call to map it to, and logging
+        // it as unrecognised would make a deliberate link look like a gap.
+        let matched = /^\/n\//.test(path);
+        for (const { pattern, tool, params } of matched ? [] : HINT_URL_PATTERNS) {
           const match = path.match(pattern);
           if (match) {
             enriched.toolCall = { tool, params: params(match, searchParams, workspaceId) };
@@ -818,6 +981,21 @@ export function enrichHints<T>(data: T): T {
         }
         if (!matched) {
           console.error(`[nestr-mcp] Unrecognized hint URL pattern: "${hint.url}" (hint type: ${hint.type})`);
+        }
+      }
+
+      const guidance = HINT_TYPE_GUIDANCE[hint.type];
+      if (guidance) enriched.guidance = guidance;
+
+      if (INSTRUCTION_APPROVAL_HINT_TYPES.has(hint.type)) {
+        if (typeof enriched.url === "string") enriched.url = absoluteWebUrl(enriched.url) || enriched.url;
+        const connectors = (enriched as { connectors?: unknown }).connectors;
+        if (Array.isArray(connectors)) {
+          (enriched as { connectors?: unknown }).connectors = connectors.map((entry) => {
+            if (!entry || typeof entry !== "object" || !("commentUrl" in entry)) return entry;
+            const link = (entry as { commentUrl?: string | null }).commentUrl;
+            return { ...entry, commentUrl: absoluteWebUrl(link) };
+          });
         }
       }
 
@@ -1039,7 +1217,16 @@ const ALL_DAY_DESC =
   + "yyyy-mm-dd dates imply true.";
 const DUE_DESC =
   "Due date (ISO 8601, or yyyy-mm-dd). With a start it is the END of the item (a meeting's finish, the last "
-  + "day of a span); without one it is the deadline. For roles: re-election date.";
+  + "day of a span); without one it is the deadline. For roles: re-election date. null clears it; "
+  + "omitting it leaves it unchanged.";
+
+// A bare code is refused, and a field key cannot be guessed from a title, so the
+// key rule has to be stated where the key is written.
+const FIELD_KEYS_DESC =
+  "Keys are <labelId>.<fieldCode>, e.g. 'project.status'; the server adds the workspace prefix. A bare "
+  + "code ('status') is refused with a 422 whose detail.validKeys lists the keys this nest accepts. Codes "
+  + "can contain hyphens; read them from fieldsMetaData rather than deriving them from a title. See "
+  + "nestr_help('nest-model') for how keys read back.";
 
 // The editable fields of PATCH /nests/:id, shared by nestr_update_nest and
 // nestr_update_occurrence so the two cannot drift apart.
@@ -1049,10 +1236,10 @@ const nestUpdateFieldSchemas = {
   purpose: z.string().optional().describe(PURPOSE_DESC),
   parentId: z.string().optional().describe("New parent ID (move nest to different location, e.g., move inbox item to a role or project)"),
   labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to set (e.g., ['project'] to convert an item into a project)"),
-  fields: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Field updates (e.g., { 'project.status': 'Current' })"),
+  fields: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe(`Field updates (e.g., { 'project.status': 'Current' }). ${FIELD_KEYS_DESC}`),
   users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign"),
   data: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead."),
-  due: z.string().optional().describe(DUE_DESC),
+  due: z.string().nullable().optional().describe(DUE_DESC),
   start: z.string().nullable().optional().describe(START_DESC),
   allDay: z.boolean().nullable().optional().describe(ALL_DAY_DESC),
   completed: z.boolean().optional().describe("Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead."),
@@ -1070,7 +1257,7 @@ const NEST_UPDATE_FIELD_PROPERTIES = {
   },
   fields: {
     type: "object",
-    description: "Field updates (e.g., { 'project.status': 'Current' })",
+    description: `Field updates (e.g., { 'project.status': 'Current' }). ${FIELD_KEYS_DESC}`,
   },
   users: {
     type: "array",
@@ -1082,7 +1269,7 @@ const NEST_UPDATE_FIELD_PROPERTIES = {
     description: "Key-value data store shared with Nestr internals — never overwrite existing keys. Namespace your own data under 'mcp.' (e.g., { 'mcp.lastSync': '...' }). For AI knowledge persistence, use skills instead.",
   },
   due: {
-    type: "string",
+    type: ["string", "null"],
     description: DUE_DESC,
   },
   start: {
@@ -1104,8 +1291,27 @@ const HINTS_DESC =
   + "`query` that finds every other nest with the same problem) and drops the fixed teaching prose "
   + "and endpoint list. 'full' is the whole payload. false for none.";
 
+// The response shape of a write tool, stated in its description. The REST response
+// stays under its per-tool key, unchanged, so a client that peels by key keeps
+// working; `_id` is the one key every write result shares.
+const writeReturns = (key: string, what: string, extra = "") =>
+  ` Returns { message, _id, ${extra}${key} }: _id is the ${what}'s id, and ${key} is the API `
+  + `response, { status, data: <the ${what}> }.`;
+
 const STRIP_DESCRIPTION =
   "Strip description fields to shrink the response. Use for bulk or index reads.";
+
+// Descriptions are stored as HTML. Plain text is the cheaper default, but it flattens
+// paragraphs and line breaks and drops markup, so a code block or anything else whose
+// layout carries meaning needs the stored form.
+const CLEAN_TEXT_DESC =
+  "true (default): descriptions come back as plain text, which flattens paragraphs and line "
+  + "breaks and drops markup. false: descriptions come back as the stored HTML, so line breaks, "
+  + "lists and code blocks survive. Use false when the layout of a description matters.";
+
+// A text tab's body sits in `fields` under `<tabId>_texttab`: a page of notes per row.
+const LIST_TEXT_TAB_NOTE =
+  " Rows leave out text tab bodies (`fields` keys ending in `_texttab`); read those with nestr_get_nest.";
 
 const SORT_DESCRIPTION =
   "Sort field: title, createdAt, updatedAt, due, activityAt, order. Prefix '-' to reverse. For 'recently active' use '-activityAt' (includes children), not '-updatedAt' (own edits only).";
@@ -1213,18 +1419,20 @@ export const schemas = {
     sort: z.string().optional().describe(`${SORT_DESCRIPTION} Takes precedence over sort:/sort-order: operators in the query.`),
     limit: z.number().optional().describe("Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page."),
     page: z.number().optional().describe("Page number (1-indexed) for pagination"),
+    cleanText: z.boolean().optional().describe(CLEAN_TEXT_DESC),
     _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Marketing projects\", \"Overdue tasks\"). Omit for default."),
   }),
 
   getNest: z.object({
     nestId: z.string().describe("Nest ID. Supports comma-separated IDs to fetch multiple nests in one call (e.g., 'id1,id2,id3') — returns an array instead of a single object. Keep total URL under 2000 chars to avoid HTTP limits."),
-    fieldsMetaData: z.boolean().optional().describe("Set to true to include field schema metadata (e.g., available options for project.status)"),
+    fieldsMetaData: z.boolean().optional().describe("Set to true to include the declared field schema of every label on the nest (type, title, code, options, conditions), including fields that hold no value on this nest. nestr_get_label reads the same declarations off the label itself."),
     hints: hintLevelSchema.describe("Contextual hints: 'full' (default on a single read), 'summary', or false. 'summary' keeps type, severity, count, url and the sibling query, and drops the teaching prose and endpoints. Hints surface signals like unassigned roles, stale projects or unread comments."),
     ...hintFilterSchemas,
     provenance: z.boolean().optional().describe("Single-nest only. Include field/property provenance: which label (and circle context) defines each field and property."),
     rights: z.boolean().optional().describe("Single-nest only. Include the caller's composed rights on the nest plus a deny trace naming the profiles that block each op."),
     forUser: z.string().optional().describe("Single nest, with rights=true. Rights for this user id instead of the caller. Caller must be a nest admin."),
     whoCan: z.string().optional().describe("Single-nest only. Comma-separated ops (read,update,delete,create) to list who can perform each on this nest."),
+    cleanText: z.boolean().optional().describe(CLEAN_TEXT_DESC),
   }),
   explainNest: z.object({
     nestId: z.string().describe("The nest to diagnose (a single id)."),
@@ -1241,6 +1449,7 @@ export const schemas = {
     hints: hintLevelSchema.describe("Contextual hints: 'summary' (default on a listing), 'full', or false. A listing at 'full' repeats the same teaching prose once per row."),
     ...hintFilterSchemas,
     linkedUsers: linkedUsersSchema,
+    cleanText: z.boolean().optional().describe(CLEAN_TEXT_DESC),
     _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Tasks for Website Redesign\"). Omit for default."),
   }),
 
@@ -1262,7 +1471,7 @@ export const schemas = {
     description: z.string().optional().describe("The primary content field — use for project details, task context, acceptance criteria, Definition of Done, and any detailed information. Supports Markdown and HTML."),
     purpose: z.string().optional().describe(PURPOSE_DESC),
     labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to apply"),
-    fields: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call."),
+    fields: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe(`Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call. ${FIELD_KEYS_DESC}`),
     users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign (required for tasks/projects to associate with a person)"),
     start: z.string().optional().describe(START_DESC),
     allDay: z.boolean().optional().describe(ALL_DAY_DESC),
@@ -1362,6 +1571,7 @@ export const schemas = {
     limit: z.number().optional().describe("Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page."),
     page: z.number().optional().describe("Page number for pagination"),
     linkedUsers: linkedUsersSchema,
+    cleanText: z.boolean().optional().describe(CLEAN_TEXT_DESC),
     _listTitle: z.string().optional().describe("Short descriptive title for the list UI (e.g., \"Engineering projects\"). Omit for default."),
   }),
 
@@ -1532,6 +1742,16 @@ export const schemas = {
   userActivity: z.object({
     userId: z.string().describe("The user whose activity to fetch."),
     limit: z.number().optional().describe("Max activity items to return (default 50, max 200)."),
+  }),
+
+  // A nest's activity, with its subtree by default
+  nestActivity: z.object({
+    nestId: z.string().describe("The nest whose activity to fetch. Pass a circle or workspace ID to read everything that happened beneath it."),
+    depth: z.union([z.number(), z.literal("all")]).optional().describe("How far below the nest to look. Omit or 'all' for the nest and everything beneath it (what the Activity tab shows); 0 for the nest itself only; N for N levels down, measured from this nest."),
+    userId: z.string().optional().describe("Only what this user did here, including what an assistant did on their behalf."),
+    limit: z.number().optional().describe("Entries per page, newest first (default 50, max 200)."),
+    before: z.string().optional().describe("The next_cursor from the previous page. Omit for the newest entries."),
+    linkedUsers: z.boolean().optional().describe("Set true to get a linked.users list resolving every userId and agentUserId on the page. Use it whenever the result goes in front of a person."),
   }),
 
   // User tension tools (requires OAuth token)
@@ -1752,6 +1972,20 @@ export const schemas = {
     agentConfig: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Omit for an agent that runs on Nestr's own runtime."),
   }),
 
+  updateAgent: z.object({
+    workspaceId: z.string().describe("Workspace ID the agent belongs to"),
+    userId: z.string().describe("The agent's user id, from nestr_list_users with agents:'only' or nestr_get_user"),
+    name: z.string().optional().describe("The AGENT's own name, as its identity calls it. Cannot be blank."),
+    description: z.string().optional().describe("What the agent is LIKE: its character and what it is careful about. Shown as its purpose wherever it is listed. Not its instructions, which belong in a skill on the role."),
+    webSearch: z.boolean().optional().describe("Whether the agent may search the web."),
+    status: z.enum(["active", "paused", "disabled"]).optional().describe("active, paused or disabled."),
+    roleAssignable: z.boolean().optional().describe("false makes it an ASSISTANT that can never be assigned to a role. Refused while it still fills one; the error names the roles, so unassign it there first. true makes an assistant assignable again."),
+    agentConfig: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Replaces the stored wiring as a whole."),
+    // Strict, as the description promises: a key this tool does not list is
+    // refused and named, not stripped. Stripped, it would PATCH the known keys
+    // and answer "every field you sent has landed" for one that never left.
+  }).strict(),
+
   bindConnector: z.object({
     workspaceId: z.string().describe("Workspace ID the connector and owner belong to"),
     connectorId: z.string().describe("ID of an enabled connector from nestr_list_connectors"),
@@ -1957,7 +2191,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_search",
-    description: "Search nests in a workspace. Supports operators like label:, assignee:, createdby:, completed:, in:, sort:. createdby: accepts me, an email address, or a user id. Always use completed:false for active work. See nestr_help('search') for full syntax. Results carry user ids; when presenting to a person, show names and/or emails. Pass `linkedUsers: true` to get them all resolved in the same request rather than calling nestr_get_user per id.",
+    description: "Search nests in a workspace. Supports operators like label:, assignee:, createdby:, completed:, in:, sort:. createdby: accepts me, an email address, or a user id. Always use completed:false for active work. See nestr_help('search') for full syntax. Results carry user ids; when presenting to a person, show names and/or emails. Pass `linkedUsers: true` to get them all resolved in the same request rather than calling nestr_get_user per id." + LIST_TEXT_TAB_NOTE,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -1969,6 +2203,7 @@ export const toolDefinitions = [
         limit: { type: "number", description: "Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page." },
         page: { type: "number", description: "Page number (1-indexed) for fetching additional pages" },
         stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
+        cleanText: { type: "boolean", description: CLEAN_TEXT_DESC },
         _listTitle: { type: "string", description: "Short title for the list UI header, 2-4 words, e.g. Marketing projects. Say what is shown, not the query." },
       },
       required: ["workspaceId", "query"],
@@ -1979,16 +2214,17 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_nest",
-    description: "Get nest details. Supports comma-separated IDs for batch fetch. Add hints=true for contextual signals, fieldsMetaData=true for field schemas. For a single nest you can also diagnose it: provenance, rights, and whoCan (see explain_nest for a one-shot diagnosis). The users array holds user ids; when presenting to a person, resolve them to names and/or emails via nestr_get_user or nestr_list_users.",
+    description: "Get nest details. Supports comma-separated IDs for batch fetch. Add hints=true for contextual signals, fieldsMetaData=true for the declared field schema of every label on the nest, including fields with no value. For a single nest you can also diagnose it: provenance, rights, and whoCan (see explain_nest for a one-shot diagnosis). The users array holds user ids; when presenting to a person, resolve them to names and/or emails via nestr_get_user or nestr_list_users.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID, or comma-separated IDs for a batch (e.g. 'id1,id2'). Keep the URL under 2000 chars." },
-        fieldsMetaData: { type: "boolean", description: "Set to true to include field schema metadata (available options, field types)" },
+        fieldsMetaData: { type: "boolean", description: "Set to true to include the declared field schema of every label on the nest (type, title, code, options, conditions), including fields that hold no value on this nest. nestr_get_label reads the same declarations off the label itself." },
         hints: { type: ["string", "boolean"], enum: ["summary", "full", true, false], description: `${HINTS_DESC} Defaults to 'full' on a single read, which is what you want when you asked about one nest.` },
         hintTypes: { type: "array", items: { type: "string" }, description: "Keep only these hint types." },
         minSeverity: { type: "string", enum: ["info", "suggestion", "warning", "alert"], description: "Drop hints below this severity." },
         stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
+        cleanText: { type: "boolean", description: CLEAN_TEXT_DESC },
         provenance: { type: "boolean", description: "Single nest. Which label and circle context defines each field and property, e.g. why a role has a given icon." },
         rights: { type: "boolean", description: "Single nest. The caller's composed rights (self read/update/delete) plus a deny trace naming what blocks each op, and why." },
         forUser: { type: "string", description: "Single nest, with rights=true. Rights for this user id instead of the caller. Caller must be a nest admin." },
@@ -2000,7 +2236,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_explain_nest",
-    description: "Diagnose a single nest: WHY it looks and behaves as it does. Returns field/property provenance (which label and circle defines each field, value, and property such as the icon), the caller's composed rights with a deny trace (why a field is read-only, why you cannot edit), and — when whoCan is given — who can perform an op and who to contact. Use this when a user asks 'why can't I ...', 'why is this read-only', 'where does this field come from', 'why does this role have a different icon', or 'who can change this'. For connection/auth errors use nestr_diagnose instead.",
+    description: "Diagnose a single nest: WHY it looks and behaves as it does. Returns field/property provenance (which label and circle defines each field, value, and property such as the icon), the caller's composed rights with a deny trace (why a field is read-only, why you cannot edit), and — when whoCan is given — who can perform an op and who to contact. Use this when a user asks 'why can't I ...', 'why is this read-only', 'where does this field come from', 'why does this role have a different icon', or 'who can change this'. When a role connector is held back on scheduled runs pending approval of the role's instructions, it says so in a connector_awaiting_instruction_approval hint with who can approve and where. For connection/auth errors use nestr_diagnose instead.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2014,7 +2250,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_nest_children",
-    description: "Get children of a nest, or just the ones you want. Pass `search` with the full operator syntax to ask for a subset rather than fetching everything and filtering: `search: 'label:role'` returns a circle's roles in one call. Paginated at 50 per page; read meta.total for the match count.",
+    description: "Get children of a nest, or just the ones you want. Pass `search` with the full operator syntax to ask for a subset rather than fetching everything and filtering: `search: 'label:role'` returns a circle's roles in one call. Paginated at 50 per page; read meta.total for the match count." + LIST_TEXT_TAB_NOTE,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2028,6 +2264,7 @@ export const toolDefinitions = [
         minSeverity: { type: "string", enum: ["info", "suggestion", "warning", "alert"], description: "Drop hints below this severity." },
         linkedUsers: { type: "boolean", description: "Resolve every user id in the results to a full user, returned once in `linked.users`. One request instead of one per id." },
         stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
+        cleanText: { type: "boolean", description: CLEAN_TEXT_DESC },
         _listTitle: { type: "string", description: "Short descriptive title for the list UI header (e.g., \"Tasks for Website Redesign\", \"API project sub-tasks\"). Include the parent name for context." },
       },
       required: ["nestId"],
@@ -2065,7 +2302,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_nest",
-    description: `Create a nest under a parent. Labels define the type, e.g. ['project'], ['role']. ${PRIME_LABEL_RULE} Sprint/epic/milestone never pair; stories link to those via graph relations. In established workspaces prefer the tension flow for governance. Meetings attach to a circle that ALREADY exists — the workspace anchor circle counts, and is the right parent when no sub-circle fits. Never create a circle to hold a meeting. Use \`['meeting','circle-meeting']\` for a tactical meeting, \`['meeting','governance']\` for a governance meeting, and set \`due\` to the start time. See nestr_help('labels') and nestr_help('meetings').`,
+    description: `Create a nest under a parent. Labels define the type, e.g. ['project'], ['role']. ${PRIME_LABEL_RULE} Sprint/epic/milestone never pair; stories link to those via graph relations. In established workspaces prefer the tension flow for governance. Meetings attach to a circle that ALREADY exists — the workspace anchor circle counts, and is the right parent when no sub-circle fits. Never create a circle to hold a meeting. Use \`['meeting','circle-meeting']\` for a tactical meeting, \`['meeting','governance']\` for a governance meeting, and set \`due\` to the start time. The server adds a \`task\` label to every nest that can be completed, alongside the labels you pass, unless one of them replaces task (declares \`inverseToggleLabel: "task"\`, as \`project\` does) or declares \`autoTaskLabel: false\`: expect \`task\` in the labels you read back, and do not write it back as if you had chosen it. See nestr_help('labels') and nestr_help('meetings').${writeReturns("nest", "nest")}`,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2080,7 +2317,7 @@ export const toolDefinitions = [
         },
         fields: {
           type: "object",
-          description: "Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call.",
+          description: `Structured field values to set on creation (e.g., { 'project.status': 'Current' }, { 'skill.type': 'process' }). Same shape as nestr_update_nest fields — saves a follow-up update call. ${FIELD_KEYS_DESC}`,
         },
         users: {
           type: "array",
@@ -2120,7 +2357,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_nest",
-    description: `Update nest properties. Set parentId to move. Send only what changes. When replacing labels: ${PRIME_LABEL_RULE} Prefer tensions for governance. See nestr_help('nest-model') for fields and data namespacing.`,
+    description: `Update nest properties. Set parentId to move. Send only what changes. When replacing labels: ${PRIME_LABEL_RULE} Prefer tensions for governance. See nestr_help('nest-model') for fields and data namespacing.${writeReturns("nest", "nest")}`,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2159,7 +2396,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_comment",
-    description: "Add a comment to a nest, for progress updates and discussion. Mentions need literal curly braces, see `body`. Optionally attach labels at creation.",
+    description: "Add a comment to a nest, for progress updates and discussion. Mentions need literal curly braces, see `body`. Optionally attach labels at creation." + writeReturns("post", "comment", "placement?, "),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2177,7 +2414,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_comment",
-    description: "Update an existing comment's body and/or labels. Supports HTML and @mentions — **mentions MUST be wrapped in literal curly braces** (e.g. `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`); without the braces the user is not notified. When `labels` is provided it REPLACES the existing label set — use nestr_add_label / nestr_remove_label for incremental changes.",
+    description: "Update an existing comment's body and/or labels. Supports HTML and @mentions — **mentions MUST be wrapped in literal curly braces** (e.g. `@{aBcD1234eFgH5678i:roleNestId}`, NOT `@aBcD1234eFgH5678i`); without the braces the user is not notified. When `labels` is provided it REPLACES the existing label set — use nestr_add_label / nestr_remove_label for incremental changes." + writeReturns("comment", "comment"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2452,7 +2689,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_labels",
-    description: "List available labels in a workspace. Response includes meta.total showing total matching count. The list does not carry autoComplete, so it mixes labels a person can pick with internal machinery they cannot. Call nestr_get_label before offering a label as a choice to somebody.",
+    description: "List available labels in a workspace. Each row carries only `_id` and `title`: for a label's fields, its `display` settings and autoComplete call nestr_get_label. Response includes meta.total showing total matching count. The list does not carry autoComplete, so it mixes labels a person can pick with internal machinery they cannot. Call nestr_get_label before offering a label as a choice to somebody.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2467,7 +2704,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_projects",
-    description: "List all projects in a workspace. Check fields['project.status'] for status (Future/Current/Waiting/Done). Paginated.",
+    description: "List all projects in a workspace. Check fields['project.status'] for status (Future/Current/Waiting/Done). Paginated." + LIST_TEXT_TAB_NOTE,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2476,6 +2713,7 @@ export const toolDefinitions = [
         limit: { type: "number", description: "Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page." },
         page: { type: "number", description: "Page number (1-indexed)" },
         stripDescription: { type: "boolean", description: STRIP_DESCRIPTION },
+        cleanText: { type: "boolean", description: CLEAN_TEXT_DESC },
         _listTitle: { type: "string", description: "Short descriptive title for the list UI header (e.g., \"Engineering projects\", \"All projects\"). Omit for default." },
         linkedUsers: { type: "boolean", description: "Resolve every user id in the results to a full user, returned once in `linked.users`. One request instead of one per id." },
       },
@@ -2610,7 +2848,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_inbox_item",
-    description: "Quick capture: add an item to the inbox for later processing. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
+    description: "Quick capture: add an item to the inbox for later processing. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose." + writeReturns("item", "inbox item"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2636,7 +2874,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_inbox_item",
-    description: "Update an inbox item. Set completed:true when processed. Use nestr_update_nest with parentId to move out of inbox. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
+    description: "Update an inbox item. Set completed:true when processed. Use nestr_update_nest with parentId to move out of inbox. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose." + writeReturns("item", "inbox item"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2692,7 +2930,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_personal_label",
-    description: "Create a personal label. Can be used across workspaces. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose.",
+    description: "Create a personal label. Can be used across workspaces. Auth: OAuth only (user-scoped). On auth failure call nestr_diagnose." + writeReturns("label", "label"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2865,10 +3103,31 @@ export const toolDefinitions = [
     },
     ...readOnly,
   },
+  // A nest's activity feed (the Activity tab over the API)
+  {
+    name: "nestr_get_nest_activity",
+    description: "What happened on a nest and, by default, everything beneath it, newest first: the Activity tab over the API. Each entry carries who did it (userId, agentUserId when an assistant acted), the sentence the app shows, and the same change as data in `changes`: one row per field with its value before and after, named as nestr_get_nest names them (title, users, parentId, data.<key>, fields.<label>.<code>). Agent runs appear as considerations with their summary, tools and outcome. Use depth to narrow (0 for the nest alone, N for N levels) and userId for one person's work. Paging is by cursor: read `has_more` and pass `next_cursor` back as `before`; there is no total. Pass a circle or workspace ID with the default depth to review everything that happened in it.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "The nest whose activity to fetch. Pass a circle or workspace ID to read everything that happened beneath it." },
+        depth: {
+          oneOf: [{ type: "number" }, { type: "string", enum: ["all"] }],
+          description: "How far below the nest to look. Omit or 'all' for the nest and everything beneath it; 0 for the nest itself only; N for N levels down, measured from this nest.",
+        },
+        userId: { type: "string", description: "Only what this user did here, including what an assistant did on their behalf." },
+        limit: { type: "number", description: "Entries per page, newest first (default 50, max 200)." },
+        before: { type: "string", description: "The next_cursor from the previous page. Omit for the newest entries." },
+        linkedUsers: { type: "boolean", description: "Set true to get a linked.users list resolving every userId and agentUserId on the page." },
+      },
+      required: ["nestId"],
+    },
+    ...readOnly,
+  },
   // Label management
   {
     name: "nestr_add_label",
-    description: "Add a label to a nest. Personal labels (like 'now') are automatically scoped to the authenticated user by the API. Will reject any attempt to add a prime label (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback) to a nest that already has one — a nest can only have one core identity.",
+    description: "Add a label to a nest. Personal labels (like 'now') are automatically scoped to the authenticated user by the API. Will reject any attempt to add a prime label (project, tension, role, circle, anchor-circle, meeting, metric, goal, result, checklist, feedback) to a nest that already has one — a nest can only have one core identity." + writeReturns("nest", "nest"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2881,7 +3140,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_remove_label",
-    description: "Remove a label from a nest. Personal labels (like 'now') are automatically scoped to the authenticated user by the API.",
+    description: "Remove a label from a nest. Personal labels (like 'now') are automatically scoped to the authenticated user by the API." + writeReturns("nest", "nest"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2987,7 +3246,7 @@ export const toolDefinitions = [
   // Tension tools
   {
     name: "nestr_create_tension",
-    description: "Create a tension on a role or circle. Tensions drive organizational change. See nestr_help('tension-processing') for guidance on placement and pathways.",
+    description: "Create a tension on a role or circle. Tensions drive organizational change. See nestr_help('tension-processing') for guidance on placement and pathways." + writeReturns("tension", "tension"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3016,7 +3275,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_tensions",
-    description: "List tensions for a circle or role. Supports search filtering.",
+    description: "List tensions for a circle or role. Supports search filtering." + LIST_TEXT_TAB_NOTE,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3032,7 +3291,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_tension",
-    description: "Update a tension's title, description, feeling, or needs.",
+    description: "Update a tension's title, description, feeling, or needs." + writeReturns("tension", "tension"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3075,7 +3334,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_tension_part",
-    description: "Add a part to a tension. A part is either the operational work the tension asks for or a governance change it proposes. Modes: OPERATIONAL OUTPUT (title, description, users, role, and no governance label) is what a work request is made of, and is the common case; new governance item (omit _id, give title plus a governance label such as ['role'] or ['policy']); change one (_id plus the changed fields; editing a role copies its accountabilities/domains in, so it reads as a full role edit); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities/domains untouched). The part you get back has its own _id and a sourceId, the output nest underneath it; nestr_modify_tension_part takes the part _id, not the sourceId. See nestr_help('tension-processing').",
+    description: "Add a part to a tension. A part is either the operational work the tension asks for or a governance change it proposes. Modes: OPERATIONAL OUTPUT (title, description, users, role, and no governance label) is what a work request is made of, and is the common case; new governance item (omit _id, give title plus a governance label such as ['role'] or ['policy']); change one (_id plus the changed fields; editing a role copies its accountabilities/domains in, so it reads as a full role edit); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities/domains untouched). The part you get back has its own _id and a sourceId, the output nest underneath it; nestr_modify_tension_part takes the part _id, not the sourceId. See nestr_help('tension-processing')." + writeReturns("part", "part"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3101,7 +3360,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_modify_tension_part",
-    description: "Modify an existing proposal part. For individual accountability/domain changes, use the children tools.",
+    description: "Modify an existing proposal part. For individual accountability/domain changes, use the children tools." + writeReturns("part", "part"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3153,7 +3412,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_create_tension_part_child",
-    description: "Add a new accountability or domain to a proposal part. When the proposal is enacted, this creates a new accountability/domain on the role.",
+    description: "Add a new accountability or domain to a proposal part. When the proposal is enacted, this creates a new accountability/domain on the role." + writeReturns("child", "child"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3168,7 +3427,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_tension_part_child",
-    description: "Rename an accountability or domain within a proposal part. When the proposal is enacted, the original accountability/domain is updated.",
+    description: "Rename an accountability or domain within a proposal part. When the proposal is enacted, the original accountability/domain is updated." + writeReturns("child", "child"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3224,7 +3483,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_tension_status",
-    description: "Submit a tension for voting ('proposed') or retract to 'draft'. Submitting notifies circle members.",
+    description: "Submit a tension for consent ('proposed') or retract it to 'draft'. Proposing asks every other member of the circle to consent and notifies them. When there is nobody else to ask, the server enacts the tension at once and answers `status: \"enacted\"`: a governance proposal in a single-member circle, or a work request with no output or whose requester is its only assignee. Otherwise resolution happens through those consent votes, in a governance meeting or in the Nestr app, not through this tool. To observe the outcome, read nestr_get_tension_status, which reports `accepted` once the tension is resolved and `escalated` when someone objected.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3379,6 +3638,34 @@ export const toolDefinitions = [
     ...mutating,
   },
   {
+    name: "nestr_update_agent",
+    description: "Change an existing agent's settings: its name, its description, whether it may search the web, its status, whether it may be assigned to roles, and its runtime config. Send only the fields to change; the rest are left as they are. Workspace-admin only; a non-admin caller gets AUTH_SCOPE_INSUFFICIENT (call nestr_diagnose on any auth error).\n\nThe description is what the agent is LIKE, shown as its purpose wherever it is listed. It is not the agent's instructions: what the agent should DO lives in a skill nest under the role it fills, so a stale description is fixed here and a stale instruction is fixed on the skill. This tool changes the agent, never the work it is on: to move it to other work, change the role's users with nestr_update_nest.\n\nroleAssignable:false turns the agent into an ASSISTANT, one that can never be assigned to a role and so can never stop acting with the authority of the person it helps. It is refused while the agent still fills a role, and the error names the roles: unassign it there first (nestr_update_nest users on the role), then call again. roleAssignable:true makes an assistant assignable again; it keeps assisting until someone assigns it to a role.\n\nA field this tool does not list, and a call that changes nothing, are refused with VALIDATION rather than ignored, so a success answer means every field you sent has landed. There is no need to read the agent back to check.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID the agent belongs to" },
+        userId: { type: "string", description: "The agent's user id, from nestr_list_users with agents:'only' or nestr_get_user" },
+        name: { type: "string", description: "The AGENT's own name, as its identity calls it. Cannot be blank." },
+        description: {
+          type: "string",
+          description: "What the agent is LIKE: its character and what it is careful about. Shown as its purpose wherever it is listed. Not its instructions, which belong in a skill on the role.",
+        },
+        webSearch: { type: "boolean", description: "Whether the agent may search the web." },
+        status: { type: "string", enum: ["active", "paused", "disabled"], description: "active, paused or disabled." },
+        roleAssignable: {
+          type: "boolean",
+          description: "false makes it an ASSISTANT that can never be assigned to a role. Refused while it still fills one; the error names the roles, so unassign it there first. true makes an assistant assignable again.",
+        },
+        agentConfig: {
+          type: "object",
+          description: "Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Replaces the stored wiring as a whole.",
+        },
+      },
+      required: ["workspaceId", "userId"],
+    },
+    ...mutating,
+  },
+  {
     name: "nestr_bind_connector",
     description: "Bind a registered connector to an owner so that owner can use it. Owner types: 'role' (ownerId is the role nest ID — the server finds or creates the connector's domain under it), 'role-domain' (ownerId is an existing domain nest ID), 'workspace' (ownerId is the workspace ID), 'user' (ownerId is a person's user ID, for their own account), or 'agent' (ownerId is a bot's user ID, for its own). A 'role' or 'role-domain' owner materialises a credentials field on the domain nest, so the role can use the connector and the Connect button renders there; the response then carries domainId (and domainCreated when the bind created it). After binding, a human or agent connects the account via that Connect button. The secret is captured out-of-band and is never seen by the agent. Workspace-admin only: a non-admin caller gets AUTH_SCOPE_INSUFFICIENT. The connector must already be registered (nestr_register_connector) and enabled.\n\nBIND TO THE ROLE, not to whoever fills it. A role binding is the governance act: the access belongs to the work, survives the filler changing, and is visible to the circle. Reach for 'role' by default — it is the usual onboarding path: pass the role nest ID and the server does the domain lookup. Use 'role-domain' only when you already have the domain nest ID and want to target it directly.\n\n'user' is for what is genuinely one person's: their own mailbox, their own drive. Binding that to a role would hand it to whoever fills the role next, which is the opposite of what they asked for, so this is the one case where a role binding is wrong. It needs a workspace admin and the connector has to be open to user owners in the catalog; if either is missing, say which and what the admin has to do rather than falling back to a role binding. The work on a personal connection is then done by an agent that fills NO role, because filling a role and assisting are exclusive and only an assistant can act with a person's own access.\n\n'agent' is the same shape for a bot's own account, used where a provider gives the agent its own login rather than borrowing a person's. It is the rarest of the four: prefer 'role', so the access belongs to the work and survives the filler changing. Both personal types are workspace-admin only and both need the connector open to user/agent owners, so a caller who is not an admin gets AUTH_SCOPE_INSUFFICIENT and should say which of the two is missing rather than binding to a role instead. Be careful arranging one agent's credential from another agent's run: it is a decision about what that agent may reach, so name what you are about to do and why before doing it.",
     inputSchema: {
@@ -3436,7 +3723,7 @@ export const toolDefinitions = [
   {
     name: "nestr_list_connections",
     ...readOnly,
-    description: "List who has access to what in this workspace: each binding's connector, its owner (a role's domain, a person, an agent, or the whole workspace), and who holds a credential on it. Shows when an agent is using a person's account, and never returns a secret. Use it to check whether access already exists before giving more, and to find the connectionId for nestr_get_connect_link.",
+    description: "List who has access to what in this workspace: each binding's connector, its owner (a role's domain, a person, an agent, or the whole workspace), and who holds a credential on it. Shows when an agent is using a person's account, and never returns a secret. Use it to check whether access already exists before giving more, and to find the connectionId for nestr_get_connect_link. A row with pendingInstructionApprovals is held back on scheduled runs until a person in its audience approves the role's latest instructions; its instructionApprovalNote says who can release it and how.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3572,7 +3859,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_nest_files",
-    description: "List a nest's file attachments. Images pasted into the nest's text are deliberately excluded — they belong to the text that references them; the inline_images hint counts those and their ids come from the references in the content. A comment ID works too — files are keyed by nestId, so pass a comment ID to see files attached to that comment. Returns each file's id, name, contentType and size. Use nestr_read_file with a returned id to read one (images come back as viewable image content). Auth: any valid token with access to the nest.",
+    description: "List a nest's file attachments. Images pasted into the nest's text are deliberately excluded — they belong to the text that references them; the inline_images hint counts those and their ids come from the references in the content. A comment ID works too — files are keyed by nestId, so pass a comment ID to see files attached to that comment. Returns each file's id, name, contentType and size. Use nestr_read_file with a returned id to read one (JPEG/PNG/GIF/WebP come back as viewable image content; SVG comes back as its markup). Auth: any valid token with access to the nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3584,7 +3871,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_read_file",
-    description: "Read a single file attachment on a nest (or comment). Branches on contentType: images (image/*) return as viewable image content so you can see them (very large images return metadata only); JSON and text (application/json, text/*) return as decoded UTF-8 text (large text is truncated); PDFs and other types return their metadata only (cannot be inlined yet). Get file ids from nestr_get_nest_files, or, for an image pasted into a nest's text, from the ![name](/file/download?id=FILE_ID&name=NAME) reference in its content — those are not listed by nestr_get_nest_files but are readable here. A comment ID works as the nestId. Auth: any valid token with access to the nest.",
+    description: "Read a single file attachment on a nest (or comment). Branches on contentType: JPEG, PNG, GIF and WebP return as viewable image content so you can see them (very large images return metadata only); JSON, XML and text (application/json, text/*, and SVG, which is markup) return as decoded UTF-8 text (large text is truncated); PDFs, other image formats and everything else return their metadata only (cannot be inlined). Get file ids from nestr_get_nest_files, or, for an image pasted into a nest's text, from the ![name](/file/download?id=FILE_ID&name=NAME) reference in its content — those are not listed by nestr_get_nest_files but are readable here. A comment ID works as the nestId. Auth: any valid token with access to the nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -4040,7 +4327,7 @@ async function _handleToolCall(
             sort: parsed.sort ?? directives.sort,
             limit: parsed.limit ?? directives.limit,
             page: parsed.page,
-            cleanText: true,
+            cleanText: parsed.cleanText ?? true,
             linkedUsers: parsed.linkedUsers,
           }
         );
@@ -4050,7 +4337,7 @@ async function _handleToolCall(
       case "nestr_get_nest": {
         const parsed = schemas.getNest.parse(args);
         const nest = await client.getNest(parsed.nestId, {
-          cleanText: true,
+          cleanText: parsed.cleanText ?? true,
           fieldsMetaData: parsed.fieldsMetaData,
           hints: resolveHintLevel(parsed.hints, "full"),
           hintTypes: parsed.hintTypes,
@@ -4068,7 +4355,10 @@ async function _handleToolCall(
         const nest = await client.getNest(parsed.nestId, {
           cleanText: true,
           fieldsMetaData: true,
-          hints: false,
+          // The one hint that answers "why does this role's agent not have Gmail on its
+          // scheduled runs": it is not a rights question, so the rights trace cannot say it.
+          hints: "full",
+          hintTypes: ["connector_awaiting_instruction_approval"],
           provenance: true,
           rights: true,
           forUser: parsed.forUser,
@@ -4084,7 +4374,7 @@ async function _handleToolCall(
           sort: parsed.sort,
           limit: parsed.limit,
           page: parsed.page,
-          cleanText: true,
+          cleanText: parsed.cleanText ?? true,
           hints: resolveHintLevel(parsed.hints, "summary"),
           hintTypes: parsed.hintTypes,
           minSeverity: parsed.minSeverity,
@@ -4146,7 +4436,7 @@ async function _handleToolCall(
             );
           }
           const nest = Array.isArray(result) ? result[0] : result;
-          return formatResult({ message: "Nest created successfully", nest });
+          return formatResult({ message: "Nest created successfully", _id: writtenId(nest), nest });
         }
 
         const nest = await client.createNest({
@@ -4161,7 +4451,7 @@ async function _handleToolCall(
           start: parsed.start,
           allDay: parsed.allDay,
         });
-        return formatResult({ message: "Nest created successfully", nest });
+        return formatResult({ message: "Nest created successfully", _id: writtenId(nest), nest });
       }
 
       case "nestr_update_nest": {
@@ -4193,7 +4483,7 @@ async function _handleToolCall(
           const nest = isCircle
             ? await client.updateCircle(parsed.workspaceId, parsed.nestId, updates)
             : await client.updateRole(parsed.workspaceId, parsed.nestId, updates);
-          return formatResult({ message: "Nest updated successfully", nest });
+          return formatResult(updatedNestResult(nest));
         }
 
         const nest = await client.updateNest(parsed.nestId, {
@@ -4210,7 +4500,7 @@ async function _handleToolCall(
           allDay: parsed.allDay,
           completed: parsed.completed,
         });
-        return formatResult({ message: "Nest updated successfully", nest });
+        return formatResult(updatedNestResult(nest));
       }
 
       case "nestr_delete_nest": {
@@ -4236,6 +4526,7 @@ async function _handleToolCall(
         const placement = commentPlacementNote(parsed.nestId, post);
         return formatResult({
           message: "Comment added successfully",
+          _id: writtenId(post),
           ...(placement ? { placement } : {}),
           post,
         });
@@ -4247,7 +4538,7 @@ async function _handleToolCall(
           title: parsed.body,
           ...(parsed.labels !== undefined ? { labels: parsed.labels } : {}),
         });
-        return formatResult({ message: "Comment updated successfully", comment: updated });
+        return formatResult({ message: "Comment updated successfully", _id: writtenId(updated), comment: updated });
       }
 
       case "nestr_delete_comment": {
@@ -4348,7 +4639,7 @@ async function _handleToolCall(
           sort: parsed.sort,
           limit: parsed.limit,
           page: parsed.page,
-          cleanText: true,
+          cleanText: parsed.cleanText ?? true,
           linkedUsers: parsed.linkedUsers,
         });
         return formatResult(completableResponse(compactResponse(projects), "projects", parsed._listTitle || "Projects"));
@@ -4433,7 +4724,7 @@ async function _handleToolCall(
           title: parsed.title,
           description: parsed.description,
         });
-        return formatResult({ message: "Inbox item created successfully", item });
+        return formatResult({ message: "Inbox item created successfully", _id: writtenId(item), item });
       }
 
       case "nestr_get_inbox_item": {
@@ -4450,7 +4741,7 @@ async function _handleToolCall(
           completed: parsed.completed,
           data: parsed.data as Record<string, unknown> | undefined,
         });
-        return formatResult({ message: "Inbox item updated successfully", item });
+        return formatResult({ message: "Inbox item updated successfully", _id: writtenId(item), item });
       }
 
       case "nestr_reorder_inbox": {
@@ -4484,7 +4775,7 @@ async function _handleToolCall(
           color: parsed.color,
           icon: parsed.icon,
         });
-        return formatResult({ message: "Personal label created successfully", label });
+        return formatResult({ message: "Personal label created successfully", _id: writtenId(label), label });
       }
 
       // Direct messages
@@ -4711,13 +5002,13 @@ async function _handleToolCall(
           validatePrimeLabels([...(existingNest?.labels ?? []), parsed.labelId]);
         }
         const nest = await client.addLabel(parsed.nestId, parsed.labelId);
-        return formatResult({ message: `Label '${parsed.labelId}' added successfully`, nest: compactResponse(nest) });
+        return formatResult({ message: `Label '${parsed.labelId}' added successfully`, _id: writtenId(nest), nest: compactResponse(nest) });
       }
 
       case "nestr_remove_label": {
         const parsed = schemas.removeLabel.parse(args);
         const nest = await client.removeLabel(parsed.nestId, parsed.labelId);
-        return formatResult({ message: `Label '${parsed.labelId}' removed successfully`, nest: compactResponse(nest) });
+        return formatResult({ message: `Label '${parsed.labelId}' removed successfully`, _id: writtenId(nest), nest: compactResponse(nest) });
       }
 
       case "nestr_add_to_daily_plan": {
@@ -4764,6 +5055,25 @@ async function _handleToolCall(
           limit: parsed.limit,
         });
         return formatResult({ count: activity.length, activity });
+      }
+
+      case "nestr_get_nest_activity": {
+        const parsed = schemas.nestActivity.parse(args);
+        const page = await client.getNestActivity(parsed.nestId, {
+          depth: parsed.depth,
+          userId: parsed.userId,
+          limit: parsed.limit,
+          before: parsed.before,
+          linkedUsers: parsed.linkedUsers,
+        });
+        // The API hands the next page as a URL carrying `before`; the model needs
+        // only the cursor, to pass straight back into this tool.
+        return formatResult({
+          ...page.meta,
+          next_cursor: nextCursorOf(page.links?.next),
+          ...(page.linked ? { linked: page.linked } : {}),
+          activity: page.data,
+        });
       }
 
       // Current user identity and workspace context
@@ -4878,7 +5188,7 @@ async function _handleToolCall(
           description: parsed.description,
           ...(Object.keys(fields).length > 0 ? { fields } : {}),
         });
-        return formatResult({ message: "Tension created successfully", tension: enrichHints(tension) });
+        return formatResult({ message: "Tension created successfully", _id: writtenId(tension), tension: enrichHints(tension) });
       }
 
       case "nestr_get_tension": {
@@ -4920,7 +5230,7 @@ async function _handleToolCall(
             ...(Object.keys(fields).length > 0 ? { fields } : {}),
           }
         );
-        return formatResult({ message: "Tension updated successfully", tension });
+        return formatResult({ message: "Tension updated successfully", _id: writtenId(tension), tension });
       }
 
       case "nestr_delete_tension": {
@@ -4952,19 +5262,19 @@ async function _handleToolCall(
             users: body.users ?? [],
             ...(body.due !== undefined ? { due: body.due } : {}),
           });
-          return formatResult({ message: "Election added to the tension successfully", part });
+          return formatResult({ message: "Election added to the tension successfully", _id: writtenId(part), part });
         } else if (body._id && removeNest === true) {
           // Propose deletion of an existing structural item.
           const part = await client.proposeTensionDeletion(nestId, tensionId, body._id);
-          return formatResult({ message: "Deletion proposal added successfully", part });
+          return formatResult({ message: "Deletion proposal added successfully", _id: writtenId(part), part });
         } else if (body._id) {
           // Propose change to existing item (existing children auto-copied if accountabilities/domains not provided)
           const part = await client.proposeTensionChange(nestId, tensionId, body);
-          return formatResult({ message: "Change proposal added successfully", part });
+          return formatResult({ message: "Change proposal added successfully", _id: writtenId(part), part });
         } else {
           // Propose new item
           const part = await client.createTensionPart(nestId, tensionId, body);
-          return formatResult({ message: "New item proposal added successfully", part });
+          return formatResult({ message: "New item proposal added successfully", _id: writtenId(part), part });
         }
       }
 
@@ -4972,7 +5282,7 @@ async function _handleToolCall(
         const parsed = schemas.modifyTensionPart.parse(args);
         const { nestId, tensionId, partId, ...data } = parsed;
         const part = await client.modifyTensionPart(nestId, tensionId, partId, data);
-        return formatResult({ message: "Tension part modified successfully", part });
+        return formatResult({ message: "Tension part modified successfully", _id: writtenId(part), part });
       }
 
       case "nestr_remove_tension_part": {
@@ -4999,7 +5309,7 @@ async function _handleToolCall(
           parsed.partId,
           { title: parsed.title, labels: parsed.labels }
         );
-        return formatResult({ message: "Child created successfully", child });
+        return formatResult({ message: "Child created successfully", _id: writtenId(child), child });
       }
 
       case "nestr_update_tension_part_child": {
@@ -5011,7 +5321,7 @@ async function _handleToolCall(
           parsed.childId,
           { title: parsed.title }
         );
-        return formatResult({ message: "Child updated successfully", child });
+        return formatResult({ message: "Child updated successfully", _id: writtenId(child), child });
       }
 
       case "nestr_delete_tension_part_child": {
@@ -5048,7 +5358,12 @@ async function _handleToolCall(
           parsed.tensionId,
           parsed.status
         );
-        return formatResult({ message: `Tension status updated to '${parsed.status}'`, status });
+        // Proposing with nobody else to ask enacts on the spot: { status, data: { status: "enacted", message } }.
+        const outcome = (status as { data?: { status?: string; message?: string } } | null)?.data;
+        const message = outcome?.status === "enacted"
+          ? `Tension enacted at once, not submitted for consent: ${outcome.message ?? "there was nobody else to ask"}`
+          : `Tension status updated to '${parsed.status}'`;
+        return formatResult({ message, status });
       }
 
       // Graph link tools
@@ -5163,6 +5478,43 @@ async function _handleToolCall(
         return formatResult({ message: nextStep, agent });
       }
 
+      case "nestr_update_agent": {
+        // MCPcat adds a `context` argument to every tool's advertised schema
+        // when tracking is on, models fill it in, and mcpcat 0.1.17 reads it
+        // for the event's userIntent without removing it before the handler
+        // runs. The schema is strict, so that one key is set aside here rather
+        // than counted as a field the caller sent; it never reaches the route.
+        const { context: _userIntent, ...input } = args;
+        const parsed = schemas.updateAgent.parse(input);
+        const { workspaceId, userId, ...rest } = parsed;
+        // Only what the caller actually sent. A key holding undefined is not a
+        // change, and the route refuses an empty body rather than answering 200
+        // to a write that changed nothing, so the same refusal is made here
+        // before a request goes out.
+        const updates = Object.fromEntries(
+          Object.entries(rest).filter(([, value]) => value !== undefined)
+        ) as Parameters<NestrClient["updateAgent"]>[2];
+        if (Object.keys(updates).length === 0) {
+          return formatError({
+            error: true,
+            code: "VALIDATION",
+            message: "Nothing to update: pass at least one of name, description, webSearch, status, roleAssignable, agentConfig.",
+            retryable: false,
+          });
+        }
+        const agent = await client.updateAgent(workspaceId, userId, updates);
+        // A success means every field sent has landed: the route refuses what it
+        // cannot write instead of dropping it, which is what used to make an
+        // assistant re-read the agent after every write.
+        let message = "Agent updated. Every field you sent has landed; the rest are unchanged.";
+        if (updates.roleAssignable === false) {
+          message = "Agent updated: it is now an assistant and can never be assigned to a role, so it always acts with the authority of whoever it is helping. Put it on the TASK beside that person (nestr_update_nest users on the task), never in a role's users.";
+        } else if (updates.roleAssignable === true) {
+          message = "Agent updated: it may be assigned to roles again. It assists while it holds none; assigning it to a role (nestr_update_nest users on the role) is what makes it act as that role instead.";
+        }
+        return formatResult({ message, agent });
+      }
+
       case "nestr_bind_connector": {
         const parsed = schemas.bindConnector.parse(args);
         const connection = await client.bindConnector(parsed.workspaceId, {
@@ -5207,7 +5559,7 @@ async function _handleToolCall(
         const connections = await client.listConnections(parsed.workspaceId, {
           includeDisabled: parsed.includeDisabled,
         });
-        return formatResult(connections);
+        return formatResult(withInstructionApprovalNotes(connections));
       }
 
       case "nestr_remove_connection": {
@@ -5397,12 +5749,17 @@ async function _handleToolCall(
         const parsed = schemas.readFile.parse(args);
         const file = await client.getNestFile(parsed.nestId, parsed.fileId);
         const contentType = file.contentType || "application/octet-stream";
+        const baseType = normalizeMimeType(contentType);
 
-        // Images: return as a viewable image content item (mirrors nestr_help).
-        // Guard the size first — an image over MAX_IMAGE_INLINE_BYTES exceeds the
+        // Images the model can actually take: return as a viewable image content
+        // item (mirrors nestr_help). Gated on modelImageMimeType, not an `image/`
+        // prefix — an unsupported type (SVG, BMP, AVIF, HEIC) is a 400 that fails
+        // the agent's whole request, not just this block.
+        // Guard the size too — an image over MAX_IMAGE_INLINE_BYTES exceeds the
         // per-image limit of the model API the agent forwards it to, so inlining
         // the base64 would just make that call fail. Degrade to a metadata note.
-        if (contentType.startsWith("image/")) {
+        const imageMime = modelImageMimeType(contentType);
+        if (imageMime) {
           // Not `??`: size can legitimately be 0 when a legacy file's metadata was
           // lost (the API descriptor falls back to 0), and there we want the real
           // byte length so the cap still applies. `> 0` recomputes on a zero/missing
@@ -5421,15 +5778,20 @@ async function _handleToolCall(
           return {
             content: [
               { type: "text", text: `File: ${file.name} (${contentType}, ${formatBytes(file.size)})` },
-              { type: "image", data: file.dataBase64, mimeType: contentType },
+              { type: "image", data: file.dataBase64, mimeType: imageMime },
             ],
           };
         }
 
-        // JSON / text / CSV: decode to UTF-8 and return as a text block.
+        // JSON / text / CSV / SVG: decode to UTF-8 and return as a text block.
+        // SVG is markup, so its source is the useful form anyway — and it is the
+        // one image type an agent asked to work with brand assets reaches for.
         if (
-          contentType.startsWith("text/") ||
-          contentType.startsWith("application/json")
+          baseType.startsWith("text/") ||
+          baseType === "application/json" ||
+          baseType.endsWith("+json") ||
+          baseType.endsWith("+xml") ||
+          baseType === "application/xml"
         ) {
           const decoded = Buffer.from(file.dataBase64, "base64").toString("utf-8");
           const { text: body, truncated } = capText(decoded);
@@ -5443,13 +5805,17 @@ async function _handleToolCall(
           };
         }
 
-        // PDFs and everything else: metadata only. The ToolResult content type
-        // supports text + image blocks, so a non-image binary can't be inlined yet.
+        // PDFs, unsupported image formats and everything else: metadata only.
+        // The ToolResult content type supports text + image blocks, so a binary
+        // the model cannot read as an image can't be inlined yet.
+        const why = isImageMimeType(contentType)
+          ? `Models only accept ${MODEL_IMAGE_MIME_TYPES.join(", ")} as images; convert it to one of those and attach that.`
+          : `Only images (returned as viewable image content) and text/JSON/XML (returned as decoded text) can be inlined.`;
         return {
           content: [
             {
               type: "text",
-              text: `File: ${file.name}\nContent type: ${contentType}\nSize: ${formatBytes(file.size)}\n\nThis file type can't be inlined yet — only images (returned as viewable image content) and text/JSON (returned as decoded text) are supported.`,
+              text: `File: ${file.name}\nContent type: ${contentType}\nSize: ${formatBytes(file.size)}\n\nThis file type can't be inlined. ${why}`,
             },
           ],
         };
@@ -5576,6 +5942,19 @@ function formatBytes(bytes: number): string {
     unit++;
   }
   return `${size.toFixed(1)} ${units[unit]}`;
+}
+
+/**
+ * The `before` cursor out of a paging link, or null when there is no next page.
+ * The base lets a relative link parse too; it is ignored for an absolute one.
+ */
+export function nextCursorOf(nextLink: string | undefined): string | null {
+  if (!nextLink) return null;
+  try {
+    return new URL(nextLink, "http://localhost").searchParams.get("before");
+  } catch {
+    return null;
+  }
 }
 
 function formatResult(data: unknown): ToolResult {

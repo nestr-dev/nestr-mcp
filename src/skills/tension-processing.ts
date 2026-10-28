@@ -174,12 +174,12 @@ nestr_create_tension(salesLeadRoleId, {
 
 ### Status Lifecycle
 
-\`draft\` → \`proposed\` → \`accepted\` or \`objected\`
+\`draft\` → \`proposed\` → \`accepted\` or \`escalated\`
 
 - **draft**: Parts can be added/modified/removed.
-- **proposed**: Circle members vote. Can retract to \`draft\`.
-- **accepted**: Changes applied to governance.
-- **objected**: Requires integration and resubmission.
+- **proposed**: Circle members vote. Can retract to \`draft\`. When nobody else would be asked, proposing enacts at once (the response says \`enacted\`): a governance proposal in a single-member circle, or a work request with no output or whose requester is its only assignee.
+- **accepted**: Resolved, and its changes applied to governance. Apart from the immediate enactment above, resolution comes from the consent votes, in a governance meeting or in the Nestr app, not from \`nestr_update_tension_status\` itself.
+- **escalated**: Someone objected. Requires integration and resubmission.
 
 Use \`nestr_get_tension_status\` to check state and votes. Use \`nestr_update_tension_status\` to advance lifecycle.
 

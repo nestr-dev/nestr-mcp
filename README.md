@@ -112,6 +112,7 @@ Ask your AI assistant things like:
 |------|-------------|
 | `nestr_add_comment` | Add a comment to a nest |
 | `nestr_get_comments` | Get comments/discussion on a nest |
+| `nestr_get_nest_activity` | What happened on a nest and beneath it, with each change as data |
 | `nestr_update_comment` | Update a comment |
 | `nestr_delete_comment` | Delete a comment |
 

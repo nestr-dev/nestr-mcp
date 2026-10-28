@@ -41,7 +41,37 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 - meetings: Creating and scheduling circle, governance and role meetings, and where a meeting nest belongs
 - scrum: Scrum/Agile workspace app — user stories, sprints, epics, burndown
 - okr: Objectives & Key Results workspace app — goals, key results, contributions
-- pricing: What Nestr costs, and the one rule about answering that from memory`,
+- pricing: What Nestr costs, and the one rule about answering that from memory
+- connector-instruction-approval: Why a role connector is held back on scheduled runs, and who can release it`,
+
+  "connector-instruction-approval": `### Connectors held back for instruction approval
+
+A role's connector (Gmail, a CRM, any account bound to one of the role's domains) can be **held back on scheduled runs** — runs nobody started, such as an autonomous agent's recurring check — until someone approves the role's latest instructions. Manual runs, which a person starts, still get it.
+
+**Why it happens.** On a run nobody started, Nestr checks everyone who wrote the instructions the agent will follow (the role's and its skills' and the task's title, description and purpose) against the connector's audience: the people it is shared with. If an edit came from someone outside that audience, or from an author Nestr cannot name, a person in the audience has to approve the new text before the connector is handed over.
+
+**The credential is fine.** Nothing is expired or revoked, and the connection's \`health\` can read as working. Changing the connector's settings, its exposure, or the tool's own configuration does not release it.
+
+**What releases it — only a person:**
+- Someone the connector is shared with, or a workspace admin, presses **Approve** on the request comment Nestr posted on the item, or on the role page.
+- Someone the connector is shared with **reconnects** it. That counts as approving (\`reconnectApproves: "when-in-audience"\`). A reconnect by anyone else does not.
+- Approving re-runs the paused run.
+
+**An agent cannot approve on a person's behalf**, and should not try. Tell the person you are helping, name who can approve, and give them the link to the request comment.
+
+**Where you will see it:**
+
+| Where | What it carries |
+|------|------|
+| \`connector_awaiting_instruction_approval\` hint on \`nestr_get_nest\` / \`nestr_explain_nest\` of the role, a skill, the domain or the task | \`label\`, \`detail\`, \`count\`, \`url\` (the request comment), \`connectors: [{ connectionId, name, nestId, nestTitle, askedAt, commentUrl, approvers, reconnectApproves }]\` |
+| \`connector_paused_by_instruction_edit\` hint on the response of \`nestr_update_nest\` | which connectors and roles your edit pauses; lifted to the top of the result with a \`tellThePerson\` sentence |
+| \`pendingInstructionApprovals\` on each row of \`nestr_list_connections\` | \`{ nestId, nestTitle, askedAt, commentUrl, canApprove, ... }\` per waiting run, plus an \`instructionApprovalNote\` |
+
+\`canApprove\` on a connection row is about the CALLER. \`approvers\` on the hint names the people who can.
+
+**After your own edit** (\`connector_paused_by_instruction_edit\`): the edit was saved. Say it to the person you are helping once, right then — which connector, which role, that manual runs still work, and that approving or a reconnect by someone it is shared with releases it. The next scheduled run posts the Approve request on the item.
+
+\`nestr_hints_rollup\` cannot count this hint in one query (it lists it under \`notComputed\`); read it per nest on the role.`,
 
   "pricing": `### Pricing
 
@@ -386,7 +416,7 @@ To discover the actual field schema (including available options), add \`fieldsM
 GET /nests/{nestId}?fieldsMetaData=true
 \`\`\`
 
-This adds a \`fieldsMetaData\` object to the response showing field definitions and options:
+This adds a \`fieldsMetaData\` object to the response holding the declared schema of every label on the nest, including fields that hold no value on this nest, with their definitions and options:
 
 \`\`\`json
 {
@@ -402,6 +432,12 @@ This adds a \`fieldsMetaData\` object to the response showing field definitions 
 \`\`\`
 
 Use this when you need to know what values are valid for a field, especially before updating.
+
+### Field Keys
+
+- **Writing**: a key is \`<labelId>.<fieldCode>\`, e.g. \`{ "project.status": "Current" }\` or \`{ "order.source": "webshop" }\`. The server adds the workspace prefix. A bare code (\`{ "source": "webshop" }\`) is refused with a 422 whose \`detail.validKeys\` lists every key the nest accepts. A field the nest defines itself, with no defining label, is written under its own id.
+- **Reading back**: fields from a workspace's own labels come back as \`{workspaceId}:<labelId>.<fieldCode>\`; fields from built-in labels come back bare, as \`<labelId>.<fieldCode>\` (\`project.status\`, \`role.characteristics\`). Strip the workspace prefix before matching.
+- **Codes**: a field code can contain hyphens (\`role.role-circle-admin\`), so read codes from \`fieldsMetaData\` rather than deriving them from a field's title.
 
 **Example**: A workspace might customize the global \`project\` label to add a \`project.department\` field, and a sub-circle might further customize it to add \`project.sprint\` - both would appear on projects within that sub-circle.
 
@@ -455,6 +491,8 @@ Each hint object has:
 | \`inline_images\` | info | all | Count of images pasted into the text (see below) |
 | \`tabs\` | info | all (single-nest reads) | The nest's own content tabs, each with the URL that opens it |
 | \`settings\` | info | all (single-nest reads) | The settings tabs THIS viewer may open, each with its URL |
+| \`connector_awaiting_instruction_approval\` | warning | role, skill, domain, task | A role connector is held back on scheduled runs until a person in its audience approves the role's latest instructions (see \`connector-instruction-approval\`) |
+| \`connector_paused_by_instruction_edit\` | warning | write response (update of a role, skill or task) | Your edit to title/description/purpose will hold a role connector back on scheduled runs; tell the person you are helping, once |
 
 Example response with hints:
 \`\`\`json
@@ -642,7 +680,7 @@ To discover the actual field schema (including available options), add \`fieldsM
 GET /nests/{nestId}?fieldsMetaData=true
 \`\`\`
 
-This adds a \`fieldsMetaData\` object to the response showing field definitions and options:
+This adds a \`fieldsMetaData\` object to the response holding the declared schema of every label on the nest, including fields that hold no value on this nest, with their definitions and options:
 
 \`\`\`json
 {
