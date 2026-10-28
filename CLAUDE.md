@@ -298,6 +298,11 @@ The server exposes these tools to AI assistants:
 | `nestr_get_projects` | `GET /workspaces/{id}/projects` |
 | `nestr_get_insights` | `GET /workspaces/{id}/insights` |
 | `nestr_get_insight_history` | `GET /workspaces/{id}/insights/{mid}/history` |
+| `nestr_list_series` | `GET /nests/{id}/series` |
+| `nestr_get_series_points` | `GET /nests/{id}/series/{key}[/{seriesId}]/points` |
+| `nestr_add_series_points` | `POST /nests/{id}/series/{key}[/{seriesId}]/points` |
+| `nestr_update_series_point` | `PATCH /nests/{id}/series/{key}[/{seriesId}]/points/{pointId}` |
+| `nestr_delete_series_point` | `DELETE /nests/{id}/series/{key}[/{seriesId}]/points/{pointId}` |
 | `nestr_get_workspace_apps` | `GET /workspaces/{id}/apps` |
 | `nestr_list_inbox` | `GET /users/me/inbox` (OAuth only) |
 | `nestr_create_inbox_item` | `POST /users/me/inbox` (OAuth only) |

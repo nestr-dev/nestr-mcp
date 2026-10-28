@@ -345,6 +345,15 @@ export interface NestFileText {
   nextOffset: number | null;
 }
 
+/** A single-use URL that takes one file's raw bytes, no API key needed. */
+export interface NestFileUploadUrl {
+  url: string;
+  method: string;
+  expiresAt: string;
+  maxBytes: number;
+  curl: string;
+}
+
 /** A nest's file attachment with its base64-encoded contents. */
 export interface NestFile {
   id: string;
@@ -1422,6 +1431,21 @@ export class NestrClient {
   }
 
   /**
+   * Get a single-use URL that accepts one file's raw bytes. Wraps
+   * POST /nests/:id/files/upload-url, which returns { status, data }.
+   */
+  async createNestFileUploadUrl(
+    nestId: string,
+    file: { name: string; contentType: string }
+  ): Promise<NestFileUploadUrl> {
+    const response = await this.fetch<{ status: string; data: NestFileUploadUrl }>(
+      `/nests/${nestId}/files/upload-url`,
+      { method: "POST", body: JSON.stringify(file) }
+    );
+    return response.data;
+  }
+
+  /**
    * Remove a file attachment from a nest (a comment id works too). Wraps
    * DELETE /nests/:id/files/:fileId.
    */
@@ -1790,6 +1814,67 @@ export class NestrClient {
     return this.fetch<unknown[]>(
       `/workspaces/${workspaceId}/insights/${metricId}/history${query ? `?${query}` : ""}`
     );
+  }
+
+  // ============ DATASERIES ============
+
+  private seriesPointsPath(nestId: string, series: string, seriesId?: string): string {
+    const key = [series, seriesId].filter(Boolean).map((part) => encodeURIComponent(part as string)).join("/");
+    return `/nests/${nestId}/series/${key}/points`;
+  }
+
+  /** GET /nests/:id/series. Kept enveloped: each series carries its key, current point and endpoints. */
+  async listSeries(nestId: string): Promise<unknown> {
+    return this.fetch<unknown>(`/nests/${nestId}/series`);
+  }
+
+  /** Kept enveloped, so meta.has_more survives. */
+  async getSeriesPoints(
+    nestId: string,
+    series: string,
+    options?: { seriesId?: string; from?: string | number; to?: string | number; limit?: number; order?: "asc" | "desc" }
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (options?.from !== undefined) params.set("from", String(options.from));
+    if (options?.to !== undefined) params.set("to", String(options.to));
+    if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.order) params.set("order", options.order);
+    const query = params.toString();
+    return this.fetch<unknown>(
+      `${this.seriesPointsPath(nestId, series, options?.seriesId)}${query ? `?${query}` : ""}`
+    );
+  }
+
+  /** Always sent as an array, so the response is one result per point. */
+  async addSeriesPoints(
+    nestId: string,
+    series: string,
+    points: Array<{ date: string | number; value: number }>,
+    seriesId?: string
+  ): Promise<unknown> {
+    return this.fetch<unknown>(this.seriesPointsPath(nestId, series, seriesId), {
+      method: "POST",
+      body: JSON.stringify(points),
+    });
+  }
+
+  async updateSeriesPoint(
+    nestId: string,
+    series: string,
+    pointId: string,
+    change: { date?: string | number; value?: number },
+    seriesId?: string
+  ): Promise<unknown> {
+    return this.fetch<unknown>(`${this.seriesPointsPath(nestId, series, seriesId)}/${pointId}`, {
+      method: "PATCH",
+      body: JSON.stringify(change),
+    });
+  }
+
+  async deleteSeriesPoint(nestId: string, series: string, pointId: string, seriesId?: string): Promise<unknown> {
+    return this.fetch<unknown>(`${this.seriesPointsPath(nestId, series, seriesId)}/${pointId}`, {
+      method: "DELETE",
+    });
   }
 
   // ============ APPS ============

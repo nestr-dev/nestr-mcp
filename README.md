@@ -171,6 +171,11 @@ Ask your AI assistant things like:
 |------|-------------|
 | `nestr_get_insights` | Get workspace metrics |
 | `nestr_get_insight_history` | Get historical trend data for a metric |
+| `nestr_list_series` | List a nest's dataseries (metric history, goal progress, burndown) |
+| `nestr_get_series_points` | Read a dataseries' dated points |
+| `nestr_add_series_points` | Load up to 500 dated points, e.g. a backfill |
+| `nestr_update_series_point` | Change a point's date or value |
+| `nestr_delete_series_point` | Remove a point |
 | `nestr_get_workspace_apps` | List enabled apps/features |
 
 ### Personal (OAuth only)

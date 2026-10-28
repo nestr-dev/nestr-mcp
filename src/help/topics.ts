@@ -1499,6 +1499,10 @@ When a user asks about trends or patterns (e.g., "Are we getting better at gover
 3. **Dive into history**: Use \`nestr_get_insight_history\` with \`from\`/\`to\` dates to get detailed historical data points for a specific metric — this reveals the full trend over time.
 4. **Single metric detail**: Use \`nestr_get_insight\` to get the current state of one specific metric.
 
+### A Metric Nest's Own History
+
+Insights are Nestr usage metrics. A metric nest, goal or sprint keeps its own history in a dataseries field, which these tools do not return. Use \`nestr_list_series\` on the nest to find its series, \`nestr_get_series_points\` to read the dated points and \`nestr_add_series_points\` to load past values. Setting the value with \`nestr_update_nest\` records only one point, now.
+
 ### Plan Restrictions
 
 - **All plans**: Workspace-level insights (aggregated across the whole organization)
