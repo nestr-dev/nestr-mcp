@@ -1426,7 +1426,7 @@ export const schemas = {
 
   getNest: z.object({
     nestId: z.string().describe("Nest ID. Supports comma-separated IDs to fetch multiple nests in one call (e.g., 'id1,id2,id3') — returns an array instead of a single object. Keep total URL under 2000 chars to avoid HTTP limits."),
-    fieldsMetaData: z.boolean().optional().describe("Set to true to include the declared field schema of every label on the nest (type, title, code, options, conditions), including fields that hold no value on this nest. nestr_get_label reads the same declarations off the label itself."),
+    fieldsMetaData: z.boolean().optional().describe("Set to true to include the declared field schema of every label on the nest (type, title, code, options, conditions), including fields that hold no value on this nest. nestr_get_label reads the same declarations off the label itself. Entries carrying proxySource name another nest the field lives on: writes go there and are authorised there."),
     hints: hintLevelSchema.describe("Contextual hints: 'full' (default on a single read), 'summary', or false. 'summary' keeps type, severity, count, url and the sibling query, and drops the teaching prose and endpoints. Hints surface signals like unassigned roles, stale projects or unread comments."),
     ...hintFilterSchemas,
     provenance: z.boolean().optional().describe("Single-nest only. Include field/property provenance: which label (and circle context) defines each field and property."),
@@ -2267,7 +2267,7 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest ID, or comma-separated IDs for a batch (e.g. 'id1,id2'). Keep the URL under 2000 chars." },
-        fieldsMetaData: { type: "boolean", description: "Set to true to include the declared field schema of every label on the nest (type, title, code, options, conditions), including fields that hold no value on this nest. nestr_get_label reads the same declarations off the label itself." },
+        fieldsMetaData: { type: "boolean", description: "Set to true to include the declared field schema of every label on the nest (type, title, code, options, conditions), including fields that hold no value on this nest. nestr_get_label reads the same declarations off the label itself. Entries carrying proxySource name another nest the field lives on: writes go there and are authorised there." },
         hints: { type: ["string", "boolean"], enum: ["summary", "full", true, false], description: `${HINTS_DESC} Defaults to 'full' on a single read, which is what you want when you asked about one nest.` },
         hintTypes: { type: "array", items: { type: "string" }, description: "Keep only these hint types." },
         minSeverity: { type: "string", enum: ["info", "suggestion", "warning", "alert"], description: "Drop hints below this severity." },

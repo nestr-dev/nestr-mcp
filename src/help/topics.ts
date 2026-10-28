@@ -433,6 +433,31 @@ This adds a \`fieldsMetaData\` object to the response holding the declared schem
 
 Use this when you need to know what values are valid for a field, especially before updating.
 
+**Borrowed fields.** A field's definition does not always live on the nest you fetched. A label can declare
+that its nests borrow a section of fields from an ancestor — a policy borrows its circle's behaviour settings,
+for example — and those fields appear in \`fields\` alongside the nest's own. When one does, its
+\`fieldsMetaData\` entry names where it really lives:
+
+\`\`\`json
+{
+  "fields": { "circle.autoCloseGovernanceDays": "3days" },
+  "fieldsMetaData": {
+    "circle.autoCloseGovernanceDays": {
+      "type": "select",
+      "options": ["never", "1day", "2days", "3days"],
+      "proxySource": "aBcD1234eFgH5678i",
+      "proxySourceTitle": "Marketing circle"
+    }
+  }
+}
+\`\`\`
+
+- The value you read is that nest's current value, not a copy: change it there and this nest reflects it.
+- You may write it through either nest. A PUT here is applied to \`proxySource\`, and authorised against
+  \`proxySource\` rather than this nest, so it can return 403 naming the nest the field lives on even when you
+  may edit everything else here.
+- A field without \`proxySource\` belongs to the nest you fetched, as usual.
+
 ### Field Keys
 
 - **Writing**: a key is \`<labelId>.<fieldCode>\`, e.g. \`{ "project.status": "Current" }\` or \`{ "order.source": "webshop" }\`. The server adds the workspace prefix. A bare code (\`{ "source": "webshop" }\`) is refused with a 422 whose \`detail.validKeys\` lists every key the nest accepts. A field the nest defines itself, with no defining label, is written under its own id.
@@ -696,6 +721,31 @@ This adds a \`fieldsMetaData\` object to the response holding the declared schem
 \`\`\`
 
 Use this when you need to know what values are valid for a field, especially before updating.
+
+**Borrowed fields.** A field's definition does not always live on the nest you fetched. A label can declare
+that its nests borrow a section of fields from an ancestor — a policy borrows its circle's behaviour settings,
+for example — and those fields appear in \`fields\` alongside the nest's own. When one does, its
+\`fieldsMetaData\` entry names where it really lives:
+
+\`\`\`json
+{
+  "fields": { "circle.autoCloseGovernanceDays": "3days" },
+  "fieldsMetaData": {
+    "circle.autoCloseGovernanceDays": {
+      "type": "select",
+      "options": ["never", "1day", "2days", "3days"],
+      "proxySource": "aBcD1234eFgH5678i",
+      "proxySourceTitle": "Marketing circle"
+    }
+  }
+}
+\`\`\`
+
+- The value you read is that nest's current value, not a copy: change it there and this nest reflects it.
+- You may write it through either nest. A PUT here is applied to \`proxySource\`, and authorised against
+  \`proxySource\` rather than this nest, so it can return 403 naming the nest the field lives on even when you
+  may edit everything else here.
+- A field without \`proxySource\` belongs to the nest you fetched, as usual.
 
 **Example**: A workspace might customize the global \`project\` label to add a \`project.department\` field, and a sub-circle might further customize it to add \`project.sprint\` - both would appear on projects within that sub-circle.`,
 
