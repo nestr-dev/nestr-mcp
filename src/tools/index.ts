@@ -4066,7 +4066,6 @@ export interface ToolCallContext {
   allowLocalFiles?: boolean;
 }
 
-// The stdio build advertises filePath on nestr_upload_file; the hosted server never does.
 // Well above the server's own cap (default 10MB), which still applies; this only keeps a
 // huge file from being read into memory and base64-encoded before the API can refuse it.
 export const LOCAL_FILE_MAX_BYTES = 100 * 1024 * 1024;
@@ -4082,6 +4081,7 @@ async function localFileRefusal(filePath: string): Promise<string | null> {
 
 type ToolDefinition = { name: string; description: string; inputSchema: { properties?: Record<string, unknown> } };
 
+// The stdio build advertises filePath on nestr_upload_file; the hosted server never does.
 export function withLocalFileTools<T extends ToolDefinition>(definitions: readonly T[]): T[] {
   return definitions.map((def): T => {
     if (def.name !== "nestr_upload_file") return def;
