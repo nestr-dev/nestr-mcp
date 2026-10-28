@@ -5,7 +5,7 @@
 
 import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { delimiter, isAbsolute, parse, relative, resolve, sep } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { NestrApiError, tokenFingerprint, unwrapList, type NestrClient, type Nest, type ToolError, type ErrorCode, type ListEnvelope, type MaybeListEnvelope, type ConnectionListing, type PendingInstructionApproval } from "../api/client.js";
 import { appResources } from "../apps/index.js";
@@ -4212,6 +4212,15 @@ export function localUploadRoots(env: NodeJS.ProcessEnv = process.env, cwd: stri
 // huge file from being read into memory and base64-encoded before the API can refuse it.
 export const LOCAL_FILE_MAX_BYTES = 100 * 1024 * 1024;
 
+// A missing path resolved through its deepest existing folder, so a symlinked folder still counts.
+async function realpathOfMissing(filePath: string): Promise<string> {
+  const absolute = resolve(filePath);
+  const parent = dirname(absolute);
+  if (parent === absolute) return absolute;
+  const realParent = await realpath(parent).catch(() => realpathOfMissing(parent));
+  return join(realParent, basename(absolute));
+}
+
 const isInside = (root: string, target: string): boolean => {
   const rel = relative(root, target);
   return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
@@ -4223,7 +4232,7 @@ async function resolveLocalFile(filePath: string, roots: string[]): Promise<{ pa
   const allowed = roots.length ? roots.join(", ") : "none";
   // A missing path is judged as written, so outside the folders it is refused like an existing one.
   const real = await realpath(filePath).catch(() => null);
-  const target = real ?? resolve(filePath);
+  const target = real ?? await realpathOfMissing(filePath);
   const realRoots = (await Promise.all(roots.map((root) => realpath(root).catch(() => null))))
     .filter((root): root is string => root !== null);
   const root = realRoots.find((r) => isInside(r, target));

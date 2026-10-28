@@ -486,6 +486,20 @@ describe("file attachment tools", () => {
       expect(missing.replace(".npmrc", ".env")).toBe(existing);
     });
 
+    it("refuses a missing file reached through a symlinked folder like an existing one", async () => {
+      const elsewhere = mkdtempSync(join(tmpdir(), "nestr-mcp-elsewhere-"));
+      try {
+        writeFileSync(join(elsewhere, "credentials"), "key");
+        symlinkSync(elsewhere, join(dir, "out"));
+        const existing = await refusalOf(join(dir, "out", "credentials"));
+        const missing = await refusalOf(join(dir, "out", "nope", "deeper"));
+        expect(existing).toContain("outside the folders");
+        expect(missing.replace(join("nope", "deeper"), "credentials")).toBe(existing);
+      } finally {
+        rmSync(elsewhere, { recursive: true, force: true });
+      }
+    });
+
     it("says a missing file inside an allowed folder does not exist", async () => {
       expect(await refusalOf(join(dir, "nope.png"))).toContain("does not exist");
     });
