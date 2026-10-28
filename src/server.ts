@@ -12,7 +12,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { NestrClient, createClientFromEnv, unwrapList } from "./api/client.js";
 import { VERSION } from "./version.js";
-import { toolDefinitions, handleToolCall, PUBLIC_TOOL_NAMES, READONLY_TOOL_NAMES } from "./tools/index.js";
+import { toolDefinitions, handleToolCall, PUBLIC_TOOL_NAMES, READONLY_TOOL_NAMES, withLocalFileTools } from "./tools/index.js";
 import { getCompletableListHtml, appResources } from "./apps/index.js";
 // Skills instructions are now served on-demand via nestr_help tool (see src/help/topics.ts)
 import * as mcpcat from "mcpcat";
@@ -46,6 +46,8 @@ export interface NestrMcpServerConfig {
    * false.
    */
   isReadOnly?: boolean;
+  /** Stdio only: nestr_upload_file may read filePath from the local disk. Never set on the hosted server. */
+  allowLocalFiles?: boolean;
 }
 
 // Server instructions provide context to AI assistants about what Nestr is and how to use it
@@ -148,7 +150,7 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
       ? toolDefinitions.filter((t) => PUBLIC_TOOL_NAMES.has(t.name))
       : config.isReadOnly
         ? toolDefinitions.filter((t) => READONLY_TOOL_NAMES.has(t.name))
-        : toolDefinitions;
+        : config.allowLocalFiles ? withLocalFileTools(toolDefinitions) : toolDefinitions;
     return { tools };
   });
 
@@ -162,6 +164,7 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
         getDiagnose: config.getDiagnose,
         isPublic: config.isPublic,
         isReadOnly: config.isReadOnly,
+        allowLocalFiles: config.allowLocalFiles,
       });
 
       // Track successful tool call

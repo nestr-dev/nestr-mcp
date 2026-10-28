@@ -345,6 +345,15 @@ export interface NestFileText {
   nextOffset: number | null;
 }
 
+/** A single-use URL that takes one file's raw bytes, no API key needed. */
+export interface NestFileUploadUrl {
+  url: string;
+  method: string;
+  expiresAt: string;
+  maxBytes: number;
+  curl: string;
+}
+
 /** A nest's file attachment with its base64-encoded contents. */
 export interface NestFile {
   id: string;
@@ -1416,6 +1425,21 @@ export class NestrClient {
   ): Promise<NestFileMeta> {
     const response = await this.fetch<{ status: string; data: NestFileMeta }>(
       `/nests/${nestId}/files`,
+      { method: "POST", body: JSON.stringify(file) }
+    );
+    return response.data;
+  }
+
+  /**
+   * Get a single-use URL that accepts one file's raw bytes. Wraps
+   * POST /nests/:id/files/upload-url, which returns { status, data }.
+   */
+  async createNestFileUploadUrl(
+    nestId: string,
+    file: { name: string; contentType: string }
+  ): Promise<NestFileUploadUrl> {
+    const response = await this.fetch<{ status: string; data: NestFileUploadUrl }>(
+      `/nests/${nestId}/files/upload-url`,
       { method: "POST", body: JSON.stringify(file) }
     );
     return response.data;
