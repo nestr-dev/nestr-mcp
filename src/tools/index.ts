@@ -1321,7 +1321,7 @@ const LABEL_WRITE_SCOPE_NOTE =
 // The response shape of a write tool, stated in its description. The REST response
 // stays under its per-tool key, unchanged, so a client that peels by key keeps
 // working; `_id` is the one key every write result shares.
-const writeReturns =(key: string, what: string, extra = "") =>
+const writeReturns = (key: string, what: string, extra = "") =>
   ` Returns { message, _id, ${extra}${key} }: _id is the ${what}'s id, and ${key} is the API `
   + `response, { status, data: <the ${what}> }.`;
 
