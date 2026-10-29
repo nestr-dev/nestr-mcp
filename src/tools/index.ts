@@ -1294,9 +1294,6 @@ const HINTS_DESC =
   + "`query` that finds every other nest with the same problem) and drops the fixed teaching prose "
   + "and endpoint list. 'full' is the whole payload. false for none.";
 
-// The response shape of a write tool, stated in its description. The REST response
-// stays under its per-tool key, unchanged, so a client that peels by key keeps
-// working; `_id` is the one key every write result shares.
 // A label id becomes a path segment of /workspaces/{id}/labels/{labelId}, so one that
 // could leave that route (a slash, a dot segment, a query, an encoded character) is
 // refused before a request is built. Label ids are word characters, hyphens and colons.
@@ -1321,7 +1318,10 @@ const LABEL_ADMIN_NOTE =
 const LABEL_WRITE_SCOPE_NOTE =
   " Only the workspace's own labels: system labels (project, role, ...) and tag-along customisations of them are refused with a 422, and another workspace's label is not found.";
 
-const writeReturns = (key: string, what: string, extra = "") =>
+// The response shape of a write tool, stated in its description. The REST response
+// stays under its per-tool key, unchanged, so a client that peels by key keeps
+// working; `_id` is the one key every write result shares.
+const writeReturns =(key: string, what: string, extra = "") =>
   ` Returns { message, _id, ${extra}${key} }: _id is the ${what}'s id, and ${key} is the API `
   + `response, { status, data: <the ${what}> }.`;
 
