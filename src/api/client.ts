@@ -1771,6 +1771,52 @@ export class NestrClient {
     return this.fetch<Label>(`/workspaces/${workspaceId}/labels/${labelId}`);
   }
 
+  /**
+   * Create a workspace label. Workspace admin only on the API side.
+   */
+  async createWorkspaceLabel(
+    workspaceId: string,
+    data: {
+      _id?: string;
+      title: string;
+      group?: string;
+      properties?: Record<string, unknown>;
+      fields?: Record<string, unknown>[];
+    }
+  ): Promise<Label> {
+    return this.fetch<Label>(`/workspaces/${workspaceId}/labels`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  /**
+   * Edit a workspace-owned label. Send only what changes. Workspace admin only.
+   */
+  async updateWorkspaceLabel(
+    workspaceId: string,
+    labelId: string,
+    data: Record<string, unknown>
+  ): Promise<Label> {
+    return this.fetch<Label>(`/workspaces/${workspaceId}/labels/${labelId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  /**
+   * Delete a workspace-owned label. Workspace admin only.
+   */
+  async deleteWorkspaceLabel(
+    workspaceId: string,
+    labelId: string
+  ): Promise<{ status: string; data?: { _id: string; deleted: boolean } }> {
+    return this.fetch<{ status: string; data?: { _id: string; deleted: boolean } }>(
+      `/workspaces/${workspaceId}/labels/${labelId}`,
+      { method: "DELETE" }
+    );
+  }
+
   // ============ INSIGHTS ============
 
   async getInsights(
