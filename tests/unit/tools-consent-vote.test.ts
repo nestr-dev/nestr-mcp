@@ -42,16 +42,16 @@ describe('nestr_vote_on_tension', () => {
     vi.unstubAllGlobals();
   });
 
-  // The REST status route is the only write path for a decision, and it spells
-  // the two answers `accepted` and `escalated`. The tool speaks the domain's
-  // words and translates, so a model never has to guess that objecting is
-  // spelled "escalated".
-  it('consent PATCHes the status route with accepted', async () => {
+  // The verbs match the CLI's `nestr tensions vote <nest> <tension>
+  // accept|escalate`, so one vocabulary covers both surfaces. The REST status
+  // route is the only write path for a decision and spells the same two answers
+  // in the past tense, which is the only difference this mapping covers.
+  it('accept PATCHes the status route with accepted', async () => {
     mockFetch.mockResolvedValue(mockResponse(200, voteBody('accepted')));
     const result = await handleToolCall(client, 'nestr_vote_on_tension', {
       nestId: 'circle-1',
       tensionId: 'ten-1',
-      decision: 'consent',
+      decision: 'accept',
     });
     expect(result.isError).toBeFalsy();
 
@@ -62,12 +62,12 @@ describe('nestr_vote_on_tension', () => {
     expect(JSON.parse(opts.body)).toEqual({ status: 'accepted' });
   });
 
-  it('object PATCHes the status route with escalated', async () => {
+  it('escalate PATCHes the status route with escalated', async () => {
     mockFetch.mockResolvedValue(mockResponse(200, voteBody('escalated')));
     const result = await handleToolCall(client, 'nestr_vote_on_tension', {
       nestId: 'circle-1',
       tensionId: 'ten-1',
-      decision: 'object',
+      decision: 'escalate',
     });
     expect(result.isError).toBeFalsy();
     expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ status: 'escalated' });
@@ -78,21 +78,21 @@ describe('nestr_vote_on_tension', () => {
     const result = await handleToolCall(client, 'nestr_vote_on_tension', {
       nestId: 'circle-1',
       tensionId: 'ten-1',
-      decision: 'consent',
+      decision: 'accept',
     });
     const parsed = parseResult(result.content[0].text);
     expect(parsed.message).toMatch(/consent/i);
-    expect(parsed.decision).toBe('consent');
+    expect(parsed.decision).toBe('accept');
   });
 
-  // An objection ends the round and has to carry its reason, so the tool says so
-  // rather than leaving the run to discover it from the proposer later.
-  it('tells the caller an objection needs its reason stated', async () => {
+  // An escalation ends the round and has to carry its reason, so the tool says
+  // so rather than leaving the run to discover it from the proposer later.
+  it('tells the caller an escalation needs its reason stated', async () => {
     mockFetch.mockResolvedValue(mockResponse(200, voteBody('escalated')));
     const result = await handleToolCall(client, 'nestr_vote_on_tension', {
       nestId: 'circle-1',
       tensionId: 'ten-1',
-      decision: 'object',
+      decision: 'escalate',
     });
     const parsed = parseResult(result.content[0].text);
     expect(String(parsed.message)).toMatch(/reason|why|comment/i);
@@ -111,6 +111,15 @@ describe('nestr_vote_on_tension', () => {
   // The decision cannot be recorded for anyone but the caller: there is no
   // parameter for a user, deliberately, because the server derives the consenter
   // from the bearer token and an `onBehalfOf` here would invite one.
+  // The verbs are shared with the CLI on purpose. Pinned so a drift back to a
+  // tool-only vocabulary has to be a deliberate edit to this expectation.
+  it('advertises the same accept/escalate verbs the CLI uses', () => {
+    const def = toolDefinitions.find((t) => t.name === 'nestr_vote_on_tension');
+    const props = def!.inputSchema.properties as Record<string, { enum?: unknown[] }>;
+    expect(props.decision.enum).toEqual(['accept', 'escalate']);
+    expect(schemas.voteOnTension.shape.decision.options).toEqual(['accept', 'escalate']);
+  });
+
   it('takes no user parameter, so it can only ever answer as the caller', () => {
     const def = toolDefinitions.find((t) => t.name === 'nestr_vote_on_tension');
     expect(def).toBeDefined();
@@ -149,7 +158,7 @@ describe('nestr_vote_on_tension', () => {
     const result = await handleToolCall(client, 'nestr_vote_on_tension', {
       nestId: 'circle-1',
       tensionId: 'ten-1',
-      decision: 'consent',
+      decision: 'accept',
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toMatch(/not a voter/i);

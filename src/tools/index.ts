@@ -2034,7 +2034,7 @@ export const schemas = {
   voteOnTension: z.object({
     nestId: z.string().describe("ID of the circle or role the tension belongs to"),
     tensionId: z.string().describe("Tension ID"),
-    decision: z.enum(["consent", "object"]).describe("'consent' if nothing in the proposal stops your role doing its work, 'object' if something in it does"),
+    decision: z.enum(["accept", "escalate"]).describe("'accept' if nothing in the proposal stops your role doing its work, 'escalate' to object because something in it does"),
   }),
 
   // Graph link tools
@@ -3772,13 +3772,13 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_vote_on_tension",
-    description: "Record YOUR consent decision on a tension that is open for consent. This is the answer, not the asking: nestr_update_tension_status submits a tension on behalf of whoever raised it, and this answers one as a person or role who was asked. Check nestr_list_tensions_awaiting_consent for what is waiting on you, and read the tension and its parts (nestr_get_tension, nestr_get_tension_parts, nestr_get_tension_changes) before deciding. 'consent' means nothing in the proposal stops your role doing its work; it is not agreement that the proposal is the best idea. 'object' means something in it does, and an objection ends the consent round, so state the reason in a comment (nestr_add_comment) before or with it. One decision each, and it cannot be taken back. Auth: the consenter is derived from the bearer token, so this always answers as the calling user and there is no way to answer for anybody else. Use a token that identifies one person; a shared workspace API key identifies no one, so a decision recorded with it is not yours.",
+    description: "Record YOUR consent decision on a tension that is open for consent. This is the answer, not the asking: nestr_update_tension_status submits a tension on behalf of whoever raised it, and this answers one as a person or role who was asked. Check nestr_list_tensions_awaiting_consent for what is waiting on you, and read the tension and its parts (nestr_get_tension, nestr_get_tension_parts, nestr_get_tension_changes) before deciding. 'accept' means nothing in the proposal stops your role doing its work; it is not agreement that the proposal is the best idea. 'escalate' is how you object: it means something in the proposal does stop your role, and it ends the consent round, so state the reason in a comment (nestr_add_comment) before or with it. Same verbs as the `nestr tensions vote` CLI command. One decision each, and it cannot be taken back. Auth: the consenter is derived from the bearer token, so this always answers as the calling user and there is no way to answer for anybody else. Use a token that identifies one person; a shared workspace API key identifies no one, so a decision recorded with it is not yours.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
         tensionId: { type: "string", description: "Tension ID" },
-        decision: { type: "string", enum: ["consent", "object"], description: "'consent' if nothing in the proposal stops your role doing its work, 'object' if something in it does" },
+        decision: { type: "string", enum: ["accept", "escalate"], description: "'accept' if nothing in the proposal stops your role doing its work, 'escalate' to object because something in it does" },
       },
       required: ["nestId", "tensionId", "decision"],
     },
@@ -5841,20 +5841,22 @@ async function _handleToolCall(
 
       case "nestr_vote_on_tension": {
         const parsed = schemas.voteOnTension.parse(args);
-        // The route spells the two answers `accepted` and `escalated`. The tool
-        // speaks the domain's words so a model never has to guess that objecting
-        // is spelled "escalated".
+        // The verbs match the CLI's `nestr tensions vote <nest> <tension>
+        // accept|escalate`, so one vocabulary covers both surfaces. The REST
+        // route spells the same two answers in the past tense, which is the only
+        // difference and the whole of this mapping.
         const status = await client.recordConsentDecision(
           parsed.nestId,
           parsed.tensionId,
-          parsed.decision === "consent" ? "accepted" : "escalated",
+          parsed.decision === "accept" ? "accepted" : "escalated",
         );
         // An objection ends the round, so the reason is the part the circle needs
         // and the part a run is most likely to leave unsaid.
-        const message = parsed.decision === "consent"
+        const message = parsed.decision === "accept"
           ? "Consent recorded. It cannot be taken back."
-          : "Objection recorded, and the consent round has ended. State the reason in a comment "
-            + "on the tension if you have not already, or the circle cannot integrate it.";
+          : "Escalated, so your objection is recorded and the consent round has ended. State the "
+            + "reason in a comment on the tension if you have not already, or the circle cannot "
+            + "integrate it.";
         return formatResult({ message, decision: parsed.decision, status });
       }
 
