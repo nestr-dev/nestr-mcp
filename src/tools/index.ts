@@ -1231,6 +1231,22 @@ const FIELD_KEYS_DESC =
   + "can contain hyphens; read them from fieldsMetaData rather than deriving them from a title. See "
   + "nestr_help('nest-model') for how keys read back.";
 
+// Links the server writes as a by-product of another write; the API refuses them on the graph routes.
+const SERVER_OWNED_LINKS_DESC =
+  "Links the server writes itself are refused with 422, and the message names what to set instead: a link field "
+  + "on nestId, such as a tension's meeting or a story's sprint, epic or milestone (set fields: { 'tension.meeting': "
+  + "<meetingId> } or { 'userstory.sprint': <sprintId> } with nestr_update_nest, null to clear), 'proxyAssign' "
+  + "(set proxyAssign with nestr_update_nest), 'recurrence' (nestr_set_recurrence) and 'templateCopy' "
+  + "(data.copiedFrom). Reading those links with nestr_get_graph_links still works.";
+
+const PROXY_ASSIGN_DESC =
+  "Proxy-assign the nest to a role or circle, as the assign dialog in Nestr does: pass the role's or circle's id. "
+  + "The nest keeps its parent, appears under the role as a mirror, and its users become the role's first filler "
+  + "(nobody, for a circle). null, or the id of the role or circle the nest already sits in, clears it. Only a nest "
+  + "inside a role or circle can be proxy-assigned: one directly under a role or circle is moved instead, and the "
+  + "response warns. users sent in the same call win over the role's filler. Read it back as `proxyAssign` on the "
+  + "nest. Never write a 'proxyAssign' graph link: nestr_add_graph_link refuses it.";
+
 // The editable fields of PATCH /nests/:id, shared by nestr_update_nest and
 // nestr_update_occurrence so the two cannot drift apart.
 const nestUpdateFieldSchemas = {
@@ -1246,6 +1262,7 @@ const nestUpdateFieldSchemas = {
   start: z.string().nullable().optional().describe(START_DESC),
   allDay: z.boolean().nullable().optional().describe(ALL_DAY_DESC),
   completed: z.boolean().optional().describe("Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead."),
+  proxyAssign: z.string().nullable().optional().describe(PROXY_ASSIGN_DESC),
 };
 
 const NEST_UPDATE_FIELD_PROPERTIES = {
@@ -1286,6 +1303,10 @@ const NEST_UPDATE_FIELD_PROPERTIES = {
   completed: {
     type: "boolean",
     description: "Mark task as completed (root-level field, not in fields). Note: Projects use fields['project.status'] = 'Done' instead.",
+  },
+  proxyAssign: {
+    type: ["string", "null"],
+    description: PROXY_ASSIGN_DESC,
   },
 };
 
@@ -1482,6 +1503,7 @@ export const schemas = {
     accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes an accountability child nest."),
     domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes a domain child nest."),
     workspaceId: z.string().optional().describe("Workspace ID. Required when creating roles/circles with accountabilities or domains (used to route to the self-organization API)."),
+    proxyAssign: z.string().optional().describe(PROXY_ASSIGN_DESC),
   }),
 
   updateNest: z.object({
@@ -2400,6 +2422,7 @@ export const toolDefinitions = [
           type: "string",
           description: "Workspace ID. Required when creating roles/circles with accountabilities or domains.",
         },
+        proxyAssign: { type: "string", description: PROXY_ASSIGN_DESC },
       },
       required: ["parentId", "title"],
     },
@@ -3652,12 +3675,12 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_graph_link",
-    description: "Create a directed graph link from nestId to targetId. It reads as outgoing on nestId and incoming on targetId. E.g., link a tension to a meeting as an agenda item. For a Timeline dependency use relation 'depends_on' with nestId the item that waits and targetId the one it waits for: the same link dragging between two bars makes. A depends_on that would create a cycle, or tie a parent to its own child, is refused.",
+    description: "Create a directed graph link from nestId to targetId. It reads as outgoing on nestId and incoming on targetId. " + SERVER_OWNED_LINKS_DESC + " For a Timeline dependency use relation 'depends_on' with nestId the item that waits and targetId the one it waits for: the same link dragging between two bars makes. A depends_on that would create a cycle, or tie a parent to its own child, is refused.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Source nest ID" },
-        relation: { type: "string", description: "Relation name (e.g., 'meeting' to link a tension to a meeting)" },
+        relation: { type: "string", description: "Relation name (e.g., 'depends_on'). Not one the server writes itself; see the description." },
         targetId: { type: "string", description: "Target nest ID to link to" },
       },
       required: ["nestId", "relation", "targetId"],
@@ -3666,12 +3689,12 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_remove_graph_link",
-    description: "Remove the graph link from nestId to targetId. A link running the other way is left alone, and the error names the call that removes it. For example, remove a tension from a meeting's agenda by removing the 'meeting' relation.",
+    description: "Remove the graph link from nestId to targetId. A link running the other way is left alone, and the error names the call that removes it. The links nestr_add_graph_link refuses are refused here too, for the same reason: clear the field or property that made them instead (e.g. fields: { 'tension.meeting': null } takes a tension off a meeting's agenda).",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Source nest ID" },
-        relation: { type: "string", description: "Relation name (e.g., 'meeting')" },
+        relation: { type: "string", description: "Relation name (e.g., 'depends_on')" },
         targetId: { type: "string", description: "Target nest ID to unlink" },
       },
       required: ["nestId", "relation", "targetId"],
@@ -4679,6 +4702,7 @@ async function _handleToolCall(
           due: parsed.due,
           start: parsed.start,
           allDay: parsed.allDay,
+          proxyAssign: parsed.proxyAssign,
         });
         return formatResult({ message: "Nest created successfully", _id: writtenId(nest), nest });
       }
@@ -4728,6 +4752,7 @@ async function _handleToolCall(
           start: parsed.start,
           allDay: parsed.allDay,
           completed: parsed.completed,
+          proxyAssign: parsed.proxyAssign,
         });
         return formatResult(updatedNestResult(nest));
       }
@@ -6189,7 +6214,7 @@ async function _handleToolCall(
         code: "VALIDATION",
         message: error.message,
         retryable: false,
-        hint: `Prime labels (one per nest): ${[...PRIME_LABELS].join(", ")}. Sole allowed pair: userstory+project (userstory implies project). Drop one label and retry, or create separate nests linked via nestr_add_graph_link (stories link to containers via userstory_sprint / userstory_epic / userstory_milestone).`,
+        hint: `Prime labels (one per nest): ${[...PRIME_LABELS].join(", ")}. Sole allowed pair: userstory+project (userstory implies project). Drop one label and retry, or create separate nests and relate them (a story names its container with fields 'userstory.sprint' / 'userstory.epic' / 'userstory.milestone').`,
         correlationId: getCorrelationId(),
       });
     }
