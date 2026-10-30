@@ -1294,6 +1294,30 @@ const HINTS_DESC =
   + "`query` that finds every other nest with the same problem) and drops the fixed teaching prose "
   + "and endpoint list. 'full' is the whole payload. false for none.";
 
+// A label id becomes a path segment of /workspaces/{id}/labels/{labelId}, so one that
+// could leave that route (a slash, a dot segment, a query, an encoded character) is
+// refused before a request is built. Label ids are word characters, hyphens and colons.
+const labelIdSchema = z.string()
+  .min(1)
+  .regex(/^[^/?#%\s]+$/, "A label id cannot contain '/', '?', '#', '%' or whitespace")
+  .refine((id) => id !== "." && id !== "..", "A label id cannot be '.' or '..'");
+
+const LABEL_ID_CREATE_DESC =
+  "Optional id for the new label, e.g. 'review'. Defaults to one derived from the title. An id a system label already holds is refused with a free alternative.";
+const LABEL_GROUP_DESC = "Label group, used to group labels in pickers and in labeled-select fields.";
+const LABEL_FIELDS_DESC =
+  "Field definitions for the label: [{ id, code, title, type, ... }]. Items carrying the label can then hold values under `<labelId>.<code>`. Read an existing label's shape with nestr_get_label.";
+const LABEL_FIELDS_UPDATE_DESC =
+  LABEL_FIELDS_DESC + " REPLACES the whole field list, so read the label first and send every field to keep.";
+const LABEL_PROPERTIES_DESC =
+  "Display properties to set, merged key by key (e.g. { completable: false, groupByLabel: true }); a null value clears a key. color and icon have their own arguments.";
+const LABEL_DELETE_CONFIRM_DESC =
+  "Must be true. Deleting removes the label from every item carrying it and drops its field values there, and cannot be undone. Confirm with the person first.";
+const LABEL_ADMIN_NOTE =
+  " Requires workspace admin rights (a workspace admin or owner, or a workspace API key); anyone else gets a 403.";
+const LABEL_WRITE_SCOPE_NOTE =
+  " Only the workspace's own labels: system labels (project, role, ...) and tag-along customisations of them are refused with a 422, and another workspace's label is not found.";
+
 // The response shape of a write tool, stated in its description. The REST response
 // stays under its per-tool key, unchanged, so a client that peels by key keeps
 // working; `_id` is the one key every write result shares.
@@ -1724,6 +1748,36 @@ export const schemas = {
     description: z.string().optional().describe("Label description"),
     color: z.string().optional().describe("Label color (hex code, e.g., '#FF5733')"),
     icon: z.string().optional().describe("Label icon identifier"),
+  }),
+
+  // Workspace labels (workspace admin only on the API side)
+  createLabel: z.object({
+    workspaceId: z.string().describe("Workspace ID"),
+    title: z.string().min(1).describe("Label title"),
+    labelId: labelIdSchema.optional().describe(LABEL_ID_CREATE_DESC),
+    color: z.string().optional().describe("Label color (hex code, e.g., '#FF5733')"),
+    icon: z.string().optional().describe("Label icon identifier"),
+    group: z.string().optional().describe(LABEL_GROUP_DESC),
+    fields: coerceFromJson(z.array(z.record(z.string(), z.unknown()))).optional().describe(LABEL_FIELDS_DESC),
+  }),
+
+  updateLabel: z.object({
+    workspaceId: z.string().describe("Workspace ID"),
+    labelId: labelIdSchema.describe("Label ID, as nestr_list_labels returns it"),
+    title: z.string().min(1).optional().describe("New label title"),
+    color: z.string().nullable().optional().describe("Label color (hex code, e.g., '#FF5733'). null clears it."),
+    icon: z.string().nullable().optional().describe("Label icon identifier. null clears it."),
+    group: z.string().nullable().optional().describe(LABEL_GROUP_DESC + " null clears it."),
+    properties: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe(LABEL_PROPERTIES_DESC),
+    fields: coerceFromJson(z.array(z.record(z.string(), z.unknown()))).optional().describe(LABEL_FIELDS_UPDATE_DESC),
+    // Strict, like nestr_update_agent: a key this tool does not list is refused and
+    // named, not stripped, so a success never hides a change that was not sent.
+  }).strict(),
+
+  deleteLabel: z.object({
+    workspaceId: z.string().describe("Workspace ID"),
+    labelId: labelIdSchema.describe("Label ID, as nestr_list_labels returns it"),
+    confirm: z.literal(true).describe(LABEL_DELETE_CONFIRM_DESC),
   }),
 
   // Reorder tools
@@ -3055,6 +3109,58 @@ export const toolDefinitions = [
       required: ["nestId", "position", "relatedNestId"],
     },
     ...mutating,
+  },
+  // Workspace labels (workspace admin only)
+  {
+    name: "nestr_create_label",
+    description: "Create a label in a workspace, for every member to use. For a label only you use, call nestr_create_personal_label instead." + LABEL_ADMIN_NOTE + " Hooks and code-bearing keys in fields are stripped by the API." + writeReturns("label", "label"),
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        title: { type: "string", description: "Label title" },
+        labelId: { type: "string", description: LABEL_ID_CREATE_DESC },
+        color: { type: "string", description: "Label color (hex code, e.g., '#FF5733')" },
+        icon: { type: "string", description: "Label icon identifier" },
+        group: { type: "string", description: LABEL_GROUP_DESC },
+        fields: { type: "array", items: { type: "object" }, description: LABEL_FIELDS_DESC },
+      },
+      required: ["workspaceId", "title"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_update_label",
+    description: "Edit a workspace label: its title, color, icon, group, display properties or fields. Send only what changes; a key this tool does not list is refused." + LABEL_ADMIN_NOTE + LABEL_WRITE_SCOPE_NOTE + " Labels have no description. Code-bearing keys in fields and properties are stripped by the API." + writeReturns("label", "label"),
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        labelId: { type: "string", description: "Label ID, as nestr_list_labels returns it" },
+        title: { type: "string", description: "New label title" },
+        color: { type: ["string", "null"], description: "Label color (hex code, e.g., '#FF5733'). null clears it." },
+        icon: { type: ["string", "null"], description: "Label icon identifier. null clears it." },
+        group: { type: ["string", "null"], description: LABEL_GROUP_DESC + " null clears it." },
+        properties: { type: "object", description: LABEL_PROPERTIES_DESC },
+        fields: { type: "array", items: { type: "object" }, description: LABEL_FIELDS_UPDATE_DESC },
+      },
+      required: ["workspaceId", "labelId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_delete_label",
+    description: "Delete a workspace label, as deleting it on the workspace's Labels page does: the label goes, and every item carrying it loses it (the clean-up finishes just after the call returns). Cannot be undone, so it needs confirm: true." + LABEL_ADMIN_NOTE + LABEL_WRITE_SCOPE_NOTE,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        labelId: { type: "string", description: "Label ID, as nestr_list_labels returns it" },
+        confirm: { type: "boolean", const: true, description: LABEL_DELETE_CONFIRM_DESC },
+      },
+      required: ["workspaceId", "labelId", "confirm"],
+    },
+    ...destructive,
   },
   // Personal labels (require OAuth token - user's own labels, not workspace labels)
   {
@@ -5031,6 +5137,53 @@ async function _handleToolCall(
           parsed.relatedNestId
         );
         return formatResult({ message: "Inbox item reordered successfully", nest: result });
+      }
+
+      case "nestr_create_label": {
+        const parsed = schemas.createLabel.parse(args);
+        // The route stores the body as the label, so colour and icon go where the
+        // label keeps them: under properties.
+        const properties = Object.fromEntries(
+          Object.entries({ color: parsed.color, icon: parsed.icon }).filter(([, value]) => value !== undefined)
+        );
+        const label = await client.createWorkspaceLabel(parsed.workspaceId, {
+          ...(parsed.labelId !== undefined ? { _id: parsed.labelId } : {}),
+          title: parsed.title,
+          ...(parsed.group !== undefined ? { group: parsed.group } : {}),
+          ...(Object.keys(properties).length ? { properties } : {}),
+          ...(parsed.fields !== undefined ? { fields: parsed.fields } : {}),
+        });
+        return formatResult({ message: "Workspace label created successfully", _id: writtenId(label), label });
+      }
+
+      case "nestr_update_label": {
+        // MCPcat adds a `context` argument to every tool when tracking is on; the
+        // schema is strict, so it is set aside here (see nestr_update_agent).
+        const { context: _userIntent, ...input } = args;
+        const parsed = schemas.updateLabel.parse(input);
+        const { workspaceId, labelId, ...rest } = parsed;
+        const updates = Object.fromEntries(
+          Object.entries(rest).filter(([, value]) => value !== undefined)
+        );
+        if (Object.keys(updates).length === 0) {
+          return formatError({
+            error: true,
+            code: "VALIDATION",
+            message: "Nothing to update: pass at least one of title, color, icon, group, properties, fields.",
+            retryable: false,
+          });
+        }
+        const label = await client.updateWorkspaceLabel(workspaceId, labelId, updates);
+        return formatResult({ message: "Workspace label updated successfully", _id: writtenId(label), label });
+      }
+
+      case "nestr_delete_label": {
+        const parsed = schemas.deleteLabel.parse(args);
+        const response = await client.deleteWorkspaceLabel(parsed.workspaceId, parsed.labelId);
+        return formatResult({
+          message: `Workspace label ${parsed.labelId} deleted. Items carrying it lose it as the API finishes the clean-up.`,
+          _id: writtenId(response) ?? parsed.labelId,
+        });
       }
 
       // Personal labels (require OAuth token)

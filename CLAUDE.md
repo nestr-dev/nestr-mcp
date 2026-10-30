@@ -296,6 +296,9 @@ The server exposes these tools to AI assistants:
 | `nestr_add_workspace_user` | `POST /workspaces/{id}/users` |
 | `nestr_list_labels` | `GET /workspaces/{id}/labels` |
 | `nestr_get_label` | `GET /workspaces/{id}/labels/{lid}` |
+| `nestr_create_label` | `POST /workspaces/{id}/labels` (workspace-admin only) |
+| `nestr_update_label` | `PATCH /workspaces/{id}/labels/{lid}` (workspace-admin only; send only the fields to change) |
+| `nestr_delete_label` | `DELETE /workspaces/{id}/labels/{lid}` (workspace-admin only; requires `confirm: true`) |
 | `nestr_get_projects` | `GET /workspaces/{id}/projects` |
 | `nestr_get_insights` | `GET /workspaces/{id}/insights` |
 | `nestr_get_insight_history` | `GET /workspaces/{id}/insights/{mid}/history` |
