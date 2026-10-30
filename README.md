@@ -163,6 +163,9 @@ Ask your AI assistant things like:
 |------|-------------|
 | `nestr_list_labels` | List workspace labels |
 | `nestr_get_label` | Get label details |
+| `nestr_create_label` | Create a workspace label (workspace admin) |
+| `nestr_update_label` | Edit a workspace label's title, color, icon, group, properties or fields (workspace admin) |
+| `nestr_delete_label` | Delete a workspace label, with `confirm: true` (workspace admin) |
 | `nestr_get_projects` | List projects with status |
 
 ### Insights & Apps

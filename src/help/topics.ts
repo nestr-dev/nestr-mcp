@@ -635,6 +635,7 @@ Labels created within a workspace for categorizing and organizing nests. These a
 - Only available within that specific workspace
 - Visible to all users who have access to the workspace
 - Used for workspace-specific categorization (e.g., custom project types, priority levels, departments)
+- Managed by a workspace admin via \`nestr_create_label\`, \`nestr_update_label\` and \`nestr_delete_label\` (delete needs \`confirm: true\` and takes the label off every item carrying it). Global labels and their tag-along customisations cannot be changed this way.
 
 ### 3. Personal Labels
 Labels created by individual users for their own organization:
