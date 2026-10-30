@@ -2514,9 +2514,12 @@ export class NestrClient {
    * and `escalated` are how the route spells consent and an objection.
    *
    * There is deliberately no user parameter. The server derives the consenter
-   * from the bearer token and refuses a token that names nobody, so the caller
-   * can only ever answer as itself, or as the person an assistant's token was
-   * minted for.
+   * from the bearer token, so the caller can only ever answer as itself, or as
+   * the person an assistant's token was minted for. Use a token that identifies
+   * one person: whether a workspace key naming nobody is refused or falls
+   * through to the admin who created it depends on the deployed web release
+   * (nestr-web#2547), which is not a thing to state here as though it were
+   * settled.
    */
   async recordConsentDecision(
     nestId: string,
