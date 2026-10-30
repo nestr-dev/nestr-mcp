@@ -129,6 +129,8 @@ export interface Nest {
   completed?: boolean;
   /** User IDs assigned to this nest (must be explicitly set, not inherited from parent role) */
   users?: string[];
+  /** The role or circle this nest is proxy-assigned to, if any. */
+  proxyAssign?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -306,6 +308,8 @@ export type NestUpdates = Partial<{
   start: string | null;
   allDay: boolean | null;
   completed: boolean;
+  /** Role or circle id to proxy-assign to; null clears. */
+  proxyAssign: string | null;
 }>;
 
 /** What `DELETE nests/:id` answers. Hints appear when a recurring series carries on. */
@@ -1188,6 +1192,8 @@ export class NestrClient {
     /** ISO 8601 or yyyy-mm-dd. With due it makes a span; yyyy-mm-dd dates are all-day. */
     start?: string;
     allDay?: boolean;
+    /** Role or circle id to proxy-assign the new nest to. */
+    proxyAssign?: string;
   }): Promise<Nest> {
     return this.fetch<Nest>("/nests", {
       method: "POST",

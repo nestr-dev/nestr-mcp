@@ -22,8 +22,7 @@ export const PRIME_LABELS: ReadonlySet<string> = new Set([
   "feedback",
   // Scrum app labels — a nest is a story OR a sprint OR an epic OR a
   // milestone, never several at once. Stories relate to the containers via
-  // graph links (userstory_sprint / userstory_epic / userstory_milestone),
-  // not by sharing labels.
+  // their sprint / epic / milestone fields, not by sharing labels.
   "userstory",
   "sprint",
   "epic",

@@ -189,13 +189,13 @@ Tensions with governance labels (role, circle, policy, accountability, domain) i
 
 ### Tensions as Meeting Agenda Items
 
-Link tensions to meetings via \`nestr_add_graph_link\` with relation \`meeting\`. Available agenda items: all non-completed tensions where the nearest circle ancestor matches the meeting's circle.
+Put a tension on a meeting's agenda by setting its meeting field: \`nestr_update_nest\` with \`fields: { "tension.meeting": meetingNestId }\`, and \`null\` to take it off. A \`meeting\` graph link written directly is refused. Available agenda items: all non-completed tensions where the nearest circle ancestor matches the meeting's circle.
 
 - **Governance meetings** (\`governance\` + \`meeting\` labels): Tensions with governance parts.
 - **Circle meetings** (\`circle-meeting\` + \`meeting\` labels): Tensions with operational output.
 
 \`\`\`
-nestr_add_graph_link(tensionNestId, "meeting", meetingNestId)        // Link
+nestr_update_nest(tensionNestId, { fields: { "tension.meeting": meetingNestId } })  // Link
 nestr_get_graph_links(meetingNestId, "meeting", { direction: "incoming" })  // View agenda
 \`\`\`
 

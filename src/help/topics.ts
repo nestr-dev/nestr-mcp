@@ -596,7 +596,7 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 - \`governance\` - Combined with \`meeting\` label to create a governance meeting (processes governance tensions/proposals)
 - \`circle-meeting\` - Combined with \`meeting\` label to create a circle/tactical meeting (processes operational tensions — projects, todos, inter-role requests)
 
-**Creating meetings:** See \`nestr_help({ topic: "meetings" })\` for where a meeting nest belongs (an existing circle — the anchor circle counts) and why you must not create a circle to hold one. A meeting is a nest with \`labels: ["meeting", "governance"]\` or \`labels: ["meeting", "circle-meeting"]\`. Set \`due\` to the meeting start time. Assign all role fillers in the circle to the meeting's \`users\` array — this includes people/agents energizing roles in the circle, plus rep-link and circle-lead roles from sub-circles. Use graph tools (\`nestr_add_graph_link\` with relation \`meeting\`, nestId the tension and targetId the meeting) to link tensions as agenda items. Agenda items that don't originate from a specific role can be created as child nests of the meeting directly.
+**Creating meetings:** See \`nestr_help({ topic: "meetings" })\` for where a meeting nest belongs (an existing circle — the anchor circle counts) and why you must not create a circle to hold one. A meeting is a nest with \`labels: ["meeting", "governance"]\` or \`labels: ["meeting", "circle-meeting"]\`. Set \`due\` to the meeting start time. Assign all role fillers in the circle to the meeting's \`users\` array — this includes people/agents energizing roles in the circle, plus rep-link and circle-lead roles from sub-circles. Put a tension on the agenda by setting its meeting field (\`nestr_update_nest\` with \`fields: { "tension.meeting": <meetingId> }\`); a \`meeting\` graph link written directly is refused. Agenda items that don't originate from a specific role can be created as child nests of the meeting directly.
 
 **OKRs & Goals:**
 - \`goal\` - An Objective (the O in OKR)
@@ -621,7 +621,7 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 
 ### Prime Labels (one per nest)
 
-These labels define a nest's core identity and are mutually exclusive — a nest can have at most one of them: \`project\`, \`tension\`, \`role\`, \`circle\`, \`anchor-circle\`, \`meeting\`, \`metric\`, \`goal\`, \`result\`, \`checklist\`, \`feedback\`, \`userstory\`, \`sprint\`, \`epic\`, \`milestone\`. A project is not also a tension, a role is not also a metric, a sprint is not also an epic. The MCP layer will reject calls to \`nestr_create_nest\`, \`nestr_update_nest\`, or \`nestr_add_label\` that would put two prime labels on the same nest. **Sole exception:** \`userstory\` + \`project\` may coexist — \`userstory\` implies \`project\` in Nestr's data model, so every story is also a project. \`sprint\`, \`epic\`, and \`milestone\` must NOT be combined with \`project\` (or with each other); stories relate to those containers via graph links (\`userstory_sprint\` / \`userstory_epic\` / \`userstory_milestone\`), never by sharing labels. If you need to express a relationship between two such entities, create separate nests and link them with \`nestr_add_graph_link\`. Modifier labels like \`governance\` and \`circle-meeting\` (which pair with \`meeting\`) are not prime and can coexist.
+These labels define a nest's core identity and are mutually exclusive — a nest can have at most one of them: \`project\`, \`tension\`, \`role\`, \`circle\`, \`anchor-circle\`, \`meeting\`, \`metric\`, \`goal\`, \`result\`, \`checklist\`, \`feedback\`, \`userstory\`, \`sprint\`, \`epic\`, \`milestone\`. A project is not also a tension, a role is not also a metric, a sprint is not also an epic. The MCP layer will reject calls to \`nestr_create_nest\`, \`nestr_update_nest\`, or \`nestr_add_label\` that would put two prime labels on the same nest. **Sole exception:** \`userstory\` + \`project\` may coexist — \`userstory\` implies \`project\` in Nestr's data model, so every story is also a project. \`sprint\`, \`epic\`, and \`milestone\` must NOT be combined with \`project\` (or with each other); stories relate to those containers via their \`userstory.sprint\` / \`userstory.epic\` / \`userstory.milestone\` fields, never by sharing labels. If you need to express another relationship between two such entities, create separate nests and link them with \`nestr_add_graph_link\`. Modifier labels like \`governance\` and \`circle-meeting\` (which pair with \`meeting\`) are not prime and can coexist.
 
 ## Label Architecture
 
@@ -1789,9 +1789,9 @@ Discover the live schema with \`nestr_get_label({ workspaceId, labelId: 'usersto
 
 | Field code | Field id | Type | Notes |
 |---|---|---|---|
-| \`sprint\` | \`userstory_sprint\` | graphselect → sprint | Outgoing graph link. Read/write via \`nestr_get_graph_links({ relation: 'userstory_sprint' })\` / \`nestr_add_graph_link\` / \`nestr_remove_graph_link\`. Hidden when sprints are disabled at the workspace. |
-| \`epic\` | \`userstory_epic\` | graphselect → epic | Same pattern with relation \`userstory_epic\`. Hidden when epics are disabled. |
-| \`milestone\` | \`userstory_milestone\` | graphselect → milestone | Same pattern with relation \`userstory_milestone\`. Hidden when milestones are disabled. |
+| \`sprint\` | \`userstory_sprint\` | graphselect → sprint | Write it as \`fields: { "userstory.sprint": <sprintId> }\` (null clears); the server keeps the outgoing graph link in step, which \`nestr_get_graph_links({ relation: 'userstory_sprint' })\` reads. Writing that link directly is refused. Hidden when sprints are disabled at the workspace. |
+| \`epic\` | \`userstory_epic\` | graphselect → epic | Same pattern: \`userstory.epic\`, relation \`userstory_epic\`. Hidden when epics are disabled. |
+| \`milestone\` | \`userstory_milestone\` | graphselect → milestone | Same pattern: \`userstory.milestone\`, relation \`userstory_milestone\`. Hidden when milestones are disabled. |
 | \`points\` | \`userstory_points\` | select | Fibonacci values: 1, 2, 3, 5, 8, 13. A leading \`__unset__\` "Not estimated" sentinel is the unset state — \`points_burned\` stays hidden until the story is estimated. |
 | \`points_burned\` | \`userstory_points_burned\` | range (0 → points) | Max equals the story's \`userstory_points\`. Server auto-snaps to full points when the story flips to Done (via \`project.status\`), to 0 when undone. |
 | \`change_request_url\` | \`userstory_change_request_url\` | text | URL of a linked PR / merge request. Always visible so it can be set from the UI. |
@@ -1898,11 +1898,11 @@ nestr_create_nest({
 })
 \`\`\`
 
-Leave \`userstory.points\` unset for unestimated stories. Link to sprint / epic / milestone after creation with \`nestr_add_graph_link({ relation: "userstory_sprint" | "userstory_epic" | "userstory_milestone", targetId })\`.
+Leave \`userstory.points\` unset for unestimated stories. Link to a sprint / epic / milestone with \`fields: { "userstory.sprint" | "userstory.epic" | "userstory.milestone": <id> }\`, on create or later with \`nestr_update_nest\`.
 
 **Move a story between sprints**
 
-Remove the old link, add the new one. The sprint-level rollups update automatically through the \`sum_reverse_graphselect\` derivation.
+Set the field to the new sprint: \`nestr_update_nest\` with \`fields: { "userstory.sprint": <newSprintId> }\`. The server moves the link, and a \`userstory_sprint\` graph link written directly is refused. The sprint-level rollups update automatically through the \`sum_reverse_graphselect\` derivation.
 
 ### Mode-specific guidance
 
@@ -2058,7 +2058,7 @@ If a meeting genuinely seems to want a circle of its own, that is a claim about 
 - \`due\` — the meeting start time as an ISO datetime. A future \`due\` schedules it (the web app shows a countdown and a "Start meeting now" link); omit it to mean now.
 - \`users\` — everyone who should attend: the people and agents energizing roles in the circle, plus circle-lead and rep-link fillers from its sub-circles.
 
-Agenda items are tensions. Link them with \`nestr_add_graph_link\` (relation \`meeting\`, from the tension to the meeting; remove it the same way round); an agenda item with no originating role can be a plain child nest of the meeting instead.
+Agenda items are tensions. Put one on the agenda by setting its meeting field (\`fields: { "tension.meeting": <meetingId> }\` with \`nestr_update_nest\`, \`null\` to take it off); a \`meeting\` graph link written directly is refused. An agenda item with no originating role can be a plain child nest of the meeting instead.
 
 ### Before you create one
 
