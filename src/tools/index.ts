@@ -1527,7 +1527,7 @@ export const schemas = {
     accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes an accountability child nest."),
     domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes a domain child nest."),
     workspaceId: z.string().optional().describe("Workspace ID. Required when creating roles/circles with accountabilities or domains (used to route to the self-organization API)."),
-    proxyAssign: z.string().optional().describe(PROXY_ASSIGN_DESC),
+    proxyAssign: z.string().optional().describe(`${PROXY_ASSIGN_DESC} Not applied when creating a role or circle with accountabilities or domains.`),
   }),
 
   updateNest: z.object({
@@ -2476,7 +2476,7 @@ export const toolDefinitions = [
           type: "string",
           description: "Workspace ID. Required when creating roles/circles with accountabilities or domains.",
         },
-        proxyAssign: { type: "string", description: PROXY_ASSIGN_DESC },
+        proxyAssign: { type: "string", description: `${PROXY_ASSIGN_DESC} Not applied when creating a role or circle with accountabilities or domains.` },
       },
       required: ["parentId", "title"],
     },
