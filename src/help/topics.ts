@@ -1902,7 +1902,7 @@ Leave \`userstory.points\` unset for unestimated stories. Link to a sprint / epi
 
 **Move a story between sprints**
 
-Remove the old link, add the new one. The sprint-level rollups update automatically through the \`sum_reverse_graphselect\` derivation.
+Set the field to the new sprint: \`nestr_update_nest\` with \`fields: { "userstory.sprint": <newSprintId> }\`. The server moves the link, and a \`userstory_sprint\` graph link written directly is refused. The sprint-level rollups update automatically through the \`sum_reverse_graphselect\` derivation.
 
 ### Mode-specific guidance
 
