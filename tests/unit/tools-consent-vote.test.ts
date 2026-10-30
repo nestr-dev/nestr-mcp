@@ -123,6 +123,17 @@ describe('nestr_vote_on_tension', () => {
     ]);
   });
 
+  // The description must not predict server behaviour whose truth depends on
+  // which web release is deployed. It once said a workspace API key "is refused",
+  // which only becomes true with nestr-web#2547; merged first, it would have told
+  // a model its key was safe while the route still recorded the key creator's
+  // consent. It states the rule the caller controls instead.
+  it("tells the caller to use a person's token without predicting the server's refusal", () => {
+    const def = toolDefinitions.find((t) => t.name === 'nestr_vote_on_tension');
+    expect(def!.description).toMatch(/token that identifies one person/i);
+    expect(def!.description).not.toMatch(/is refused/i);
+  });
+
   // Recording a decision changes the world, so the read-only surface must not
   // advertise it. READONLY_TOOL_NAMES is derived from the annotation.
   it('is a write, and absent from the read-only surface', () => {
