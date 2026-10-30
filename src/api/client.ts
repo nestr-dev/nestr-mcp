@@ -2505,6 +2505,33 @@ export class NestrClient {
     );
   }
 
+  /**
+   * Record the caller's consent decision on a proposed tension.
+   *
+   * The same status route, but a different act by a different party:
+   * updateTensionStatus moves a tension through its lifecycle for whoever
+   * raised it, while this answers it as one of the people asked. `accepted`
+   * and `escalated` are how the route spells consent and an objection.
+   *
+   * There is deliberately no user parameter. The server derives the consenter
+   * from the bearer token and refuses a token that names nobody, so the caller
+   * can only ever answer as itself, or as the person an assistant's token was
+   * minted for.
+   */
+  async recordConsentDecision(
+    nestId: string,
+    tensionId: string,
+    status: "accepted" | "escalated"
+  ): Promise<TensionStatus> {
+    return this.fetch<TensionStatus>(
+      `/nests/${nestId}/tensions/${tensionId}/status`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      }
+    );
+  }
+
   // ============ USER TENSIONS (requires OAuth token) ============
 
   /**

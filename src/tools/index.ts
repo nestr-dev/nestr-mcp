@@ -2029,6 +2029,14 @@ export const schemas = {
     status: z.enum(["proposed", "draft"]).describe("'proposed' to submit for voting, 'draft' to retract back to draft"),
   }),
 
+  // No user parameter, deliberately: the server derives the consenter from the
+  // bearer token, so this can only answer as the caller.
+  voteOnTension: z.object({
+    nestId: z.string().describe("ID of the circle or role the tension belongs to"),
+    tensionId: z.string().describe("Tension ID"),
+    decision: z.enum(["consent", "object"]).describe("'consent' if nothing in the proposal stops your role doing its work, 'object' if something in it does"),
+  }),
+
   // Graph link tools
   getGraphLinks: z.object({
     nestId: z.string().describe("Nest ID to get graph links for"),
@@ -3750,7 +3758,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_tension_status",
-    description: "Submit a tension for consent ('proposed') or retract it to 'draft'. Proposing asks every other member of the circle to consent and notifies them. When there is nobody else to ask, the server enacts the tension at once and answers `status: \"enacted\"`: a governance proposal in a single-member circle, or a work request with no output or whose requester is its only assignee. Otherwise resolution happens through those consent votes, in a governance meeting or in the Nestr app, not through this tool. To observe the outcome, read nestr_get_tension_status, which reports `accepted` once the tension is resolved and `escalated` when someone objected.",
+    description: "Submit a tension for consent ('proposed') or retract it to 'draft'. Proposing asks every other member of the circle to consent and notifies them. When there is nobody else to ask, the server enacts the tension at once and answers `status: \"enacted\"`: a governance proposal in a single-member circle, or a work request with no output or whose requester is its only assignee. Otherwise resolution happens through those consent votes, which are cast with nestr_vote_on_tension, in a governance meeting or in the Nestr app, never through this tool. To observe the outcome, read nestr_get_tension_status, which reports `accepted` once the tension is resolved and `escalated` when someone objected.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3759,6 +3767,20 @@ export const toolDefinitions = [
         status: { type: "string", enum: ["proposed", "draft"], description: "'proposed' to submit for voting, 'draft' to retract back to draft" },
       },
       required: ["nestId", "tensionId", "status"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_vote_on_tension",
+    description: "Record YOUR consent decision on a tension that is open for consent. This is the answer, not the asking: nestr_update_tension_status submits a tension on behalf of whoever raised it, and this answers one as a person or role who was asked. Check nestr_list_tensions_awaiting_consent for what is waiting on you, and read the tension and its parts (nestr_get_tension, nestr_get_tension_parts, nestr_get_tension_changes) before deciding. 'consent' means nothing in the proposal stops your role doing its work; it is not agreement that the proposal is the best idea. 'object' means something in it does, and an objection ends the consent round, so state the reason in a comment (nestr_add_comment) before or with it. One decision each, and it cannot be taken back. Auth: the consenter is derived from the bearer token, so this always answers as the calling user and there is no way to answer for anybody else; a workspace API key names no user and is refused.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
+        tensionId: { type: "string", description: "Tension ID" },
+        decision: { type: "string", enum: ["consent", "object"], description: "'consent' if nothing in the proposal stops your role doing its work, 'object' if something in it does" },
+      },
+      required: ["nestId", "tensionId", "decision"],
     },
     ...mutating,
   },
@@ -5815,6 +5837,25 @@ async function _handleToolCall(
           ? `Tension enacted at once, not submitted for consent: ${outcome.message ?? "there was nobody else to ask"}`
           : `Tension status updated to '${parsed.status}'`;
         return formatResult({ message, status });
+      }
+
+      case "nestr_vote_on_tension": {
+        const parsed = schemas.voteOnTension.parse(args);
+        // The route spells the two answers `accepted` and `escalated`. The tool
+        // speaks the domain's words so a model never has to guess that objecting
+        // is spelled "escalated".
+        const status = await client.recordConsentDecision(
+          parsed.nestId,
+          parsed.tensionId,
+          parsed.decision === "consent" ? "accepted" : "escalated",
+        );
+        // An objection ends the round, so the reason is the part the circle needs
+        // and the part a run is most likely to leave unsaid.
+        const message = parsed.decision === "consent"
+          ? "Consent recorded. It cannot be taken back."
+          : "Objection recorded, and the consent round has ended. State the reason in a comment "
+            + "on the tension if you have not already, or the circle cannot integrate it.";
+        return formatResult({ message, decision: parsed.decision, status });
       }
 
       // Graph link tools
