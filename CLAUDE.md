@@ -349,6 +349,7 @@ The server exposes these tools to AI assistants:
 | `nestr_get_tension_changes` | `GET /nests/{id}/tensions/{tid}/parts/{pid}/changes` |
 | `nestr_get_tension_status` | `GET /nests/{id}/tensions/{tid}/status` |
 | `nestr_update_tension_status` | `PATCH /nests/{id}/tensions/{tid}/status` |
+| `nestr_vote_on_tension` | `PATCH /nests/{id}/tensions/{tid}/status` (`accept` -> `accepted`, `escalate` -> `escalated`) |
 | `nestr_get_graph_links` | `GET /nests/{id}/graph/{relation}` |
 | `nestr_add_graph_link` | `POST /nests/{id}/graph/{relation}` |
 | `nestr_remove_graph_link` | `DELETE /nests/{id}/graph/{relation}/{targetId}` |

@@ -19,6 +19,8 @@ Tensions are always sensed by a person or agent first — they begin as a felt e
 
 **Check tensions at natural breakpoints** (assistant and role-filler modes): At session start and after completing work, use \`nestr_list_my_tensions\` and \`nestr_list_tensions_awaiting_consent\`. In assistant mode, present for review. In role-filler mode, process directly.
 
+**Answering a consent request is work, not a formality.** A tension in \`nestr_list_tensions_awaiting_consent\` is a round blocked on you, and it has a deadline: once it passes, silence counts as consent. Read the tension and its parts, then record a decision with \`nestr_vote_on_tension\`: \`accept\` when nothing in the proposal stops your role doing its work, \`escalate\` to object because something in it genuinely does. Accepting is not agreement that the proposal is the best idea available, and withholding it to get a better one is not what the gate is for. When you escalate, say why in a comment, because an escalation ends the round and the circle has to integrate the reason. In assistant mode the decision is the person's to make, so bring them the proposal and your reading of it rather than answering for them.
+
 **Hold each other accountable:** When someone expresses frustration without framing it as a tension, redirect: "Sounds like a tension! Would you like to capture it?"
 
 ## Tensions — The Event Bus for Collaboration
@@ -127,6 +129,8 @@ Then identify the **next physical action** — the very next concrete step.
 
 6. **Monitor**: \`nestr_get_tension_status\`.
 
+7. **Answer one raised by somebody else**: \`nestr_vote_on_tension\` → \`"accept"\` or \`"escalate"\` (the same verbs as the \`nestr tensions vote\` CLI command).
+
 ### Elections
 
 An election assigns or reconfirms a role's filler for a term — it does NOT change the role's accountabilities or domains. Hold one by calling \`nestr_add_tension_part\` with a \`roleId\` (the election mode), NOT with the role's \`_id\` (that is a role edit).
@@ -181,7 +185,7 @@ nestr_create_tension(salesLeadRoleId, {
 - **accepted**: Resolved, and its changes applied to governance. Apart from the immediate enactment above, resolution comes from the consent votes, in a governance meeting or in the Nestr app, not from \`nestr_update_tension_status\` itself.
 - **escalated**: Someone objected. Requires integration and resubmission.
 
-Use \`nestr_get_tension_status\` to check state and votes. Use \`nestr_update_tension_status\` to advance lifecycle.
+Use \`nestr_get_tension_status\` to check state and votes. Use \`nestr_update_tension_status\` to advance lifecycle. Use \`nestr_vote_on_tension\` to answer one that is waiting on YOU.
 
 ### Auto-Detection
 
