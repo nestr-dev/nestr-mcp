@@ -453,12 +453,6 @@ export interface ConnectionOwner {
   id: string;
 }
 
-/**
- * A connection: a connector bound to an owner. Holds no secret; the secret
- * lives on an authorization captured out-of-band via the Connect button.
- * Binding with owner type 'role' returns the domain that now holds the access,
- * and whether it had to be created.
- */
 /** Who a shared account on a connection would reach. Null when sharing does not apply. */
 export interface SharedReach {
   boundary: "workspace" | "role";
@@ -467,6 +461,12 @@ export interface SharedReach {
   growsWithMembership: boolean;
 }
 
+/**
+ * A connection: a connector bound to an owner. Holds no secret; the secret
+ * lives on an authorization captured out-of-band via the Connect button.
+ * Binding with owner type 'role' returns the domain that now holds the access,
+ * and whether it had to be created.
+ */
 export interface Connection {
   _id: string;
   workspaceId: string;

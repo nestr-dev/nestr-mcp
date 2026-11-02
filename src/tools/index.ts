@@ -6495,7 +6495,8 @@ export function sharedAccountNote(reach?: SharedReach | null): string {
   const where = reach.boundary === "workspace" ? "the workspace" : "the role";
   const people = `${reach.people} ${reach.people === 1 ? "person" : "people"}`;
   const agents = `${reach.agents} ${reach.agents === 1 ? "agent" : "agents"}`;
-  return ` Tell them first: a shared account here would be used by everyone in ${where}, ${people} and ${agents} today plus anyone who joins later. A personal account should be connected just for themselves. Only a service account should be shared.`;
+  const later = reach.growsWithMembership ? " plus anyone who joins later" : "";
+  return ` Tell them first: a shared account here would be used by everyone in ${where}, ${people} and ${agents} today${later}. A personal account should be connected just for themselves. Only a service account should be shared.`;
 }
 
 function formatResult(data: unknown): ToolResult {
