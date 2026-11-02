@@ -453,6 +453,14 @@ export interface ConnectionOwner {
   id: string;
 }
 
+/** Who a shared account on a connection would reach. Null when sharing does not apply. */
+export interface SharedReach {
+  boundary: "workspace" | "role";
+  people: number;
+  agents: number;
+  growsWithMembership: boolean;
+}
+
 /**
  * A connection: a connector bound to an owner. Holds no secret; the secret
  * lives on an authorization captured out-of-band via the Connect button.
@@ -470,6 +478,7 @@ export interface Connection {
   domainId?: string;
   /** Whether that domain had to be created for this connector. */
   domainCreated?: boolean;
+  reach?: SharedReach | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -681,6 +690,8 @@ export type ErrorCode =
   // Other 403s with specific semantics (kept distinct from generic scope)
   | "APP_DISABLED"
   | "PLAN_REQUIRED"
+  // Allowing a shared account is a person's choice in the app, never an API call.
+  | "SHARED_ACCOUNT_APP_ONLY"
   // Non-auth errors
   | "NOT_FOUND"
   | "VALIDATION"
@@ -737,6 +748,10 @@ export class NestrApiError extends Error {
     if (status >= 500) return "SERVER_ERROR";
 
     if (status === 403) {
+      // First: this message says "app" and would otherwise read as APP_DISABLED.
+      if (lowerMsg.includes("shared account")) {
+        return "SHARED_ACCOUNT_APP_ONLY";
+      }
       if (lowerMsg.includes("app") && (lowerMsg.includes("enabled") || lowerMsg.includes("disabled"))) {
         return "APP_DISABLED";
       }
@@ -931,6 +946,9 @@ export class NestrClient {
           break;
         case "APP_DISABLED":
           error.hint = "Enable this app in workspace settings > Apps.";
+          break;
+        case "SHARED_ACCOUNT_APP_ONLY":
+          error.hint = "This is a person's choice in the app, not a permissions problem. Give the workspace admin the settings link in the message, or have each person connect their own account.";
           break;
         case "PLAN_REQUIRED":
           error.hint = "This feature requires a Pro plan. Upgrade in workspace settings.";
@@ -2981,10 +2999,10 @@ export class NestrClient {
   async getConnectLink(
     workspaceId: string,
     connectionId: string
-  ): Promise<{ connectionId: string; url: string }> {
+  ): Promise<{ connectionId: string; url: string; reach?: SharedReach | null }> {
     const response = await this.fetch<{
       status: string;
-      data: { connectionId: string; url: string };
+      data: { connectionId: string; url: string; reach?: SharedReach | null };
     }>(`/workspaces/${workspaceId}/connections/${connectionId}/connect-link`, {
       method: "POST",
     });

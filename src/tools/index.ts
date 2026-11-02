@@ -7,7 +7,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { z } from "zod";
-import { NestrApiError, tokenFingerprint, unwrapList, type NestrClient, type Nest, type ToolError, type ErrorCode, type ListEnvelope, type MaybeListEnvelope, type ConnectionListing, type PendingInstructionApproval } from "../api/client.js";
+import { NestrApiError, tokenFingerprint, unwrapList, type NestrClient, type Nest, type ToolError, type ErrorCode, type ListEnvelope, type MaybeListEnvelope, type ConnectionListing, type PendingInstructionApproval, type SharedReach } from "../api/client.js";
 import { appResources } from "../apps/index.js";
 import { getCorrelationId } from "../util/request-context.js";
 import { MODEL_IMAGE_MIME_TYPES, isImageMimeType, modelImageMimeType, normalizeMimeType } from "../util/image-types.js";
@@ -2087,7 +2087,7 @@ export const schemas = {
     name: z.string().optional().describe("Unique connector name within the workspace catalog. Required unless templateId is given, where it defaults to the template's own name."),
     config: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Per-type transport config, no secret. mcp/api need a url (e.g., { url: 'https://...' }); cli needs a command (e.g., { command: 'some-cli' }). Optional non-secret headers go under headers."),
     capabilities: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Capability descriptor: { discover: boolean, tools: [{ name, description, inputSchema }] }. discover:true lets the connector self-describe its tools at runtime."),
-    exposure: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Exposure policy deciding which owners may bind: { userAgent: boolean, domainGated: boolean }. Set domainGated:true to allow binding to a role's domain."),
+    exposure: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Exposure policy deciding which owners may bind: { userAgent: boolean, domainGated: boolean, allowShared: boolean }. Set domainGated:true to allow binding to a role's domain. allowShared is off by default and cannot be set to true here: a workspace admin turns it on in the app, under workspace settings > Integrations."),
     authStrategy: z.enum(["secret", "oauth2"]).optional().describe("How a principal connects: 'secret' (a one-time secret captured via the Connect button) or 'oauth2'. The agent never sees the secret."),
   }),
 
@@ -3883,7 +3883,7 @@ export const toolDefinitions = [
         },
         exposure: {
           type: "object",
-          description: "Which owners may bind: { userAgent: boolean, domainGated: boolean }. domainGated:true allows binding to a role's domain.",
+          description: "Which owners may bind: { userAgent: boolean, domainGated: boolean, allowShared: boolean }. domainGated:true allows binding to a role's domain. allowShared decides whether one shared account may stand in for everyone who reaches the connector. It is off by default and this tool cannot set it to true: a workspace admin turns it on in the app, under workspace settings > Integrations.",
         },
         authStrategy: {
           type: "string",
@@ -3988,7 +3988,7 @@ export const toolDefinitions = [
         name: { type: "string", description: "Unique connector name within the workspace catalog" },
         config: { type: "object", description: "Per-type transport config, no secret" },
         capabilities: { type: "object", description: "Capability descriptor" },
-        exposure: { type: "object", description: "Exposure policy: { userAgent, domainGated }" },
+        exposure: { type: "object", description: "Exposure policy: { userAgent, domainGated, allowShared }. allowShared can be turned off here but not on: a workspace admin turns it on in the app, under workspace settings > Integrations. A refusal comes back as SHARED_ACCOUNT_APP_ONLY with the link to give them." },
         authStrategy: { type: "string", enum: ["secret", "oauth2"], description: "How a principal connects" },
         enabled: { type: "boolean", description: "Switch the connector on or off in this workspace" },
       },
@@ -4037,7 +4037,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_connect_link",
-    description: "Get a link a PERSON opens to connect an account for a binding. This is how you finish setting up access: you can register a connector and give a role access, but you must never handle a raw token, so the sign-in or key entry happens behind this link. The link carries no authority — whoever opens it is checked then. Give it to the user in your reply.",
+    description: "Get a link a PERSON opens to connect an account for a binding. This is how you finish setting up access: you can register a connector and give a role access, but you must never handle a raw token, so the sign-in or key entry happens behind this link. The link carries no authority — whoever opens it is checked then. Give it to the user in your reply. If the result has `reach`, the connector allows a shared account: tell them what the result says before they open it, because a shared login is used by everyone in `reach`, including agents. A personal account should be connected just for themselves.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -6021,7 +6021,7 @@ async function _handleToolCall(
         const message = parsed.ownerType === "role" || parsed.ownerType === "role-domain"
           ? "Access given to the role's domain. Nobody can use it until an account is connected: get a link with nestr_get_connect_link and give it to a person to open. The secret is captured out-of-band and never by the agent."
           : "Access given to the owner. Nobody can use it until an account is connected: get a link with nestr_get_connect_link and give it to a person to open. The secret is never seen by the agent.";
-        return formatResult({ message, connection });
+        return formatResult({ message: message + sharedAccountNote(connection.reach), connection });
       }
 
       case "nestr_update_connector": {
@@ -6069,7 +6069,7 @@ async function _handleToolCall(
         const parsed = schemas.getConnectLink.parse(args);
         const link = await client.getConnectLink(parsed.workspaceId, parsed.connectionId);
         return formatResult({
-          message: "Give this link to a person to open. They complete the sign-in or paste the key there, so the secret never passes through you.",
+          message: "Give this link to a person to open. They complete the sign-in or paste the key there, so the secret never passes through you." + sharedAccountNote(link.reach),
           ...link,
         });
       }
@@ -6486,6 +6486,17 @@ export function nextCursorOf(nextLink: string | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+// The API returns reach only when a shared account is possible. The person opening
+// a connect link decides, so an agent has to say this before handing it over.
+export function sharedAccountNote(reach?: SharedReach | null): string {
+  if (!reach) return "";
+  const where = reach.boundary === "workspace" ? "the workspace" : "the role";
+  const people = `${reach.people} ${reach.people === 1 ? "person" : "people"}`;
+  const agents = `${reach.agents} ${reach.agents === 1 ? "agent" : "agents"}`;
+  const later = reach.growsWithMembership ? " plus anyone who joins later" : "";
+  return ` Tell them first: a shared account here would be used by everyone in ${where}, ${people} and ${agents} today${later}. A personal account should be connected just for themselves. Only a service account should be shared.`;
 }
 
 function formatResult(data: unknown): ToolResult {

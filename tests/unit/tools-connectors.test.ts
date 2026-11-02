@@ -361,6 +361,58 @@ describe("connector tools", () => {
     expect(parseResult(result.content[0].text)).toEqual(rows);
   });
 
+  const reach = { boundary: "workspace", people: 23, agents: 4, growsWithMembership: true };
+
+  it("nestr_get_connect_link says who a shared account would reach", async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse(200, {
+      status: "success",
+      data: { connectionId: "conn1", url: "https://app.test/n/ws1?connect=conn1", reach },
+    }));
+    const result = await handleToolCall(client, "nestr_get_connect_link", {
+      workspaceId: "ws1", connectionId: "conn1",
+    });
+    const parsed = parseResult((result.content[0] as { text: string }).text);
+    expect(parsed.message).toContain("23 people and 4 agents today");
+    expect(parsed.message).toContain("connected just for themselves");
+    expect(parsed.reach).toEqual(reach);
+  });
+
+  it("nestr_get_connect_link says nothing about sharing when it does not apply", async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse(200, {
+      status: "success",
+      data: { connectionId: "conn1", url: "https://app.test/n/ws1?connect=conn1", reach: null },
+    }));
+    const result = await handleToolCall(client, "nestr_get_connect_link", {
+      workspaceId: "ws1", connectionId: "conn1",
+    });
+    const parsed = parseResult((result.content[0] as { text: string }).text);
+    expect(parsed.message).not.toContain("shared account");
+  });
+
+  it("nestr_bind_connector says who a shared account would reach", async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse(200, {
+      status: "success",
+      data: { _id: "conn1", workspaceId: "ws1", owner: { type: "workspace", id: "ws1" }, reach },
+    }));
+    const result = await handleToolCall(client, "nestr_bind_connector", {
+      workspaceId: "ws1", connectorId: "c1", ownerType: "workspace", ownerId: "ws1",
+    });
+    const parsed = parseResult((result.content[0] as { text: string }).text);
+    expect(parsed.message).toContain("everyone in the workspace");
+  });
+
+  it("a refused allowShared is reported as app-only, with the link, not as missing permissions", async () => {
+    const message = "Allowing a shared account cannot be done through the API. A workspace admin can "
+      + "turn it on in the app: https://app.test/n/ws1?s=1#workspace-integrations.";
+    mockFetch.mockResolvedValueOnce(mockResponse(403, { status: "error", message }));
+    const result = await handleToolCall(client, "nestr_update_connector", {
+      workspaceId: "ws1", connectorId: "c1", exposure: { allowShared: true },
+    });
+    const parsed = parseResult((result.content[0] as { text: string }).text);
+    expect(parsed.code).toBe("SHARED_ACCOUNT_APP_ONLY");
+    expect(String(parsed.message)).toContain("#workspace-integrations");
+  });
+
   it("nestr_get_connect_link hands the credential step to a person", async () => {
     mockFetch.mockResolvedValue(mockResponse(200, {
       status: "success",
