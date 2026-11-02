@@ -93,6 +93,13 @@ describe("help articles", () => {
   // ─── Search ──────────────────────────────────────────────
 
   describe("searchArticleIndex", () => {
+    it("sends account words to the password article and leaves recover to deleted items", () => {
+      const entries = ["forgot-your-password", "recovering-deleted-items-undo-activity-stream"]
+        .map(slug => ({ slug, url: `https://nestr.io/help/articles/${slug}` }));
+      expect(searchArticleIndex(entries, "recover a project")[0].slug).toBe("recovering-deleted-items-undo-activity-stream");
+      expect(searchArticleIndex(entries, "reset my password")[0].slug).toBe("forgot-your-password");
+    });
+
     const entries = [
       { slug: "getting-started-with-nestr", url: "https://nestr.io/help/articles/getting-started-with-nestr" },
       { slug: "scrum-agile-app", url: "https://nestr.io/help/articles/scrum-agile-app" },

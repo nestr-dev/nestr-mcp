@@ -116,6 +116,10 @@ const ARTICLE_KEYWORDS: Record<string, string[]> = {
   // vocabulary; adding it here would steal those queries on the alphabetical
   // tiebreak.
   "recovering-deleted-items-undo-activity-stream": ["restore", "restoring", "restored", "recovery", "undelete", "trash", "bin", "recycle bin", "lost", "missing", "gone", "disappeared", "bring back", "get back", "accidentally", "mistake", "deleted filter", "include-deleted", "restaurar", "recuperar", "papelera", "eliminado", "ripristinare", "recuperare", "cestino", "eliminato"],
+  // Both stem from questions the bot deflected in Oct 2026. The slugs say "forgot"
+  // and "insights"; these catch the other ways people ask.
+  "forgot-your-password": ["password", "forgotten", "reset", "login", "signin", "locked"],
+  "workspace-insights": ["analytics", "report", "reports", "reporting", "statistics", "stats", "metrics", "heatmap"],
   "nestr-the-power-of-labels": ["tag", "tags", "tagging"],
   "building-your-org-structure-roles-circles": ["hierarchy", "department", "team", "org", "orgchart", "chart", "accountability", "accountabilities"],
   "giving-or-requesting-feedback-in-nestr": ["review", "praise", "kudos", "appraisal"],
