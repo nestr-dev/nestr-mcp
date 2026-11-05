@@ -17,11 +17,12 @@ import { getCompletableListHtml, appResources } from "./apps/index.js";
 // Skills instructions are now served on-demand via nestr_help tool (see src/help/topics.ts)
 import * as mcpcat from "mcpcat";
 import type { DiagnoseSnapshot } from "./util/diagnose.js";
-import { accessFor, errorCodeFor, errorCodeFromResult, WorkspaceResolver } from "./analytics/fields.js";
+import { accessFor, errorCodeFor, errorCodeFromResult, errorMessageFor, errorMessageFromResult, WorkspaceResolver } from "./analytics/fields.js";
 
 export interface ToolCallInfo {
   success: boolean;
   errorCode?: string;
+  errorMessage?: string;
   access: "read" | "write";
   durationMs: number;
   workspaceId?: string;
@@ -34,9 +35,8 @@ export interface NestrMcpServerConfig {
   client?: NestrClient;
   /** Optional callback for analytics tracking of tool calls */
   /**
-   * Called after every tool call with what analytics may record about it. errorCode
-   * is a fixed code and workspaceId an internal id: neither carries the error's
-   * message or any of the call's content.
+   * Called after every tool call with what analytics records about it: a fixed
+   * errorCode plus the error's message (capped), and an internal workspaceId.
    */
   onToolCall?: (toolName: string, args: Record<string, unknown>, info: ToolCallInfo) => void;
   /** Pre-resolved user ID (e.g., from stored OAuth session) for MCPcat identification */
@@ -198,6 +198,7 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
           config.onToolCall(name, toolArgs, {
             success: !failed,
             errorCode: failed ? errorCodeFromResult(result) : undefined,
+            errorMessage: failed ? errorMessageFromResult(result) : undefined,
             access,
             durationMs: Date.now() - startedAt,
             workspaceId: workspaces.resolve(toolArgs, failed ? undefined : result),
@@ -213,6 +214,7 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
           config.onToolCall(name, toolArgs, {
             success: false,
             errorCode: errorCodeFor(error),
+            errorMessage: errorMessageFor(error),
             access,
             durationMs: Date.now() - startedAt,
             workspaceId: workspaces.resolve(toolArgs),

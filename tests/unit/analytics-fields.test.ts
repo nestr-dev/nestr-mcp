@@ -3,7 +3,7 @@ import { NestrApiError } from "../../src/api/client.js";
 import { PrimeLabelConflictError } from "../../src/tools/validation.js";
 import { READONLY_TOOL_NAMES } from "../../src/tools/index.js";
 import {
-  safeLabel, errorCodeFor, errorCodeFromResult, accessFor, workspaceIdFromResult, WorkspaceResolver,
+  safeLabel, errorCodeFor, errorCodeFromResult, errorMessageFromResult, errorMessageFor, accessFor, workspaceIdFromResult, WorkspaceResolver,
 } from "../../src/analytics/fields.js";
 import { createServer, type ToolCallInfo } from "../../src/server.js";
 import type { NestrClient } from "../../src/api/client.js";
@@ -35,7 +35,7 @@ describe("safeLabel", () => {
 });
 
 describe("errorCodeFor", () => {
-  it("reports an API error by its code, never its message", () => {
+  it("reports an API error by its code", () => {
     const err = new NestrApiError("Nest 'Quarterly plan for a client' not found", 404, "/nests/x");
     const code = errorCodeFor(err);
     expect(code).toBe("NOT_FOUND");
@@ -69,6 +69,20 @@ describe("errorCodeFromResult", () => {
   });
 });
 
+describe("error messages", () => {
+  const errResult = (body: unknown) => ({ isError: true, content: [{ type: "text", text: JSON.stringify(body) }] });
+
+  it("keeps the message of a ToolError result, capped at 100 characters", () => {
+    expect(errorMessageFromResult(errResult({ error: true, code: "NOT_FOUND", message: "Nest not found" }))).toBe("Nest not found");
+    expect(errorMessageFromResult(errResult({ error: true, code: "UNKNOWN", message: "x".repeat(300) }))?.length).toBe(100);
+  });
+
+  it("keeps the message of a thrown error, on one line", () => {
+    expect(errorMessageFor(new Error("first line\nsecond line"))).toBe("first line second line");
+    expect(errorMessageFor("not an error")).toBeUndefined();
+  });
+});
+
 describe("tool-call analytics through the server", () => {
   async function call(client: Partial<NestrClient>, name: string, args: Record<string, unknown>) {
     const seen: ToolCallInfo[] = [];
@@ -83,7 +97,7 @@ describe("tool-call analytics through the server", () => {
     return seen;
   }
 
-  it("records a failed API call as a failure with its code and no message", async () => {
+  it("records a failed API call as a failure with its code and message", async () => {
     const failing = new Proxy({}, {
       get: () => async () => { throw new NestrApiError("Nest 'A private title' not found", 404, "/nests/x"); },
     }) as Partial<NestrClient>;
@@ -91,7 +105,8 @@ describe("tool-call analytics through the server", () => {
     expect(seen).toHaveLength(1);
     expect(seen[0].success).toBe(false);
     expect(seen[0].errorCode).toBe("NOT_FOUND");
-    expect(JSON.stringify(seen[0])).not.toContain("private title");
+    expect(seen[0].errorMessage).toContain("not found");
+    expect(seen[0].errorMessage!.length).toBeLessThanOrEqual(100);
     expect(seen[0].access).toBe("read");
     expect(seen[0].durationMs).toBeGreaterThanOrEqual(0);
   });
@@ -103,6 +118,7 @@ describe("tool-call analytics through the server", () => {
     const seen = await call(ok, "nestr_get_nest", { nestId: NEST });
     expect(seen[0].success).toBe(true);
     expect(seen[0].errorCode).toBeUndefined();
+    expect(seen[0].errorMessage).toBeUndefined();
     expect(seen[0].workspaceId).toBe(WS);
   });
 });

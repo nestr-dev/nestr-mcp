@@ -153,6 +153,7 @@ class GA4Tracker implements EventTracker {
       workspace_id: params.workspaceId,
       success: params.success,
       error_code: params.errorCode,
+      error_message: params.errorMessage,
       access: params.access,
       duration_ms: params.durationMs,
     });

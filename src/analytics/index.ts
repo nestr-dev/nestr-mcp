@@ -44,8 +44,10 @@ export interface ToolCallParams {
   toolName: string;
   workspaceId?: string;
   success?: boolean;
-  /** A fixed code (see analytics/fields.ts), never an error message */
+  /** A fixed code (see analytics/fields.ts) */
   errorCode?: string;
+  /** The error's message, capped at 100 characters */
+  errorMessage?: string;
   /** Whether the tool only reads ("read") or may change something ("write") */
   access?: "read" | "write";
   /** Wall time of the call in milliseconds */

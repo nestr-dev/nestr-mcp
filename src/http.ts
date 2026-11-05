@@ -1310,6 +1310,7 @@ function buildMcpSession(opts: {
             workspaceId: info.workspaceId,
             success: info.success,
             errorCode: info.errorCode,
+            errorMessage: info.errorMessage,
             access: info.access,
             durationMs: info.durationMs,
           });

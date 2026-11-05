@@ -1,11 +1,11 @@
 /**
  * What an analytics event may carry about a tool call, and nothing more.
  *
- * Every value here goes to Google Analytics, so none of it may identify a
- * person or carry their content. Free text supplied by a client (its name, its
- * version, the consumer it claims) is cut down to a short label of safe
- * characters, and an error is reported as a fixed code, never as its message:
- * an API error message can echo a title, a name or an email address.
+ * Every value here goes to Google Analytics. Free text supplied by a client
+ * (its name, its version, the consumer it claims) is cut down to a short label
+ * of safe characters. A failure is reported twice: as a fixed code, which groups
+ * cleanly in reports, and as its message, kept on purpose and capped at GA4's
+ * 100-character limit for a parameter value.
  */
 
 import { NestrApiError } from "../api/client.js";
@@ -44,19 +44,44 @@ export function errorCodeFor(error: unknown): string {
   return "UNKNOWN";
 }
 
+const MAX_MESSAGE = 100;
+
+function errorBody(result: unknown): { code?: unknown; error?: unknown; message?: unknown } | undefined {
+  const content = (result as { content?: Array<{ type?: string; text?: string }> })?.content;
+  const text = Array.isArray(content) ? content.find((c) => c && c.type === "text")?.text : undefined;
+  if (!text || text.length > MAX_PARSE) return undefined;
+  try {
+    const body = JSON.parse(text);
+    return body && typeof body === "object" ? body : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The tool handler reports a failure as a result with isError set and a
  * ToolError JSON body, rather than throwing. Reads that body's fixed code.
  */
 export function errorCodeFromResult(result: unknown): string {
-  const content = (result as { content?: Array<{ type?: string; text?: string }> })?.content;
-  const text = Array.isArray(content) ? content.find((c) => c && c.type === "text")?.text : undefined;
-  if (!text || text.length > MAX_PARSE) return "UNKNOWN";
-  try {
-    return asCode((JSON.parse(text) as { code?: unknown })?.code);
-  } catch {
-    return "UNKNOWN";
-  }
+  return asCode(errorBody(result)?.code);
+}
+
+const capMessage = (value: unknown): string | undefined => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  return trimmed ? trimmed.slice(0, MAX_MESSAGE) : undefined;
+};
+
+/** The message of a ToolError result, capped at GA4's parameter length. */
+export function errorMessageFromResult(result: unknown): string | undefined {
+  // ToolError carries `error: true` and the text in `message`.
+  const body = errorBody(result);
+  return capMessage(body?.message) ?? capMessage(body?.error);
+}
+
+/** The message of an error that escaped the handler, capped the same way. */
+export function errorMessageFor(error: unknown): string | undefined {
+  return capMessage(error instanceof Error ? error.message : undefined);
 }
 
 /** Read when the tool is annotated read-only, write otherwise. */
