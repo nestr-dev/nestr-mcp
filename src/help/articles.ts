@@ -105,13 +105,14 @@ const ARTICLE_KEYWORDS: Record<string, string[]> = {
   //
   // Matching is substring-based (haystack.includes(token)), so every keyword here
   // must not CONTAIN a common query word: "address" took every "add" question,
-  // "start page" every "start", "personal" every "person", "overview" every "view".
+  // "start page" every "start", "personal" every "person", "overview" every "view", "assigned to me"
+  // every "assign".
   // Nor may it add a topic noun another article owns: "my projects" and "my todos"
   // tied with projects-and-todos and won on the alphabetical tiebreak. "page" is
   // what separates "my todos page" from "add a todo", so it carries the routing.
   // "my roles" stays: roles questions without "page" still tie three ways, and the
   // tiebreak gives those to building-your-org-structure.
-  "navigating-nestr": ["sidebar", "menu", "navigation", "navigate", "home", "homepage", "page", "pages", "url", "my roles", "assigned to me", "pagina"],
+  "navigating-nestr": ["sidebar", "menu", "navigation", "navigate", "home", "homepage", "page", "pages", "url", "my roles", "pagina"],
   "scrum-agile-app": ["sprint", "sprints", "kanban", "backlog", "burndown", "epic", "epics", "milestone", "milestones", "iteration", "userstory", "story", "stories", "standup", "velocity", "board"],
   "running-meetings-in-nestr": ["meeting", "meetings", "schedule", "scheduling", "recurring", "tactical", "governance", "standup", "retro", "retrospective", "facilitation", "facilitator", "agenda", "minutes", "notes", "pdf", "download", "export", "report", "outcome", "outcomes", "checkin", "check-in", "election", "elections"],
   // Removing or converting a role, circle or policy is not a delete button anywhere

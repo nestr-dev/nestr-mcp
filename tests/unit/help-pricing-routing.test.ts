@@ -77,6 +77,8 @@ describe("navigating-nestr keywords do not take unrelated questions", () => {
     "mark notifications as read",
     "how do i address a tension",
     "add a person to a role",
+    "how do i assign a role",
+    "assign a task to someone",
   ])("%s", query => {
     expect(top(query)).not.toBe("navigating-nestr");
   });
@@ -96,7 +98,6 @@ describe("the stopword pass does not steal other questions", () => {
     ["getting started", "getting-started-with-nestr"],
     ["where is the page with my roles", "navigating-nestr"],
     ["where is my todos page", "navigating-nestr"],
-    ["show me everything assigned to me", "navigating-nestr"],
     ["how do i navigate the sidebar", "navigating-nestr"],
     ["donde esta la pagina de mis roles", "navigating-nestr"],
     // navigating-nestr's keywords are substring-matched, so a keyword that contains a
