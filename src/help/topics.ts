@@ -25,7 +25,7 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 - search: Full search query syntax with all operators and examples, including strict:true
 - api-surface: nestr_api_spec, for checking whether an endpoint exists at all
 - fields: Adding custom fields to labels when Nestr has no field for something yet
-- web-app-links: Every web-app URL shape, the content tab hashes, and the two-pane hash form
+- web-app-links: Every web-app URL shape, the personal pages (/roles, /projects, ...), the content tab hashes, and the two-pane hash form
 - workspace-settings: Where workspace settings are, every tab, and the link to hand over
 - inbox: Inbox quick capture, processing workflow, and reordering
 - daily-plan: Daily plan usage, scope, and planning workflows
@@ -1178,11 +1178,18 @@ Use the two-ID format to show items in context:
 - \`/n/{roleId}/{projectId}\` - Project owned by a role
 - \`/n/{projectId}/{taskId}\` - Task within its project
 
-### Cross-Workspace Views
+### Personal Pages (the sidebar)
 
-These pages show items across all workspaces for the current user:
-- \`/roles\` - All roles this user fills
-- \`/projects\` - All projects assigned to this user
+The sidebar's top group, each page across all the user's workspaces:
+- \`/\` - My workspaces
+- \`/roles\` - My circles & roles: every role this user fills
+- \`/projects\` - My projects (shown when the Projects & Todos app is on)
+- \`/todos\` - My todos (same condition)
+- \`/apps/cn.circleplus.feedback\` - My feedback (shown when the Feedback app is on)
+- \`/profile#<tab>\` - Their own profile and account settings
+
+These are paths, not tabs. \`/n/{circleId}#roles\` lists a circle's roles, not the roles
+the user fills, and the settings link takes no \`#roles\` at all.
 
 ### User Profile
 

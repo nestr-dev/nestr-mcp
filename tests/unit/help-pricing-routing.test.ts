@@ -55,6 +55,7 @@ const CORPUS = [
   "chat-channels-and-communication-in-nestr",
   "building-your-org-structure-roles-circles",
   "nestr-the-power-of-labels",
+  "navigating-nestr",
 ].map(slug => ({ slug, url: `https://nestr.io/help/articles/${slug}` }));
 
 const top = (query: string) => searchArticleIndex(CORPUS, query)[0]?.slug ?? "nothing";
@@ -77,6 +78,8 @@ describe("the stopword pass does not steal other questions", () => {
     ["connect claude to my workspace", "nestr-mcp-connect-ai-assistants-to-your-workspace"],
     ["how do i run a tactical meeting", "running-meetings-in-nestr"],
     ["getting started", "getting-started-with-nestr"],
+    ["where is the page with my roles", "navigating-nestr"],
+    ["where is my todos page", "navigating-nestr"],
   ];
   it.each(expectations)("%s -> %s", (query, slug) => {
     expect(top(query)).toBe(slug);
