@@ -17,7 +17,7 @@ import { getCompletableListHtml, appResources } from "./apps/index.js";
 // Skills instructions are now served on-demand via nestr_help tool (see src/help/topics.ts)
 import * as mcpcat from "mcpcat";
 import type { DiagnoseSnapshot } from "./util/diagnose.js";
-import { accessFor, errorCodeFor, WorkspaceResolver } from "./analytics/fields.js";
+import { accessFor, errorCodeFor, errorCodeFromResult, WorkspaceResolver } from "./analytics/fields.js";
 
 export interface ToolCallInfo {
   success: boolean;
@@ -190,14 +190,17 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
         localFileRoots: config.localFileRoots,
       });
 
-      // Track successful tool call
+      // Track the call. The handler reports most failures as an isError result
+      // rather than throwing, so success and the code come from the result.
       if (config.onToolCall) {
         try {
+          const failed = (result as { isError?: boolean }).isError === true;
           config.onToolCall(name, toolArgs, {
-            success: true,
+            success: !failed,
+            errorCode: failed ? errorCodeFromResult(result) : undefined,
             access,
             durationMs: Date.now() - startedAt,
-            workspaceId: workspaces.resolve(toolArgs, result),
+            workspaceId: workspaces.resolve(toolArgs, failed ? undefined : result),
           });
         } catch { /* analytics must never fail a tool call */ }
       }

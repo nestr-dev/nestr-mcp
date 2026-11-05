@@ -11,6 +11,8 @@
 import { NestrApiError } from "../api/client.js";
 
 const SAFE_LABEL = /[^A-Za-z0-9._+-]/g;
+const ID = /^[A-Za-z0-9]{17}$/;
+const MAX_PARSE = 500_000;
 
 /**
  * A short label of safe characters, or undefined. Anything that looks like an
@@ -24,14 +26,37 @@ export function safeLabel(value: unknown, max = 40): string | undefined {
   return cleaned && cleaned !== "_" ? cleaned : undefined;
 }
 
-/** A fixed code for a failed tool call. Never the error's message. */
+// The codes a tool error carries are an enum (ErrorCode in api/client.ts, plus
+// VALIDATION and UNKNOWN from the tool handler). Anything not shaped like one is
+// reported as UNKNOWN, so a message can never pass for a code.
+const CODE = /^[A-Z][A-Z0-9_]{1,63}$/;
+const asCode = (value: unknown): string => (typeof value === "string" && CODE.test(value) ? value : "UNKNOWN");
+
+/**
+ * A fixed code for an error that escaped the tool handler. Uses the same codes
+ * the handler puts in its own error results. Never the error's message.
+ */
 export function errorCodeFor(error: unknown): string {
-  if (error instanceof NestrApiError) return error.code;
-  if (error instanceof Error) {
-    if (error.name === "PrimeLabelConflictError") return "PRIME_LABEL_CONFLICT";
-    if (error.name === "ZodError") return "VALIDATION_ERROR";
+  if (error instanceof NestrApiError) return asCode(error.code);
+  if (error instanceof Error && (error.name === "PrimeLabelConflictError" || error.name === "ZodError")) {
+    return "VALIDATION";
   }
-  return "TOOL_ERROR";
+  return "UNKNOWN";
+}
+
+/**
+ * The tool handler reports a failure as a result with isError set and a
+ * ToolError JSON body, rather than throwing. Reads that body's fixed code.
+ */
+export function errorCodeFromResult(result: unknown): string {
+  const content = (result as { content?: Array<{ type?: string; text?: string }> })?.content;
+  const text = Array.isArray(content) ? content.find((c) => c && c.type === "text")?.text : undefined;
+  if (!text || text.length > MAX_PARSE) return "UNKNOWN";
+  try {
+    return asCode((JSON.parse(text) as { code?: unknown })?.code);
+  } catch {
+    return "UNKNOWN";
+  }
 }
 
 /** Read when the tool is annotated read-only, write otherwise. */
@@ -39,8 +64,6 @@ export function accessFor(toolName: string, readOnlyTools: ReadonlySet<string>):
   return readOnlyTools.has(toolName) ? "read" : "write";
 }
 
-const ID = /^[A-Za-z0-9]{17}$/;
-const MAX_PARSE = 500_000;
 
 function wsFrom(node: unknown): string | undefined {
   if (!node || typeof node !== "object") return undefined;

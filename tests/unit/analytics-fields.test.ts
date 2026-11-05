@@ -3,8 +3,10 @@ import { NestrApiError } from "../../src/api/client.js";
 import { PrimeLabelConflictError } from "../../src/tools/validation.js";
 import { READONLY_TOOL_NAMES } from "../../src/tools/index.js";
 import {
-  safeLabel, errorCodeFor, accessFor, workspaceIdFromResult, WorkspaceResolver,
+  safeLabel, errorCodeFor, errorCodeFromResult, accessFor, workspaceIdFromResult, WorkspaceResolver,
 } from "../../src/analytics/fields.js";
+import { createServer, type ToolCallInfo } from "../../src/server.js";
+import type { NestrClient } from "../../src/api/client.js";
 
 const WS = "AbCdEfGhIjKlMnOpQ"; // 17-char id shape, not a real workspace
 const NEST = "ZyXwVuTsRqPoNmLkJ";
@@ -40,16 +42,68 @@ describe("errorCodeFor", () => {
     expect(code).not.toContain("Quarterly");
   });
 
-  it("maps known local errors to fixed codes", () => {
-    expect(errorCodeFor(new PrimeLabelConflictError(["role", "project"]))).toBe("PRIME_LABEL_CONFLICT");
+  it("uses the handler's codes for local validation errors", () => {
+    expect(errorCodeFor(new PrimeLabelConflictError(["role", "project"]))).toBe("VALIDATION");
     const zod = new Error("Expected string, received number at title");
     zod.name = "ZodError";
-    expect(errorCodeFor(zod)).toBe("VALIDATION_ERROR");
+    expect(errorCodeFor(zod)).toBe("VALIDATION");
   });
 
-  it("collapses anything else to one generic code", () => {
-    expect(errorCodeFor(new Error("contains someone@example.com"))).toBe("TOOL_ERROR");
-    expect(errorCodeFor("a string")).toBe("TOOL_ERROR");
+  it("collapses anything else to UNKNOWN", () => {
+    expect(errorCodeFor(new Error("contains someone@example.com"))).toBe("UNKNOWN");
+    expect(errorCodeFor("a string")).toBe("UNKNOWN");
+  });
+});
+
+describe("errorCodeFromResult", () => {
+  const errResult = (body: unknown) => ({ isError: true, content: [{ type: "text", text: JSON.stringify(body) }] });
+
+  it("reads the fixed code from a ToolError result", () => {
+    expect(errorCodeFromResult(errResult({ error: "Nest 'Board plan' not found", code: "NOT_FOUND" }))).toBe("NOT_FOUND");
+  });
+
+  it("never lets a message pass as a code", () => {
+    expect(errorCodeFromResult(errResult({ code: "someone@example.com" }))).toBe("UNKNOWN");
+    expect(errorCodeFromResult(errResult({ code: "Nest not found" }))).toBe("UNKNOWN");
+    expect(errorCodeFromResult({ isError: true, content: [{ type: "text", text: "not json" }] })).toBe("UNKNOWN");
+  });
+});
+
+describe("tool-call analytics through the server", () => {
+  async function call(client: Partial<NestrClient>, name: string, args: Record<string, unknown>) {
+    const seen: ToolCallInfo[] = [];
+    const server = createServer({
+      client: client as NestrClient,
+      onToolCall: (_tool, _args, info) => { seen.push(info); },
+    });
+    const handler = (server as unknown as { _requestHandlers: Map<string, (req: unknown, extra: unknown) => Promise<unknown>> })
+      ._requestHandlers.get("tools/call");
+    if (!handler) throw new Error("tools/call handler not registered");
+    await handler({ method: "tools/call", params: { name, arguments: args } }, {});
+    return seen;
+  }
+
+  it("records a failed API call as a failure with its code and no message", async () => {
+    const failing = new Proxy({}, {
+      get: () => async () => { throw new NestrApiError("Nest 'A private title' not found", 404, "/nests/x"); },
+    }) as Partial<NestrClient>;
+    const seen = await call(failing, "nestr_get_nest", { nestId: NEST });
+    expect(seen).toHaveLength(1);
+    expect(seen[0].success).toBe(false);
+    expect(seen[0].errorCode).toBe("NOT_FOUND");
+    expect(JSON.stringify(seen[0])).not.toContain("private title");
+    expect(seen[0].access).toBe("read");
+    expect(seen[0].durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("records a successful call with the workspace from its result", async () => {
+    const ok = new Proxy({}, {
+      get: () => async () => ({ _id: NEST, workspaceId: WS, title: "x" }),
+    }) as Partial<NestrClient>;
+    const seen = await call(ok, "nestr_get_nest", { nestId: NEST });
+    expect(seen[0].success).toBe(true);
+    expect(seen[0].errorCode).toBeUndefined();
+    expect(seen[0].workspaceId).toBe(WS);
   });
 });
 
