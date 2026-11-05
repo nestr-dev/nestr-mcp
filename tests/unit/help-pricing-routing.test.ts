@@ -55,6 +55,7 @@ const CORPUS = [
   "chat-channels-and-communication-in-nestr",
   "building-your-org-structure-roles-circles",
   "nestr-the-power-of-labels",
+  "navigating-nestr",
 ].map(slug => ({ slug, url: `https://nestr.io/help/articles/${slug}` }));
 
 const top = (query: string) => searchArticleIndex(CORPUS, query)[0]?.slug ?? "nothing";
@@ -62,6 +63,24 @@ const top = (query: string) => searchArticleIndex(CORPUS, query)[0]?.slug ?? "no
 describe("pricing questions reach the pricing article", () => {
   it.each(PRICING_QUERIES)("%s", query => {
     expect(top(query)).toBe("pricing-plans-what-you-pay-for");
+  });
+});
+
+// navigating-nestr's keywords are substring-matched, so one that CONTAINS a common
+// query word takes that word's questions ("address" held "add", "start page" held
+// "start", "personal" held "person", "overview" held "view"). Where the right answer
+// is not settled by this corpus, the property is just that navigation must not win.
+describe("navigating-nestr keywords do not take unrelated questions", () => {
+  it.each([
+    "how do i start a meeting",
+    "how do i change the view",
+    "mark notifications as read",
+    "how do i address a tension",
+    "add a person to a role",
+    "how do i assign a role",
+    "assign a task to someone",
+  ])("%s", query => {
+    expect(top(query)).not.toBe("navigating-nestr");
   });
 });
 
@@ -77,6 +96,18 @@ describe("the stopword pass does not steal other questions", () => {
     ["connect claude to my workspace", "nestr-mcp-connect-ai-assistants-to-your-workspace"],
     ["how do i run a tactical meeting", "running-meetings-in-nestr"],
     ["getting started", "getting-started-with-nestr"],
+    ["where is the page with my roles", "navigating-nestr"],
+    ["where is my todos page", "navigating-nestr"],
+    ["how do i navigate the sidebar", "navigating-nestr"],
+    ["donde esta la pagina de mis roles", "navigating-nestr"],
+    // navigating-nestr's keywords are substring-matched, so a keyword that contains a
+    // common query word ("address" holds "add", "start page" holds "start") steals
+    // that word's questions. These pin the ones it once took.
+    ["how do i add a todo to a project", "projects-and-todos-creating-tracking-managing-work"],
+    ["add a user to the workspace", "managing-users-invitations-permissions"],
+    ["how do i add a role", "building-your-org-structure-roles-circles"],
+    ["find tasks with a label", "nestr-search"],
+    ["add a person to a role", "building-your-org-structure-roles-circles"],
   ];
   it.each(expectations)("%s -> %s", (query, slug) => {
     expect(top(query)).toBe(slug);
