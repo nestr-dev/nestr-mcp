@@ -1212,6 +1212,8 @@ export class NestrClient {
     /** ISO 8601 or yyyy-mm-dd. With due it makes a span; yyyy-mm-dd dates are all-day. */
     start?: string;
     allDay?: boolean;
+    /** Create the nest already completed. The nest must be completable; projects use fields['project.status'] instead. */
+    completed?: boolean;
     /** Role or circle id to proxy-assign the new nest to. */
     proxyAssign?: string;
   }): Promise<Nest> {
