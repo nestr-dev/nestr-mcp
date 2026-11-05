@@ -1526,6 +1526,7 @@ export const schemas = {
     start: z.string().optional().describe(START_DESC),
     allDay: z.boolean().optional().describe(ALL_DAY_DESC),
     due: z.string().optional().describe("Due date (ISO 8601). SET THIS whenever the item is meant to happen at a time. It is a field, not a title: the sweep that fires dated work reads `due` and nothing else, so a task called \"Daily digest, 28 Aug\" with no due is invisible to it and simply never runs, with nothing anywhere saying so. For projects/tasks: the deadline, or the end when a start is set."),
+    completed: z.boolean().optional().describe("Mark the nest completed on creation. Same field as nestr_update_nest, and subject to the same rule: the nest must be completable (a task, a prepared tension, a meeting), and projects use fields['project.status'] = 'Done' instead."),
     accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes an accountability child nest."),
     domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes a domain child nest."),
     workspaceId: z.string().optional().describe("Workspace ID. Required when creating roles/circles with accountabilities or domains (used to route to the self-organization API)."),
@@ -2473,6 +2474,10 @@ export const toolDefinitions = [
         due: {
           type: "string",
           description: "Due date (ISO 8601). SET THIS whenever the item is meant to happen at a time. It is a field, not a title: the sweep that fires dated work reads `due` and nothing else, so a task called \"Daily digest, 28 Aug\" with no due is invisible to it and simply never runs, with nothing anywhere saying so. For projects/tasks: the deadline, or the end when a start is set.",
+        },
+        completed: {
+          type: "boolean",
+          description: "Mark the nest completed on creation. Same field as nestr_update_nest, and subject to the same rule: the nest must be completable (a task, a prepared tension, a meeting), and projects use fields['project.status'] = 'Done' instead.",
         },
         accountabilities: {
           type: "array",
@@ -4836,6 +4841,7 @@ async function _handleToolCall(
           due: parsed.due,
           start: parsed.start,
           allDay: parsed.allDay,
+          completed: parsed.completed,
           proxyAssign: parsed.proxyAssign,
         });
         return formatResult({ message: "Nest created successfully", _id: writtenId(nest), nest });
