@@ -1383,6 +1383,8 @@ const hintFilterSchemas = {
 const linkedUsersSchema = z.boolean().optional()
   .describe("Resolve every user id in the results to a full user, returned once in linked.users.");
 
+const INLINE_UPLOAD_DESC = "true to upload an image (PNG, JPEG, GIF or WebP) as part of the nest's text instead of as an attachment: it stays off the attachment list, as an image pasted in Nestr does, and the response carries `markdown`, the reference to put in the description, e.g. ![shot.png](/file/download?id=FILE_ID&name=shot.png). The same image in HTML is <img src=\"/file/download?id=FILE_ID&name=shot.png\" alt=\"shot.png\">.";
+
 export const schemas = {
   listWorkspaces: z.object({
     search: z.string().optional().describe("Search query to filter workspaces"),
@@ -2207,6 +2209,7 @@ export const schemas = {
     content: z.string().optional().describe("File content as UTF-8 text. Use for text-native files you author directly (.md, .txt, .csv, .json, .html, .svg, code). Stored verbatim. Provide this OR dataBase64, not both."),
     dataBase64: z.string().optional().describe("File bytes, base64-encoded. Use for binary content you already hold as base64. Provide this OR content, not both."),
     filePath: z.string().optional().describe("Path to a file on this machine. Only when the server runs locally (npx @nestr/mcp)."),
+    inline: z.boolean().optional().describe(INLINE_UPLOAD_DESC),
   }).refine((v) => [v.content, v.dataBase64, v.filePath].filter((x) => x !== undefined).length === 1, {
     message: "Provide exactly one of content (UTF-8 text), dataBase64 (base64 bytes) or filePath (a local file).",
   }),
@@ -2215,6 +2218,7 @@ export const schemas = {
     nestId: z.string().describe("Nest or comment ID to attach the file to"),
     name: z.string().describe('File name including extension (e.g. "screenshot.png")'),
     contentType: z.string().describe('MIME type of the file (e.g. "image/png", "application/pdf")'),
+    inline: z.boolean().optional().describe(INLINE_UPLOAD_DESC),
   }),
 
   deleteFile: z.object({
@@ -4173,7 +4177,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_upload_file",
-    description: "Upload a file and attach it to a nest (or comment; files are keyed by nestId, so a comment ID attaches the file to that comment). Provide the file one of two ways: content (UTF-8 text, for text-native files you author directly such as .md, .csv, .json, .html, .svg, or code) or dataBase64 (base64-encoded bytes you already have). For a binary file on disk (an image, a PDF) when you can run shell commands, use nestr_get_upload_url instead: writing the bytes out as base64 is slow, costly, and one wrong character corrupts the file. Any content type is accepted; the upload is rejected if it exceeds the server's maximum size (default 10MB). Returns the new file's descriptor (id, name, contentType, size). Auth: a token with write access to the nest.",
+    description: "Upload a file and attach it to a nest (or comment; files are keyed by nestId, so a comment ID attaches the file to that comment). Provide the file one of two ways: content (UTF-8 text, for text-native files you author directly such as .md, .csv, .json, .html, .svg, or code) or dataBase64 (base64-encoded bytes you already have). For a binary file on disk (an image, a PDF) when you can run shell commands, use nestr_get_upload_url instead: writing the bytes out as base64 is slow, costly, and one wrong character corrupts the file. Any content type is accepted; the upload is rejected if it exceeds the server's maximum size (default 10MB). Returns the new file's descriptor (id, name, contentType, size). To show an image inside the nest's text rather than as an attachment, pass inline: true and put the returned markdown reference in the description. Auth: a token with write access to the nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -4182,6 +4186,7 @@ export const toolDefinitions = [
         contentType: { type: "string", description: 'MIME type (e.g. "text/markdown", "text/csv", "image/png")' },
         content: { type: "string", description: "File content as UTF-8 text (for text-native files: .md, .txt, .csv, .json, .html, .svg, code). Stored verbatim. Provide this OR dataBase64." },
         dataBase64: { type: "string", description: "File bytes, base64-encoded. Provide this OR content." },
+        inline: { type: "boolean", description: INLINE_UPLOAD_DESC },
       },
       required: ["nestId", "name", "contentType"],
     },
@@ -4189,13 +4194,14 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_upload_url",
-    description: "Get a single-use URL for attaching a file on disk to a nest (or comment) as raw bytes, with no base64. Use this instead of nestr_upload_file's dataBase64 for any binary file (an image, a PDF, an archive) when you can run shell commands. Then run the returned curl command with the real file path, e.g. curl --data-binary @screenshot.png '<url>'. The upload needs no API key and stores the file under the name and contentType given here; its response is the new file's descriptor. The URL works once and expires after about 10 minutes, and a body over maxBytes is refused. A refused upload (too large, empty, not allowed) leaves the URL usable for a retry. Auth: a token with write access to the nest.",
+    description: "Get a single-use URL for attaching a file on disk to a nest (or comment) as raw bytes, with no base64. Use this instead of nestr_upload_file's dataBase64 for any binary file (an image, a PDF, an archive) when you can run shell commands. Then run the returned curl command with the real file path, e.g. curl --data-binary @screenshot.png '<url>'. The upload needs no API key and stores the file under the name and contentType given here; its response is the new file's descriptor. The URL works once and expires after about 10 minutes, and a body over maxBytes is refused. A refused upload (too large, empty, not allowed) leaves the URL usable for a retry. To show an image inside the nest's text rather than as an attachment (a screenshot in a task description, say), pass inline: true; the upload's response then carries markdown, the reference to put in the description. Auth: a token with write access to the nest.",
     inputSchema: {
       type: "object" as const,
       properties: {
         nestId: { type: "string", description: "Nest or comment ID to attach the file to" },
         name: { type: "string", description: 'File name including extension (e.g. "screenshot.png")' },
         contentType: { type: "string", description: 'MIME type (e.g. "image/png", "application/pdf")' },
+        inline: { type: "boolean", description: INLINE_UPLOAD_DESC },
       },
       required: ["nestId", "name", "contentType"],
     },
@@ -6349,9 +6355,12 @@ async function _handleToolCall(
           name: parsed.name,
           contentType: parsed.contentType,
           dataBase64,
+          ...(parsed.inline ? { inline: true } : {}),
         });
+        // An inline image is only seen once its reference is in the text, so say so.
+        const embed = file.markdown ? ` Put ${file.markdown} in the description where it should show.` : "";
         return formatResult({
-          message: `Uploaded ${file.name} (${formatBytes(file.size)}) to ${parsed.nestId}.`,
+          message: `Uploaded ${file.name} (${formatBytes(file.size)}) to ${parsed.nestId}.${embed}`,
           file,
         });
       }
@@ -6361,9 +6370,13 @@ async function _handleToolCall(
         const upload = await client.createNestFileUploadUrl(parsed.nestId, {
           name: parsed.name,
           contentType: parsed.contentType,
+          ...(parsed.inline ? { inline: true } : {}),
         });
+        const embed = parsed.inline
+          ? " The upload's response carries markdown: put that reference in the description where the image should show."
+          : "";
         return formatResult({
-          message: `Upload URL for ${parsed.name} on ${parsed.nestId}. Run the curl command with the real file path before ${upload.expiresAt}; it works once.`,
+          message: `Upload URL for ${parsed.name} on ${parsed.nestId}. Run the curl command with the real file path before ${upload.expiresAt}; it works once.${embed}`,
           ...upload,
         });
       }

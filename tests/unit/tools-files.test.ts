@@ -361,6 +361,35 @@ describe("file attachment tools", () => {
     expect(url).toBe("https://api.test.io/api/nests/comment-7/files");
   });
 
+  it("nestr_upload_file with inline: true asks for an inline image and hands back the reference to embed", async () => {
+    const markdown = "![shot.png](/file/download?id=f2&name=shot.png)";
+    mockFetch.mockResolvedValue(mockResponse(200, {
+      status: "success",
+      data: { id: "f2", name: "shot.png", contentType: "image/png", size: 3, context: "inline_image", markdown },
+    }));
+
+    const result = await handleToolCall(client, "nestr_upload_file", {
+      nestId: "nest-1", name: "shot.png", contentType: "image/png", dataBase64: "AAAA", inline: true,
+    });
+    expect(result.isError).toBeFalsy();
+    const [, opts] = mockFetch.mock.calls[0];
+    expect(JSON.parse(opts.body as string)).toEqual({
+      name: "shot.png", contentType: "image/png", dataBase64: "AAAA", inline: true,
+    });
+    const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+    expect(parsed.message).toContain(markdown);
+    expect((parsed.file as { markdown: string }).markdown).toBe(markdown);
+  });
+
+  it("nestr_upload_file leaves inline out of the body when it is not asked for", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: { id: "f1", name: "a.txt", contentType: "text/plain", size: 1 } }));
+    await handleToolCall(client, "nestr_upload_file", {
+      nestId: "nest-1", name: "a.txt", contentType: "text/plain", content: "a", inline: false,
+    });
+    const [, opts] = mockFetch.mock.calls[0];
+    expect(JSON.parse(opts.body as string)).not.toHaveProperty("inline");
+  });
+
   it("nestr_upload_file requires name and contentType", async () => {
     const result = await handleToolCall(client, "nestr_upload_file", { nestId: "nest-1" });
     expect(result.isError).toBe(true);
@@ -668,6 +697,23 @@ describe("file attachment tools", () => {
 
     const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
     expect(parsed).toMatchObject(upload);
+  });
+
+  it("nestr_get_upload_url passes inline: true so the upload lands in the nest's text", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, {
+      status: "success",
+      data: { url: "https://app.test.io/api/file-uploads/nest-1/tok", method: "POST", expiresAt: "2026-10-28T10:10:00.000Z", maxBytes: 10, curl: "curl" },
+    }));
+
+    const result = await handleToolCall(client, "nestr_get_upload_url", {
+      nestId: "nest-1", name: "shot.png", contentType: "image/png", inline: true,
+    });
+    expect(result.isError).toBeFalsy();
+    const [, opts] = mockFetch.mock.calls[0];
+    expect(JSON.parse(opts.body as string)).toEqual({ name: "shot.png", contentType: "image/png", inline: true });
+    // The reference only exists once the bytes arrive, so the message says where it will be.
+    const parsed = parseResult((result.content[0] as { type: "text"; text: string }).text);
+    expect(parsed.message).toContain("markdown");
   });
 
   it("nestr_get_upload_url requires name and contentType", async () => {
