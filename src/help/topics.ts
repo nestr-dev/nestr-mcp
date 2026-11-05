@@ -556,6 +556,15 @@ the reference in the content and call \`nestr_read_file({ nestId, fileId })\` â€
 inline images even though they are not listed. The hint carries no \`toolCall\`: the id belongs
 to a specific reference, so there is no single call to pre-map.
 
+**Embedding an image yourself** (a screenshot in a task description, say): upload it with
+\`inline: true\` on \`nestr_get_upload_url\` (a file on disk), or on \`nestr_upload_file\` (bytes you
+hold, or \`filePath\` when this server runs on your machine). It then stays
+off the attachment list, like a pasted image, and the upload's response carries \`markdown\`,
+the reference to put in the description where the image should show. HTML works too:
+\`<img src="/file/download?id=FILE_ID&name=NAME" alt="NAME">\`, with the same relative URL.
+Only PNG, JPEG, GIF and WebP can be inline. Without \`inline\`, an image you reference from the
+text still shows there, but also appears among the attachments.
+
 **The \`tabs\` hint is the only correct source for an in-app view link.** It is computed per
 nest and per viewer: a workspace can rename Projects to "Stories Board", hide a tab, or not
 have one at all, and the hint already reflects that. It is returned on single-nest reads

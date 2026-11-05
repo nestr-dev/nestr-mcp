@@ -329,6 +329,8 @@ export interface NestFileMeta {
   createdAt?: string;
   /** The group the uploading field wrote, e.g. "nestradamus_files". */
   context?: string;
+  /** For an inline image: the reference to put in the nest's text to show it. */
+  markdown?: string;
   /** What the document holds and when to read it. Absent until someone says. */
   description?: string;
   /** "auto" (drafted on upload) or "admin" (someone wrote it). */
@@ -1445,7 +1447,7 @@ export class NestrClient {
    */
   async createNestFile(
     nestId: string,
-    file: { name: string; contentType: string; dataBase64: string }
+    file: { name: string; contentType: string; dataBase64: string; inline?: boolean }
   ): Promise<NestFileMeta> {
     const response = await this.fetch<{ status: string; data: NestFileMeta }>(
       `/nests/${nestId}/files`,
@@ -1460,7 +1462,7 @@ export class NestrClient {
    */
   async createNestFileUploadUrl(
     nestId: string,
-    file: { name: string; contentType: string }
+    file: { name: string; contentType: string; inline?: boolean }
   ): Promise<NestFileUploadUrl> {
     const response = await this.fetch<{ status: string; data: NestFileUploadUrl }>(
       `/nests/${nestId}/files/upload-url`,
