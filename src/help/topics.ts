@@ -557,7 +557,8 @@ inline images even though they are not listed. The hint carries no \`toolCall\`:
 to a specific reference, so there is no single call to pre-map.
 
 **Embedding an image yourself** (a screenshot in a task description, say): upload it with
-\`inline: true\` on \`nestr_get_upload_url\` (a file on disk) or \`nestr_upload_file\`. It then stays
+\`inline: true\` on \`nestr_get_upload_url\` (a file on disk), or on \`nestr_upload_file\` (bytes you
+hold, or \`filePath\` when this server runs on your machine). It then stays
 off the attachment list, like a pasted image, and the upload's response carries \`markdown\`,
 the reference to put in the description where the image should show. HTML works too:
 \`<img src="/file/download?id=FILE_ID&name=NAME" alt="NAME">\`, with the same relative URL.
