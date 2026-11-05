@@ -23,6 +23,10 @@ export interface AnalyticsContext {
   mcpClient?: string;
   /** Transport type */
   transport: "http" | "stdio";
+  /** How the session authenticated: a person's OAuth grant or an API key */
+  authMethod?: "oauth" | "api_key";
+  /** MCP client version from the initialize handshake */
+  clientVersion?: string;
 }
 
 /**
@@ -40,7 +44,12 @@ export interface ToolCallParams {
   toolName: string;
   workspaceId?: string;
   success?: boolean;
+  /** A fixed code (see analytics/fields.ts), never an error message */
   errorCode?: string;
+  /** Whether the tool only reads ("read") or may change something ("write") */
+  access?: "read" | "write";
+  /** Wall time of the call in milliseconds */
+  durationMs?: number;
 }
 
 /**
@@ -63,15 +72,6 @@ export interface OAuthCompleteParams {
 export interface SessionEndParams {
   duration?: number;
   toolCallCount?: number;
-}
-
-/**
- * Error event parameters
- */
-export interface ErrorParams {
-  errorType: string;
-  errorMessage?: string;
-  toolName?: string;
 }
 
 /**
@@ -98,9 +98,6 @@ export interface EventTracker {
 
   /** Track MCP session end */
   trackSessionEnd(context: AnalyticsContext, params?: SessionEndParams): void;
-
-  /** Track errors */
-  trackError(context: AnalyticsContext, params: ErrorParams): void;
 }
 
 /**
@@ -197,19 +194,6 @@ class Analytics {
         tracker.trackSessionEnd(context, params);
       } catch (error) {
         console.error(`[Analytics] ${tracker.name} trackSessionEnd error:`, error);
-      }
-    }
-  }
-
-  /**
-   * Track error across all registered trackers
-   */
-  trackError(context: AnalyticsContext, params: ErrorParams): void {
-    for (const tracker of this.trackers) {
-      try {
-        tracker.trackError(context, params);
-      } catch (error) {
-        console.error(`[Analytics] ${tracker.name} trackError error:`, error);
       }
     }
   }
