@@ -80,6 +80,9 @@ describe("the stopword pass does not steal other questions", () => {
     ["getting started", "getting-started-with-nestr"],
     ["where is the page with my roles", "navigating-nestr"],
     ["where is my todos page", "navigating-nestr"],
+    ["show me everything assigned to me", "navigating-nestr"],
+    ["how do i navigate the sidebar", "navigating-nestr"],
+    ["donde esta la pagina de mis roles", "navigating-nestr"],
   ];
   it.each(expectations)("%s -> %s", (query, slug) => {
     expect(top(query)).toBe(slug);

@@ -102,7 +102,7 @@ const ARTICLE_KEYWORDS: Record<string, string[]> = {
   // My todos, My feedback) are documented here with their links. An assistant asked
   // "where is the page with my roles" once invented /n/{workspaceId}?s=1#roles instead,
   // so the "my <thing> page" vocabulary has to land on this article.
-  "navigating-nestr": ["sidebar", "menu", "personal", "page", "pages", "overview", "bookmark", "url", "address", "my roles", "my projects", "my todos", "my workspaces", "my feedback", "across workspaces"],
+  "navigating-nestr": ["sidebar", "menu", "navigation", "navigate", "home", "homepage", "start page", "find", "personal", "page", "pages", "overview", "bookmark", "url", "address", "my roles", "my projects", "my todos", "my workspaces", "my feedback", "across workspaces", "assigned to me", "pagina"],
   "scrum-agile-app": ["sprint", "sprints", "kanban", "backlog", "burndown", "epic", "epics", "milestone", "milestones", "iteration", "userstory", "story", "stories", "standup", "velocity", "board"],
   "running-meetings-in-nestr": ["meeting", "meetings", "schedule", "scheduling", "recurring", "tactical", "governance", "standup", "retro", "retrospective", "facilitation", "facilitator", "agenda", "minutes", "notes", "pdf", "download", "export", "report", "outcome", "outcomes", "checkin", "check-in", "election", "elections"],
   // Removing or converting a role, circle or policy is not a delete button anywhere
