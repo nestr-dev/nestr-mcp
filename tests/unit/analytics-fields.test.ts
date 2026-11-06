@@ -82,6 +82,13 @@ describe("error messages", () => {
     expect(errorMessageFor("not an error")).toBeUndefined();
   });
 
+  it("masks a long message without spaces quickly", () => {
+    // A JSON error body has no spaces; the mask pattern is quadratic on such a run.
+    const start = Date.now();
+    expect(errorMessageFor(new Error("x".repeat(200_000)))?.length).toBe(100);
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+
   it("masks email addresses in a message, whole, before capping it", () => {
     expect(errorMessageFromResult(errResult({ error: true, code: "CONFLICT", message: "User jane.doe+x@example.co.uk already exists" })))
       .toBe("User [email] already exists");
@@ -166,6 +173,10 @@ describe("workspaceIdFromResult", () => {
     expect(workspaceIdFromResult(result({ items: [{ ancestors: [NEST, WS] }] }))).toBe(WS);
   });
 
+  it("reads a bare array, as a read of several nests returns", () => {
+    expect(workspaceIdFromResult(result([{ _id: NEST, workspaceId: WS }, { _id: "OtherOtherOtherOt", workspaceId: WS }]))).toBe(WS);
+  });
+
   it("returns undefined for text that is not JSON or names no workspace", () => {
     expect(workspaceIdFromResult({ content: [{ type: "text", text: "plain help text" }] })).toBeUndefined();
     expect(workspaceIdFromResult(result({ ok: true }))).toBeUndefined();
@@ -181,6 +192,13 @@ describe("WorkspaceResolver", () => {
     const r = new WorkspaceResolver();
     expect(r.resolve({ nestId: NEST }, result({ data: { workspaceId: WS } }))).toBe(WS);
     // A failed call has no result; the session still knows the nest.
+    expect(r.resolve({ nestId: NEST })).toBe(WS);
+  });
+
+  it("remembers a nest the call created, for later calls on it", () => {
+    const r = new WorkspaceResolver();
+    expect(r.resolve({ parentId: "ParentParentParen" }, result({ nest: { status: "success", data: { _id: NEST, ancestors: [NEST, WS] } } }))).toBe(WS);
+    // A later failed delete of the new nest has no result to read.
     expect(r.resolve({ nestId: NEST })).toBe(WS);
   });
 
