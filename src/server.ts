@@ -17,6 +17,16 @@ import { getCompletableListHtml, appResources } from "./apps/index.js";
 // Skills instructions are now served on-demand via nestr_help tool (see src/help/topics.ts)
 import * as mcpcat from "mcpcat";
 import type { DiagnoseSnapshot } from "./util/diagnose.js";
+import { accessFor, errorCodeFor, errorCodeFromResult, errorMessageFor, errorMessageFromResult, WorkspaceResolver } from "./analytics/fields.js";
+
+export interface ToolCallInfo {
+  success: boolean;
+  errorCode?: string;
+  errorMessage?: string;
+  access: "read" | "write";
+  durationMs: number;
+  workspaceId?: string;
+}
 
 // Re-export for callers that already import from this module.
 export type { DiagnoseSnapshot };
@@ -24,7 +34,11 @@ export type { DiagnoseSnapshot };
 export interface NestrMcpServerConfig {
   client?: NestrClient;
   /** Optional callback for analytics tracking of tool calls */
-  onToolCall?: (toolName: string, args: Record<string, unknown>, success: boolean, error?: string) => void;
+  /**
+   * Called after every tool call with what analytics records about it: a fixed
+   * errorCode plus the error's message (capped), and an internal workspaceId.
+   */
+  onToolCall?: (toolName: string, args: Record<string, unknown>, info: ToolCallInfo) => void;
   /** Pre-resolved user ID (e.g., from stored OAuth session) for MCPcat identification */
   userId?: string;
   /** Pre-resolved user display name for MCPcat identification */
@@ -156,10 +170,16 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
     return { tools };
   });
 
+  // One per server, so per MCP session: remembers which workspace a nest is in
+  // for analytics, learned from earlier calls in the same session.
+  const workspaces = new WorkspaceResolver();
+
   // Register tool call handler
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const toolArgs = (args as Record<string, unknown>) || {};
+    const startedAt = Date.now();
+    const access = accessFor(name, READONLY_TOOL_NAMES);
 
     try {
       const result = await handleToolCall(client, name, toolArgs, {
@@ -170,16 +190,36 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
         localFileRoots: config.localFileRoots,
       });
 
-      // Track successful tool call
+      // Track the call. The handler reports most failures as an isError result
+      // rather than throwing, so success and the code come from the result.
       if (config.onToolCall) {
-        config.onToolCall(name, toolArgs, true);
+        try {
+          const failed = (result as { isError?: boolean }).isError === true;
+          config.onToolCall(name, toolArgs, {
+            success: !failed,
+            errorCode: failed ? errorCodeFromResult(result) : undefined,
+            errorMessage: failed ? errorMessageFromResult(result) : undefined,
+            access,
+            durationMs: Date.now() - startedAt,
+            workspaceId: workspaces.resolve(toolArgs, failed ? undefined : result),
+          });
+        } catch { /* analytics must never fail a tool call */ }
       }
 
       return result;
     } catch (error) {
       // Track failed tool call
       if (config.onToolCall) {
-        config.onToolCall(name, toolArgs, false, error instanceof Error ? error.message : "Unknown error");
+        try {
+          config.onToolCall(name, toolArgs, {
+            success: false,
+            errorCode: errorCodeFor(error),
+            errorMessage: errorMessageFor(error),
+            access,
+            durationMs: Date.now() - startedAt,
+            workspaceId: workspaces.resolve(toolArgs),
+          });
+        } catch { /* analytics must never fail a tool call */ }
       }
       throw error;
     }

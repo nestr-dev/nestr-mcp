@@ -19,8 +19,8 @@ import {
   type OAuthStartParams,
   type OAuthCompleteParams,
   type SessionEndParams,
-  type ErrorParams,
 } from "./index.js";
+import { safeLabel } from "./fields.js";
 
 // GA4 configuration from environment
 const GA4_MEASUREMENT_ID = process.env.GA4_MEASUREMENT_ID;
@@ -99,7 +99,9 @@ function trackEvent(
         params: {
           ...params,
           app: "nestr_mcp",
-          mcp_client: context.mcpClient,
+          mcp_client: safeLabel(context.mcpClient),
+          client_version: safeLabel(context.clientVersion, 24),
+          auth_method: context.authMethod,
           transport: context.transport,
           engagement_time_msec: 100,
         },
@@ -140,9 +142,8 @@ class GA4Tracker implements EventTracker {
   }
 
   trackSessionStart(context: AnalyticsContext, params?: SessionStartParams): void {
-    trackEvent(context, "mcp_session_start", {
+    trackEvent({ ...context, authMethod: params?.authMethod ?? context.authMethod }, "mcp_session_start", {
       has_token: params?.hasToken,
-      auth_method: params?.authMethod,
     });
   }
 
@@ -152,12 +153,15 @@ class GA4Tracker implements EventTracker {
       workspace_id: params.workspaceId,
       success: params.success,
       error_code: params.errorCode,
+      error_message: params.errorMessage,
+      access: params.access,
+      duration_ms: params.durationMs,
     });
   }
 
   trackOAuthStart(context: AnalyticsContext, params?: OAuthStartParams): void {
     trackEvent(context, "mcp_oauth_start", {
-      client_consumer: params?.clientConsumer,
+      client_consumer: safeLabel(params?.clientConsumer),
     });
   }
 
@@ -171,14 +175,6 @@ class GA4Tracker implements EventTracker {
     trackEvent(context, "mcp_session_end", {
       duration_seconds: params?.duration,
       tool_call_count: params?.toolCallCount,
-    });
-  }
-
-  trackError(context: AnalyticsContext, params: ErrorParams): void {
-    trackEvent(context, "mcp_error", {
-      error_type: params.errorType,
-      error_message: params.errorMessage?.slice(0, 100),
-      tool_name: params.toolName,
     });
   }
 }

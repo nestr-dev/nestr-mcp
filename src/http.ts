@@ -1299,7 +1299,7 @@ function buildMcpSession(opts: {
     isReadOnly: opts.isReadOnly,
     userId: opts.userId,
     userName: opts.userName,
-    onToolCall: (toolName, args, success, error) => {
+    onToolCall: (toolName, _args, info) => {
       try {
         if (sessionRef?.analytics) {
           if (sessionRef.toolCallCount !== undefined) {
@@ -1307,9 +1307,12 @@ function buildMcpSession(opts: {
           }
           analytics.trackToolCall(sessionRef.analytics, {
             toolName,
-            workspaceId: (args as Record<string, unknown>).workspaceId as string | undefined,
-            success,
-            errorCode: error,
+            workspaceId: info.workspaceId,
+            success: info.success,
+            errorCode: info.errorCode,
+            errorMessage: info.errorMessage,
+            access: info.access,
+            durationMs: info.durationMs,
           });
         }
       } catch (e) { console.error("[Analytics] Tool call tracking error:", e); }
@@ -1501,6 +1504,8 @@ async function rehydrateSession(sessionId: string, authToken: string): Promise<S
       clientId: analytics.generateClientId(),
       userId: stored.userId,
       mcpClient: stored.mcpClient,
+      clientVersion: stored.mcpClientVersion,
+      authMethod: stored.isApiKey ? "api_key" : "oauth",
       transport: "http",
     } : undefined;
   } catch (e) { console.error("[Analytics] Context creation error:", e); }
@@ -2033,6 +2038,8 @@ async function handleMcpPost(req: Request, res: Response, routeOpts: { isReadOnl
         clientId: analytics.generateClientId(),
         userId,
         mcpClient: mcpClientName,
+        clientVersion: mcpClientVersion,
+        authMethod: isApiKey ? "api_key" : "oauth",
         transport: "http",
       } : undefined;
     } catch (e) { console.error("[Analytics] Context creation error:", e); }
