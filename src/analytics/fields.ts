@@ -4,8 +4,8 @@
  * Every value here goes to Google Analytics. Free text supplied by a client
  * (its name, its version, the consumer it claims) is cut down to a short label
  * of safe characters. A failure is reported twice: as a fixed code, which groups
- * cleanly in reports, and as its message, kept on purpose and capped at GA4's
- * 100-character limit for a parameter value.
+ * cleanly in reports, and as its message, kept on purpose with any email address
+ * masked and capped at GA4's 100-character limit for a parameter value.
  */
 
 import { NestrApiError } from "../api/client.js";
@@ -45,6 +45,9 @@ export function errorCodeFor(error: unknown): string {
 }
 
 const MAX_MESSAGE = 100;
+// Anything around an @ is masked whole, so a partial address cannot survive
+// either: an API error can repeat the address a user typed.
+const EMAIL = /\S*@\S*/g;
 
 function errorBody(result: unknown): { code?: unknown; error?: unknown; message?: unknown } | undefined {
   const content = (result as { content?: Array<{ type?: string; text?: string }> })?.content;
@@ -68,11 +71,11 @@ export function errorCodeFromResult(result: unknown): string {
 
 const capMessage = (value: unknown): string | undefined => {
   if (typeof value !== "string") return undefined;
-  const trimmed = value.replace(/\s+/g, " ").trim();
+  const trimmed = value.replace(EMAIL, "[email]").replace(/\s+/g, " ").trim();
   return trimmed ? trimmed.slice(0, MAX_MESSAGE) : undefined;
 };
 
-/** The message of a ToolError result, capped at GA4's parameter length. */
+/** The message of a ToolError result, emails masked, capped at GA4's parameter length. */
 export function errorMessageFromResult(result: unknown): string | undefined {
   // ToolError carries `error: true` and the text in `message`.
   const body = errorBody(result);

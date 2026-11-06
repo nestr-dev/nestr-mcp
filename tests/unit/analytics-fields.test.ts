@@ -81,6 +81,16 @@ describe("error messages", () => {
     expect(errorMessageFor(new Error("first line\nsecond line"))).toBe("first line second line");
     expect(errorMessageFor("not an error")).toBeUndefined();
   });
+
+  it("masks email addresses in a message, whole, before capping it", () => {
+    expect(errorMessageFromResult(errResult({ error: true, code: "CONFLICT", message: "User jane.doe+x@example.co.uk already exists" })))
+      .toBe("User [email] already exists");
+    expect(errorMessageFor(new Error("Invite to <a@b> failed"))).toBe("Invite to [email] failed");
+    // A long prefix must not push half an address past the cap unmasked.
+    const long = errorMessageFromResult(errResult({ error: true, code: "UNKNOWN", message: "x ".repeat(48) + "someone@example.com" }));
+    expect(long).not.toContain("@");
+    expect(long).not.toContain("someone");
+  });
 });
 
 describe("tool-call analytics through the server", () => {
@@ -109,6 +119,15 @@ describe("tool-call analytics through the server", () => {
     expect(seen[0].errorMessage!.length).toBeLessThanOrEqual(100);
     expect(seen[0].access).toBe("read");
     expect(seen[0].durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("masks an email address the API echoes back before it reaches analytics", async () => {
+    const failing = new Proxy({}, {
+      get: () => async () => { throw new NestrApiError("User jane@example.com is already a member", 400, "/workspaces/x/users"); },
+    }) as Partial<NestrClient>;
+    const seen = await call(failing, "nestr_get_nest", { nestId: NEST });
+    expect(seen[0].success).toBe(false);
+    expect(seen[0].errorMessage).toBe("User [email] is already a member");
   });
 
   it("records a successful call with the workspace from its result", async () => {
