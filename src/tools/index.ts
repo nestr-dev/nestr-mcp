@@ -386,7 +386,7 @@ interface Hint {
   endpoints?: ApiHintEndpoint[];
   lastPost?: string;
   readAt?: string;
-  // The `tabs` and `settings` hints carry where a PERSON can be sent in the web app —
+  // The `tabs`, `settings` and `insights` hints carry where a PERSON can be sent in the web app —
   // which tabs this viewer can open on this nest, and the URL for each. There is no tool
   // call to translate them into and there should not be: the answer is a link to hand
   // over, not an API call to make. Nestr sends these absolute, host and all, so nothing
