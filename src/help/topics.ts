@@ -250,6 +250,7 @@ so a stale or wrong hash degrades to the hashless behaviour rather than erroring
 | \`/n/{parentId}/{nestId}\` | \`/n/circleId/roleId\` | Item in context (detail pane on desktop) |
 | \`/n/{nestId}#{tab}\` | \`/n/circleId#projects\` | A view on that nest |
 | \`/n/{nestId}?s=1#{tab}\` | \`/n/wsId?s=1#users\` | Settings (see the \`settings\` hint) |
+| \`/n/{nestId}?i=1#{tab}\` | \`/n/wsId?i=1#work\` | Insights (see the \`insights\` hint) |
 
 Cross-workspace pages for the current user: \`/roles\`, \`/projects\`.
 A user's roles in one workspace: \`/profile/{userId}?cId={workspaceId}\`.
@@ -1121,6 +1122,7 @@ When sharing results with users, provide clickable links to the Nestr web app.
 | \`/n/{nestId}#{tab}\` | \`/n/circleId#projects\` | A specific tab (view) on that nest |
 | \`/n/{leftId}/{rightId}#{left}/{right}\` | \`/n/circleId/roleId#roles/projects\` | A tab on each pane |
 | \`/n/{workspaceId}?s=1#hash\` | \`/n/wsId?s=1#users\` | Workspace admin settings |
+| \`/n/{nestId}?i=1#{tab}\` | \`/n/wsId?i=1#work\` | Insights (see the \`insights\` hint) |
 
 ### Content Tab Hashes
 
@@ -1205,8 +1207,9 @@ Insights live on their own page beside an item's tabs, the way settings do:
 \`work\` (projects, todos, meetings, feedback) and \`communicate\` (posts and replies).
 Read the real links off the nest's \`insights\` hint (\`nestr_get_nest\`): it is
 there only when the reader can open insights, which needs the Insights app on and,
-for a circle or role rather than the workspace itself, the Pro plan. A navigation
-button to one takes \`page: "insights"\`; one to a settings tab takes \`page: "settings"\`.
+for a circle or role rather than the workspace itself, the Pro plan.
+In the Nestr assistant, a navigation button to one takes \`page: "insights"\` and one to
+a settings tab \`page: "settings"\`; any other client hands over the link.
 
 ### Admin Settings Hashes
 
