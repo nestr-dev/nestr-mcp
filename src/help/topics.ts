@@ -25,7 +25,7 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 - search: Full search query syntax with all operators and examples, including strict:true
 - api-surface: nestr_api_spec, for checking whether an endpoint exists at all
 - fields: Adding custom fields to labels when Nestr has no field for something yet
-- web-app-links: Every web-app URL shape, the personal pages (/roles, /projects, ...), the content tab hashes, and the two-pane hash form
+- web-app-links: Every web-app URL shape, the personal pages (/roles, /projects, ...), the content tab hashes, insights and settings links, and the two-pane hash form
 - workspace-settings: Where workspace settings are, every tab, and the link to hand over
 - inbox: Inbox quick capture, processing workflow, and reordering
 - daily-plan: Daily plan usage, scope, and planning workflows
@@ -1197,6 +1197,16 @@ View a user's roles within a specific workspace:
 - \`/profile/{userId}?cId={workspaceId}\` - User's roles in that workspace
 
 This works for viewing colleagues too - replace userId to see what roles they fill in the same workspace.
+
+### Insights
+
+Insights live on their own page beside an item's tabs, the way settings do:
+\`/n/{id}?i=1#{tab}\`, with tabs \`governance\` (Structure: roles and circles),
+\`work\` (projects, todos, meetings, feedback) and \`communicate\` (posts and replies).
+Read the real links off the nest's \`insights\` hint (\`nestr_get_nest\`): it is
+there only when the reader can open insights, which needs the Insights app on and,
+for a circle or role rather than the workspace itself, the Pro plan. A navigation
+button to one takes \`page: "insights"\`; one to a settings tab takes \`page: "settings"\`.
 
 ### Admin Settings Hashes
 
