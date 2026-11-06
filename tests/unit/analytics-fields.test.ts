@@ -89,6 +89,12 @@ describe("error messages", () => {
     expect(Date.now() - start).toBeLessThan(500);
   });
 
+  it("masks an address that whitespace padding would push past the mask bound", () => {
+    // Uncollapsed, the cut at 1000 would land inside the address, before its @.
+    const padded = errorMessageFor(new Error(" ".repeat(995) + "someone@example.com failed"));
+    expect(padded).toBe("[email] failed");
+  });
+
   it("masks email addresses in a message, whole, before capping it", () => {
     expect(errorMessageFromResult(errResult({ error: true, code: "CONFLICT", message: "User jane.doe+x@example.co.uk already exists" })))
       .toBe("User [email] already exists");

@@ -54,15 +54,8 @@ const EMAIL = /\S*@\S*/g;
 const MAX_MASK = 1000;
 
 function errorBody(result: unknown): { code?: unknown; error?: unknown; message?: unknown } | undefined {
-  const content = (result as { content?: Array<{ type?: string; text?: string }> })?.content;
-  const text = Array.isArray(content) ? content.find((c) => c && c.type === "text")?.text : undefined;
-  if (!text || text.length > MAX_PARSE) return undefined;
-  try {
-    const body = JSON.parse(text);
-    return body && typeof body === "object" ? body : undefined;
-  } catch {
-    return undefined;
-  }
+  const body = parseResult(result);
+  return body && typeof body === "object" ? body : undefined;
 }
 
 /**
@@ -75,7 +68,8 @@ export function errorCodeFromResult(result: unknown): string {
 
 const capMessage = (value: unknown): string | undefined => {
   if (typeof value !== "string") return undefined;
-  const trimmed = value.slice(0, MAX_MASK).replace(EMAIL, "[email]").replace(/\s+/g, " ").trim();
+  // Collapse first, so padding cannot push an address's @ past the cut.
+  const trimmed = value.replace(/\s+/g, " ").trim().slice(0, MAX_MASK).replace(EMAIL, "[email]");
   return trimmed ? trimmed.slice(0, MAX_MESSAGE) : undefined;
 };
 
@@ -115,15 +109,23 @@ function wsFrom(node: unknown): string | undefined {
  * cheaply.
  */
 export function workspaceIdFromResult(result: unknown): string | undefined {
+  return workspaceIdFromBody(parseResult(result));
+}
+
+/** A tool result's JSON body, or undefined when it has none or it is too large. */
+function parseResult(result: unknown): unknown {
   const content = (result as { content?: Array<{ type?: string; text?: string }> })?.content;
   const text = Array.isArray(content) ? content.find((c) => c && c.type === "text")?.text : undefined;
   if (!text || text.length > MAX_PARSE) return undefined;
-  let body: unknown;
   try {
-    body = JSON.parse(text);
+    return JSON.parse(text);
   } catch {
     return undefined;
   }
+}
+
+function workspaceIdFromBody(body: unknown): string | undefined {
+  if (!body || typeof body !== "object") return undefined;
   const b = body as Record<string, unknown>;
   const candidates: unknown[] = [b, b?.data, (b?.nest as Record<string, unknown>)?.data, b?.nest];
   // A read of several nests at once returns them as a bare array.
@@ -151,12 +153,12 @@ export class WorkspaceResolver {
   resolve(args: Record<string, unknown>, result?: unknown): string | undefined {
     const nestId = typeof args.nestId === "string" ? args.nestId : undefined;
     const direct = typeof args.workspaceId === "string" && ID.test(args.workspaceId) ? args.workspaceId : undefined;
-    const ws = direct ?? (result !== undefined ? workspaceIdFromResult(result) : undefined)
-      ?? (nestId ? this.byNest.get(nestId) : undefined);
+    const body = result !== undefined ? parseResult(result) : undefined;
+    const ws = direct ?? workspaceIdFromBody(body) ?? (nestId ? this.byNest.get(nestId) : undefined);
     if (ws) {
       if (nestId) this.remember(nestId, ws);
       // A create returns the new nest's id, which later calls will pass as nestId.
-      const created = result !== undefined ? nestIdFromResult(result) : undefined;
+      const created = nestIdFromBody(body);
       if (created) this.remember(created, ws);
     }
     return ws;
@@ -173,17 +175,9 @@ export class WorkspaceResolver {
 }
 
 /** The id of the single nest a tool result returns, if it returns one. */
-function nestIdFromResult(result: unknown): string | undefined {
-  const content = (result as { content?: Array<{ type?: string; text?: string }> })?.content;
-  const text = Array.isArray(content) ? content.find((c) => c && c.type === "text")?.text : undefined;
-  if (!text || text.length > MAX_PARSE) return undefined;
-  let body: Record<string, unknown>;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (!body || typeof body !== "object" || Array.isArray(body)) return undefined;
+function nestIdFromBody(parsed: unknown): string | undefined {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+  const body = parsed as Record<string, unknown>;
   for (const node of [body, body.data, body.nest, (body.nest as Record<string, unknown>)?.data]) {
     const id = (node as Record<string, unknown>)?._id;
     if (typeof id === "string" && ID.test(id)) return id;
