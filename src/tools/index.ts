@@ -1619,7 +1619,7 @@ export const schemas = {
     agents: z.enum(["only", "exclude"]).optional().describe("'only' for this workspace's agents, 'exclude' for its people. Omit for both."),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
-    label: labelIdSchema.optional().describe("Only members carrying this user label (short label id)"),
+    label: labelIdSchema.optional().describe("Only members carrying this user label (short id or `<workspaceId>:<id>`)"),
   }),
 
   listLabels: z.object({
@@ -1832,7 +1832,7 @@ export const schemas = {
     workspaceId: z.string().describe("Workspace ID"),
     userId: z.string().describe("User ID of the workspace member"),
     labelId: labelIdSchema.describe("User label ID the member holds"),
-    fields: coerceFromJson(z.record(z.string(), z.unknown())).describe(USER_LABEL_FIELDS_DESC + " Only the given fields change; '' or null clears a value."),
+    fields: coerceFromJson(z.record(z.string(), z.unknown())).describe(USER_LABEL_FIELDS_DESC),
   }),
 
   getUserLabelActivity: z.object({
@@ -2868,7 +2868,7 @@ export const toolDefinitions = [
         },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
-        label: { type: "string", description: "Only members carrying this user label (short label id)" },
+        label: { type: "string", description: "Only members carrying this user label (short id or `<workspaceId>:<id>`)" },
       },
       required: ["workspaceId"],
     },
@@ -3259,7 +3259,7 @@ export const toolDefinitions = [
         workspaceId: { type: "string", description: "Workspace ID" },
         userId: { type: "string", description: "User ID of the workspace member" },
         labelId: { type: "string", description: "User label ID the member holds" },
-        fields: { type: "object", description: USER_LABEL_FIELDS_DESC + " Only the given fields change; '' or null clears a value." },
+        fields: { type: "object", description: USER_LABEL_FIELDS_DESC },
       },
       required: ["workspaceId", "userId", "labelId", "fields"],
     },
