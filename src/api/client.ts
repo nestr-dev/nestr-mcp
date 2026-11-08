@@ -1818,8 +1818,9 @@ export class NestrClient {
 
   // ============ USER LABELS ============
 
+  // The label id goes unencoded, as on the label routes: the API decodes paths with decodeURI, which keeps %3A.
   private userLabelPath(workspaceId: string, userId: string, labelId: string): string {
-    return `/workspaces/${workspaceId}/users/${encodeURIComponent(userId)}/labels/${encodeURIComponent(labelId)}`;
+    return `/workspaces/${workspaceId}/users/${encodeURIComponent(userId)}/labels/${labelId}`;
   }
 
   /** Put a label on a member, optionally setting its field values. */

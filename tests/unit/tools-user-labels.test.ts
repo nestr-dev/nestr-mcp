@@ -50,6 +50,13 @@ describe("user label tools", () => {
         body: { fields: { register: "https://example.com/r/1" } },
       });
       expect(parse(out.content[0].text).userLabel.data.changed).toBe(true);
+      expect(parse(out.content[0].text).message).toBe("User label added");
+    });
+
+    it("says nothing changed when the member already holds the label", async () => {
+      mockFetch.mockResolvedValue(mockResponse(200, result(false)));
+      const out = await call("nestr_add_user_label", { workspaceId: "ws1", userId: "u1", labelId: "legal_rep" });
+      expect(parse(out.content[0].text).message).toBe("No change: the member already holds this label");
     });
 
     it("sends no body when no fields are given", async () => {
@@ -65,10 +72,10 @@ describe("user label tools", () => {
       expect(sent().body).toEqual({ fields: { level: "3" } });
     });
 
-    it("encodes a qualified label id", async () => {
+    it("sends a qualified label id with its colon, as the API decodes paths with decodeURI", async () => {
       mockFetch.mockResolvedValue(mockResponse(200, result()));
       await call("nestr_add_user_label", { workspaceId: "ws1", userId: "u1", labelId: "ws1:legal_rep" });
-      expect(sent().url).toBe("https://api.test.io/api/workspaces/ws1/users/u1/labels/ws1%3Alegal_rep");
+      expect(sent().url).toBe("https://api.test.io/api/workspaces/ws1/users/u1/labels/ws1:legal_rep");
     });
 
     it("passes a 403 through", async () => {

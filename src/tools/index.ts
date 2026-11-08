@@ -5347,19 +5347,19 @@ async function _handleToolCall(
       case "nestr_add_user_label": {
         const parsed = schemas.addUserLabel.parse(args);
         const userLabel = await client.addUserLabel(parsed.workspaceId, parsed.userId, parsed.labelId, parsed.fields);
-        return formatResult({ message: "User label added", userLabel });
+        return formatResult({ message: userLabel?.data?.changed === false ? "No change: the member already holds this label" : "User label added", userLabel });
       }
 
       case "nestr_update_user_label_fields": {
         const parsed = schemas.updateUserLabelFields.parse(args);
         const userLabel = await client.updateUserLabelFields(parsed.workspaceId, parsed.userId, parsed.labelId, parsed.fields);
-        return formatResult({ message: "User label fields updated", userLabel });
+        return formatResult({ message: userLabel?.data?.changed === false ? "No change: the values were already set" : "User label fields updated", userLabel });
       }
 
       case "nestr_remove_user_label": {
         const parsed = schemas.removeUserLabel.parse(args);
         const userLabel = await client.removeUserLabel(parsed.workspaceId, parsed.userId, parsed.labelId);
-        return formatResult({ message: "User label removed", userLabel });
+        return formatResult({ message: userLabel?.data?.changed === false ? "No change: the member does not hold this label" : "User label removed", userLabel });
       }
 
       case "nestr_get_user_label_activity": {
