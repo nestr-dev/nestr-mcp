@@ -124,7 +124,7 @@ Ask your AI assistant things like:
 | `nestr_get_circle` | Get circle details |
 | `nestr_get_circle_roles` | Get roles in a circle with accountabilities and domains |
 | `nestr_list_roles` | List all roles |
-| `nestr_list_users` | List workspace members |
+| `nestr_list_users` | List workspace members (filter by user label) |
 | `nestr_get_user` | Get user details |
 | `nestr_add_workspace_user` | Add a user to the workspace and email them an invite (API provisioning needs a verified domain; the in-app invite does not) |
 
@@ -164,7 +164,11 @@ Ask your AI assistant things like:
 | `nestr_list_labels` | List workspace labels |
 | `nestr_get_label` | Get label details |
 | `nestr_create_label` | Create a workspace label (workspace admin) |
-| `nestr_update_label` | Edit a workspace label's title, color, icon, group, properties or fields (workspace admin) |
+| `nestr_update_label` | Edit a workspace label's title, color, icon, group, properties, fields or user applicability (workspace admin) |
+| `nestr_add_user_label` | Put a user label on a workspace member, optionally with field values |
+| `nestr_update_user_label_fields` | Set field values of a user label a member holds |
+| `nestr_remove_user_label` | Take a user label off a member (values are kept, hidden) |
+| `nestr_get_user_label_activity` | Audit trail of user label changes on a member (workspace admin) |
 | `nestr_delete_label` | Delete a workspace label, with `confirm: true` (workspace admin) |
 | `nestr_get_projects` | List projects with status |
 

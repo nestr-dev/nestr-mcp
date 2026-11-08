@@ -654,6 +654,13 @@ Labels created by individual users for their own organization:
 - Help users maintain personal categorization systems
 - Managed via \`nestr_list_personal_labels\` and \`nestr_create_personal_label\` (OAuth only)
 
+### User labels (labels on people)
+
+A workspace label can also apply to people: \`applicableTo\` holds \`"nests"\`, \`"users"\` or both (set with \`nestr_create_label\` / \`nestr_update_label\`, along with \`userFields\`, the field definitions for the person). Use it for things like a skill with a level, or a legal-representative flag with a link to an external register.
+- Put a label on a member with \`nestr_add_user_label\`, set values with \`nestr_update_user_label_fields\`, take it off with \`nestr_remove_user_label\` (values are kept, hidden, and return if it is added again).
+- Values are keyed \`<labelId>.<code>\` (for example \`skill_coding.level\`). Reading is on \`nestr_get_user\`, \`nestr_list_users\` (filter with \`label\`) and \`nestr_get_me\` (\`userLabels\`).
+- By default only workspace admins (or a workspace API key) can change them, so a person typically cannot edit their own admin-managed field. Admins can change this in rights profiles. \`nestr_get_user_label_activity\` shows the audit trail (admins only).
+
 ### Hidden labels (autoComplete: false)
 
 A label carrying \`autoComplete: false\` is **invisible in the UI**. It does not autocomplete

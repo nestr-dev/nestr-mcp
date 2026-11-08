@@ -77,7 +77,8 @@ const COMPACT_FIELDS = {
   // any custom value lives. The server sends it on list rows; dropping it here made
   // every row read as "no value", so a filter on a search row starved with no error.
   // Kept as sent, only when present, minus text tab bodies (see withoutTextTabs). A
-  // label's `fields` is its schema and a user is not a nest, so those rows leave it out.
+  // label's `fields` is its schema, so those rows leave it out. A user row's `fields`
+  // are its user-label values (`<labelId>.<code>`), which stay.
   nest: ["fields"],
   // Additional fields for roles
   role: ["accountabilities", "domains"],
@@ -117,7 +118,7 @@ export function compactResponse<T>(
 
   const allowedFields = new Set([
     ...COMPACT_FIELDS.base,
-    ...(type === "label" || type === "user" ? [] : COMPACT_FIELDS.nest),
+    ...(type === "label" ? [] : COMPACT_FIELDS.nest),
     ...(type === "role" ? COMPACT_FIELDS.role : []),
     ...(type === "user" ? COMPACT_FIELDS.user : []),
     ...(type === "label" ? COMPACT_FIELDS.label : []),
@@ -1330,6 +1331,16 @@ const LABEL_FIELDS_DESC =
   "Field definitions for the label: [{ id, code, title, type, ... }]. Items carrying the label can then hold values under `<labelId>.<code>`. Read an existing label's shape with nestr_get_label.";
 const LABEL_FIELDS_UPDATE_DESC =
   LABEL_FIELDS_DESC + " REPLACES the whole field list, so read the label first and send every field to keep.";
+const LABEL_APPLICABLE_TO_DESC =
+  "Who the label can be put on: an array of 'nests' and/or 'users'. Omit for nests only. Add 'users' to make it a people label (not allowed on tag-along labels). On update, null resets to nests only.";
+const LABEL_USER_FIELDS_DESC =
+  "Field definitions used when the label is on a user: [{ id, code, title, type, required?, options? }]. Types: text, textarea, url, number, select, multiselect, date, checkbox. Values are keyed `<labelId>.<code>`.";
+const LABEL_USER_FIELDS_UPDATE_DESC =
+  LABEL_USER_FIELDS_DESC + " REPLACES the whole list, so read the label first and send every field to keep. null clears it.";
+const USER_LABEL_RIGHTS_NOTE =
+  " By default only workspace admins (or a workspace API key) may change user labels, so a person typically cannot edit their own admin-managed field; a 403 not-authorized means the caller lacks the right. Label ids accept the short id or `<workspaceId>:<id>`.";
+const USER_LABEL_FIELDS_DESC =
+  "Field values keyed by code, id or `<labelId>.<code>`, e.g. { \"url\": \"https://example.com\" }. Types: text, textarea, url, number, select, multiselect, date, checkbox.";
 const LABEL_PROPERTIES_DESC =
   "Display properties to set, merged key by key (e.g. { completable: false, groupByLabel: true }); a null value clears a key. color and icon have their own arguments.";
 const LABEL_DELETE_CONFIRM_DESC =
@@ -1608,6 +1619,7 @@ export const schemas = {
     agents: z.enum(["only", "exclude"]).optional().describe("'only' for this workspace's agents, 'exclude' for its people. Omit for both."),
     limit: z.number().optional().describe("Max results per page. Omit to see full count in meta.total."),
     page: z.number().optional().describe("Page number for pagination"),
+    label: labelIdSchema.optional().describe("Only members carrying this user label (short label id)"),
   }),
 
   listLabels: z.object({
@@ -1784,6 +1796,8 @@ export const schemas = {
     icon: z.string().optional().describe("Label icon identifier"),
     group: z.string().optional().describe(LABEL_GROUP_DESC),
     fields: coerceFromJson(z.array(z.record(z.string(), z.unknown()))).optional().describe(LABEL_FIELDS_DESC),
+    applicableTo: coerceFromJson(z.array(z.enum(["nests", "users"]))).optional().describe(LABEL_APPLICABLE_TO_DESC),
+    userFields: coerceFromJson(z.array(z.record(z.string(), z.unknown()))).optional().describe(LABEL_USER_FIELDS_DESC),
   }),
 
   updateLabel: z.object({
@@ -1795,9 +1809,37 @@ export const schemas = {
     group: z.string().nullable().optional().describe(LABEL_GROUP_DESC + " null clears it."),
     properties: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe(LABEL_PROPERTIES_DESC),
     fields: coerceFromJson(z.array(z.record(z.string(), z.unknown()))).optional().describe(LABEL_FIELDS_UPDATE_DESC),
+    applicableTo: coerceFromJson(z.array(z.enum(["nests", "users"])).nullable()).optional().describe(LABEL_APPLICABLE_TO_DESC),
+    userFields: coerceFromJson(z.array(z.record(z.string(), z.unknown())).nullable()).optional().describe(LABEL_USER_FIELDS_UPDATE_DESC),
     // Strict, like nestr_update_agent: a key this tool does not list is refused and
     // named, not stripped, so a success never hides a change that was not sent.
   }).strict(),
+
+  addUserLabel: z.object({
+    workspaceId: z.string().describe("Workspace ID"),
+    userId: z.string().describe("User ID of the workspace member"),
+    labelId: labelIdSchema.describe("User label ID (a label whose applicableTo includes 'users')"),
+    fields: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe(USER_LABEL_FIELDS_DESC),
+  }),
+
+  removeUserLabel: z.object({
+    workspaceId: z.string().describe("Workspace ID"),
+    userId: z.string().describe("User ID of the workspace member"),
+    labelId: labelIdSchema.describe("User label ID"),
+  }),
+
+  updateUserLabelFields: z.object({
+    workspaceId: z.string().describe("Workspace ID"),
+    userId: z.string().describe("User ID of the workspace member"),
+    labelId: labelIdSchema.describe("User label ID the member holds"),
+    fields: coerceFromJson(z.record(z.string(), z.unknown())).describe(USER_LABEL_FIELDS_DESC + " Only the given fields change; '' or null clears a value."),
+  }),
+
+  getUserLabelActivity: z.object({
+    workspaceId: z.string().describe("Workspace ID"),
+    userId: z.string().describe("User ID of the workspace member"),
+    limit: z.number().int().min(1).max(100).optional().describe("Max entries (default 50, max 100)"),
+  }),
 
   deleteLabel: z.object({
     workspaceId: z.string().describe("Workspace ID"),
@@ -2813,7 +2855,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_users",
-    description: "List members of a workspace: its people, its agents, or both. Response includes meta.total showing total matching count. Also the tool to resolve user ids in bulk: when presenting users to a person, show names and/or emails, never bare ids. With agents:'only' this is how you find out which other agents exist and what each is for: an agent carries bot:true, its purpose in profile.agentDescription, and assistant:true when it may never fill a role. An assistant is the one to hand work to that needs a person's OWN credentials, which a role-filling agent cannot reach.",
+    description: "List members of a workspace: its people, its agents, or both. Response includes meta.total showing total matching count. Also the tool to resolve user ids in bulk: when presenting users to a person, show names and/or emails, never bare ids. With agents:'only' this is how you find out which other agents exist and what each is for: an agent carries bot:true, its purpose in profile.agentDescription, and assistant:true when it may never fill a role. An assistant is the one to hand work to that needs a person's OWN credentials, which a role-filling agent cannot reach. Each member carries `labels` and `fields` (`<labelId>.<code>` values) as far as the caller may read them; `label` filters to members holding one user label.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2826,6 +2868,7 @@ export const toolDefinitions = [
         },
         limit: { type: "number", description: "Omit on first call to see meta.total count" },
         page: { type: "number", description: "Page number (1-indexed)" },
+        label: { type: "string", description: "Only members carrying this user label (short label id)" },
       },
       required: ["workspaceId"],
     },
@@ -2899,7 +2942,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_user",
-    description: "Get details of a specific user including profile, roles, and contact info. Use it to resolve a user id to a name and email; when presenting users to a person, show names and/or emails, never bare ids.",
+    description: "Get details of a specific user including profile, roles, and contact info. Use it to resolve a user id to a name and email; when presenting users to a person, show names and/or emails, never bare ids. Also returns the member's user labels (`labels`) and their field values (`fields`, keyed `<labelId>.<code>`), as far as the caller may read them.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3153,7 +3196,7 @@ export const toolDefinitions = [
   // Workspace labels (workspace admin only)
   {
     name: "nestr_create_label",
-    description: "Create a label in a workspace, for every member to use. For a label only you use, call nestr_create_personal_label instead." + LABEL_ADMIN_NOTE + " Hooks and code-bearing keys in fields are stripped by the API." + writeReturns("label", "label"),
+    description: "Create a label in a workspace, for every member to use. A label can apply to nests, to users (a people label such as a skill) or both: see applicableTo and userFields. For a label only you use, call nestr_create_personal_label instead." + LABEL_ADMIN_NOTE + " Hooks and code-bearing keys in fields are stripped by the API." + writeReturns("label", "label"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3164,6 +3207,8 @@ export const toolDefinitions = [
         icon: { type: "string", description: "Label icon identifier" },
         group: { type: "string", description: LABEL_GROUP_DESC },
         fields: { type: "array", items: { type: "object" }, description: LABEL_FIELDS_DESC },
+        applicableTo: { type: "array", items: { type: "string", enum: ["nests", "users"] }, description: LABEL_APPLICABLE_TO_DESC },
+        userFields: { type: "array", items: { type: "object" }, description: LABEL_USER_FIELDS_DESC },
       },
       required: ["workspaceId", "title"],
     },
@@ -3171,7 +3216,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_update_label",
-    description: "Edit a workspace label: its title, color, icon, group, display properties or fields. Send only what changes; a key this tool does not list is refused." + LABEL_ADMIN_NOTE + LABEL_WRITE_SCOPE_NOTE + " Labels have no description. Code-bearing keys in fields and properties are stripped by the API." + writeReturns("label", "label"),
+    description: "Edit a workspace label: its title, color, icon, group, display properties, fields, or whether it applies to users (applicableTo, userFields). Send only what changes; a key this tool does not list is refused." + LABEL_ADMIN_NOTE + LABEL_WRITE_SCOPE_NOTE + " Labels have no description. Code-bearing keys in fields and properties are stripped by the API." + writeReturns("label", "label"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3183,10 +3228,70 @@ export const toolDefinitions = [
         group: { type: ["string", "null"], description: LABEL_GROUP_DESC + " null clears it." },
         properties: { type: "object", description: LABEL_PROPERTIES_DESC },
         fields: { type: "array", items: { type: "object" }, description: LABEL_FIELDS_UPDATE_DESC },
+        applicableTo: { type: ["array", "null"], items: { type: "string", enum: ["nests", "users"] }, description: LABEL_APPLICABLE_TO_DESC },
+        userFields: { type: ["array", "null"], items: { type: "object" }, description: LABEL_USER_FIELDS_UPDATE_DESC },
       },
       required: ["workspaceId", "labelId"],
     },
     ...mutating,
+  },
+  {
+    name: "nestr_add_user_label",
+    description: "Put a user label on a workspace member, optionally setting its field values. The label must apply to users (see nestr_get_label applicableTo). A required field must be given unless a value was kept from an earlier removal. Adding a label already held is a no-op success (changed:false, fields untouched): use nestr_update_user_label_fields to edit." + USER_LABEL_RIGHTS_NOTE + " Returns { message, userLabel }, userLabel being { status, data: { userId, label, changed, labels, fields } }.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        userId: { type: "string", description: "User ID of the workspace member" },
+        labelId: { type: "string", description: "User label ID (a label whose applicableTo includes 'users')" },
+        fields: { type: "object", description: USER_LABEL_FIELDS_DESC },
+      },
+      required: ["workspaceId", "userId", "labelId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_update_user_label_fields",
+    description: "Set field values of a user label a member already holds. Only the given fields change; '' or null clears a value, except a required field, which cannot be cleared. Field keys are `<labelId>.<code>` (a bare code works too)." + USER_LABEL_RIGHTS_NOTE + " Returns { message, userLabel }, userLabel being { status, data: { userId, label, changed, labels, fields } }.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        userId: { type: "string", description: "User ID of the workspace member" },
+        labelId: { type: "string", description: "User label ID the member holds" },
+        fields: { type: "object", description: USER_LABEL_FIELDS_DESC + " Only the given fields change; '' or null clears a value." },
+      },
+      required: ["workspaceId", "userId", "labelId", "fields"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_remove_user_label",
+    description: "Take a user label off a workspace member. A no-op success if they do not hold it. Field values are kept but hidden, and come back if the label is added again." + USER_LABEL_RIGHTS_NOTE + " Returns { message, userLabel }, userLabel being { status, data: { userId, label, changed, labels, fields } }.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        userId: { type: "string", description: "User ID of the workspace member" },
+        labelId: { type: "string", description: "User label ID" },
+      },
+      required: ["workspaceId", "userId", "labelId"],
+    },
+    ...destructive,
+  },
+  {
+    name: "nestr_get_user_label_activity",
+    description: "Audit trail of user label changes on one member, newest first: verb (userLabel.added, userLabel.removed, userLabel.fieldsUpdated), label, actor, before and after. Workspace admins and workspace API keys without a rights profile only; anyone else gets a 403.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        userId: { type: "string", description: "User ID of the workspace member" },
+        limit: { type: "number", description: "Max entries (default 50, max 100)" },
+      },
+      required: ["workspaceId", "userId"],
+    },
+    ...readOnly,
   },
   {
     name: "nestr_delete_label",
@@ -3470,7 +3575,7 @@ export const toolDefinitions = [
   // Current user identity and workspace context — primary entry point
   {
     name: "nestr_get_me",
-    description: "CALL THIS FIRST at session start. Returns identity, operating mode, and workspaces. Use fullWorkspaces:true to include workspace details.",
+    description: "CALL THIS FIRST at session start. Returns identity, operating mode, and workspaces. Use fullWorkspaces:true to include workspace details. `user.userLabels` holds your own user labels and field values per workspace.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -5013,6 +5118,7 @@ async function _handleToolCall(
           agents: parsed.agents,
           limit: parsed.limit,
           page: parsed.page,
+          label: parsed.label,
         });
         return formatResult(compactResponse(users, "user"));
       }
@@ -5211,6 +5317,8 @@ async function _handleToolCall(
           ...(parsed.group !== undefined ? { group: parsed.group } : {}),
           ...(Object.keys(properties).length ? { properties } : {}),
           ...(parsed.fields !== undefined ? { fields: parsed.fields } : {}),
+          ...(parsed.applicableTo !== undefined ? { applicableTo: parsed.applicableTo } : {}),
+          ...(parsed.userFields !== undefined ? { userFields: parsed.userFields } : {}),
         });
         return formatResult({ message: "Workspace label created successfully", _id: writtenId(label), label });
       }
@@ -5228,12 +5336,36 @@ async function _handleToolCall(
           return formatError({
             error: true,
             code: "VALIDATION",
-            message: "Nothing to update: pass at least one of title, color, icon, group, properties, fields.",
+            message: "Nothing to update: pass at least one of title, color, icon, group, properties, fields, applicableTo, userFields.",
             retryable: false,
           });
         }
         const label = await client.updateWorkspaceLabel(workspaceId, labelId, updates);
         return formatResult({ message: "Workspace label updated successfully", _id: writtenId(label), label });
+      }
+
+      case "nestr_add_user_label": {
+        const parsed = schemas.addUserLabel.parse(args);
+        const userLabel = await client.addUserLabel(parsed.workspaceId, parsed.userId, parsed.labelId, parsed.fields);
+        return formatResult({ message: "User label added", userLabel });
+      }
+
+      case "nestr_update_user_label_fields": {
+        const parsed = schemas.updateUserLabelFields.parse(args);
+        const userLabel = await client.updateUserLabelFields(parsed.workspaceId, parsed.userId, parsed.labelId, parsed.fields);
+        return formatResult({ message: "User label fields updated", userLabel });
+      }
+
+      case "nestr_remove_user_label": {
+        const parsed = schemas.removeUserLabel.parse(args);
+        const userLabel = await client.removeUserLabel(parsed.workspaceId, parsed.userId, parsed.labelId);
+        return formatResult({ message: "User label removed", userLabel });
+      }
+
+      case "nestr_get_user_label_activity": {
+        const parsed = schemas.getUserLabelActivity.parse(args);
+        const activity = await client.getUserLabelActivity(parsed.workspaceId, parsed.userId, { limit: parsed.limit });
+        return formatResult(activity);
       }
 
       case "nestr_delete_label": {
