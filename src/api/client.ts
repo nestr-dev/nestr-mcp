@@ -389,6 +389,20 @@ export interface Insight {
   userId?: string;
 }
 
+export interface InsightsPeriod {
+  from: string;
+  to: string;
+}
+
+export interface InsightsMeta {
+  period?: InsightsPeriod;
+  comparePeriod?: InsightsPeriod;
+  valueSemantics?: Record<string, string>;
+  nestId?: string;
+  userId?: string | null;
+  [key: string]: unknown;
+}
+
 export interface WorkspaceApp {
   _id: string;
   title: string;
@@ -743,6 +757,8 @@ export class NestrApiError extends Error {
     // (refresh failure, no token, header dropped) override via options.code.
     if (status === 401) return "AUTH_TOKEN_REJECTED_BY_NESTR";
     if (status === 404) return "NOT_FOUND";
+    // Insights answers a Pro-only view below Pro with 402 and names what Pro adds.
+    if (status === 402) return "PLAN_REQUIRED";
     if (status === 429) return "RATE_LIMITED";
     // The Nestr API answers input errors with 422 (constructIncorrectInput), not
     // 400, so both have to map here or a rejected RRULE surfaces as UNKNOWN.
@@ -1849,44 +1865,73 @@ export class NestrClient {
 
   async getInsights(
     workspaceId: string,
-    options?: { includeSubCircles?: boolean; userId?: string; nestId?: string; endDate?: string }
-  ): Promise<{ status: string; data: Insight[] }> {
+    options?: {
+      includeSubCircles?: boolean; userId?: string; nestId?: string; from?: string; to?: string; endDate?: string;
+    }
+  ): Promise<{ status: string; meta?: InsightsMeta; data: Insight[] }> {
     const params = new URLSearchParams();
     if (options?.includeSubCircles !== undefined) {
       params.set("includeSubCircles", options.includeSubCircles.toString());
     }
     if (options?.userId) params.set("userId", options.userId);
     if (options?.nestId) params.set("nestId", options.nestId);
+    if (options?.from) params.set("from", options.from);
+    if (options?.to) params.set("to", options.to);
     if (options?.endDate) params.set("endDate", options.endDate);
 
     const query = params.toString();
-    return this.fetch<{ status: string; data: Insight[] }>(
+    return this.fetch<{ status: string; meta?: InsightsMeta; data: Insight[] }>(
       `/workspaces/${workspaceId}/insights${query ? `?${query}` : ""}`
     );
   }
 
   async getInsight(
     workspaceId: string,
-    metricId: string
-  ): Promise<{ status: string; data: Insight }> {
-    return this.fetch<{ status: string; data: Insight }>(
-      `/workspaces/${workspaceId}/insights/${metricId}`
+    metricId: string,
+    options?: { from?: string; to?: string }
+  ): Promise<{ status: string; meta?: InsightsMeta; data: Insight }> {
+    const params = new URLSearchParams();
+    if (options?.from) params.set("from", options.from);
+    if (options?.to) params.set("to", options.to);
+    const query = params.toString();
+    return this.fetch<{ status: string; meta?: InsightsMeta; data: Insight }>(
+      `/workspaces/${workspaceId}/insights/${metricId}${query ? `?${query}` : ""}`
     );
   }
 
   async getInsightHistory(
     workspaceId: string,
     metricId: string,
-    options?: { from?: string; to?: string; limit?: number }
+    options?: { from?: string; to?: string; limit?: number; nestId?: string; userId?: string }
   ): Promise<unknown[]> {
     const params = new URLSearchParams();
     if (options?.from) params.set("from", options.from);
     if (options?.to) params.set("to", options.to);
     if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.nestId) params.set("nestId", options.nestId);
+    if (options?.userId) params.set("userId", options.userId);
 
     const query = params.toString();
     return this.fetch<unknown[]>(
       `/workspaces/${workspaceId}/insights/${metricId}/history${query ? `?${query}` : ""}`
+    );
+  }
+
+  async compareInsightCircles(
+    workspaceId: string,
+    metricId: string,
+    options?: { parentNestId?: string; from?: string; to?: string; includeSubCircles?: boolean }
+  ): Promise<{ status: string; meta?: InsightsMeta; data: unknown[] }> {
+    const params = new URLSearchParams();
+    if (options?.parentNestId) params.set("parentNestId", options.parentNestId);
+    if (options?.from) params.set("from", options.from);
+    if (options?.to) params.set("to", options.to);
+    if (options?.includeSubCircles !== undefined) {
+      params.set("includeSubCircles", options.includeSubCircles.toString());
+    }
+    const query = params.toString();
+    return this.fetch<{ status: string; meta?: InsightsMeta; data: unknown[] }>(
+      `/workspaces/${workspaceId}/insights/${metricId}/circles${query ? `?${query}` : ""}`
     );
   }
 

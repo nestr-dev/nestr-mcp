@@ -302,6 +302,7 @@ The server exposes these tools to AI assistants:
 | `nestr_get_projects` | `GET /workspaces/{id}/projects` |
 | `nestr_get_insights` | `GET /workspaces/{id}/insights` |
 | `nestr_get_insight_history` | `GET /workspaces/{id}/insights/{mid}/history` |
+| `nestr_compare_insight_circles` | `GET /workspaces/{id}/insights/{mid}/circles` |
 | `nestr_list_series` | `GET /nests/{id}/series` |
 | `nestr_get_series_points` | `GET /nests/{id}/series/{key}[/{seriesId}]/points` |
 | `nestr_add_series_points` | `POST /nests/{id}/series/{key}[/{seriesId}]/points` |

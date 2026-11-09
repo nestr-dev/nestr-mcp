@@ -1493,7 +1493,7 @@ Each metric includes a \`currentValue\` and a \`compareValue\` (previous period)
 When a user asks about trends or patterns (e.g., "Are we getting better at governance?", "How active has the team been?", "What's our completion rate trend?"):
 
 1. **Discover metrics**: Call \`nestr_get_insights\` to see what's available
-2. **Compare periods**: The \`currentValue\` vs \`compareValue\` on each metric already shows recent direction. Use \`endDate\` to compare different time periods.
+2. **Compare periods**: The \`currentValue\` vs \`compareValue\` on each metric already shows recent direction. Pass \`from\`/\`to\` to choose the period; the comparison period has the same length and ends at \`from\`. Every response names both in \`meta.period\` and \`meta.comparePeriod\`: quote those dates, never assume them.
 3. **Dive into history**: Use \`nestr_get_insight_history\` with \`from\`/\`to\` dates to get detailed historical data points for a specific metric — this reveals the full trend over time.
 4. **Single metric detail**: Use \`nestr_get_insight\` to get the current state of one specific metric.
 
@@ -1504,7 +1504,7 @@ Insights are Nestr usage metrics. A metric nest, goal or sprint keeps its own hi
 ### Plan Restrictions
 
 - **All plans**: Workspace-level insights (aggregated across the whole organization)
-- **Pro plan only**: Circle-level insights (\`nestId\` parameter) and user-level insights (\`userId\` parameter). If the workspace is not on a Pro plan, these filters will return a 402 error.
+- **Pro plan only**: Circle-level insights (\`nestId\` parameter), personal insights (\`userId: "me"\`) and comparing circles side by side (\`nestr_compare_insight_circles\`). Below Pro these return a 402 whose message names what Pro adds; offer that to the person rather than reporting a dead end.
 - \`userId\` and \`nestId\` cannot be combined — user metrics are always workspace-level.`,
 
   "api-surface": `## Checking whether the API has something
