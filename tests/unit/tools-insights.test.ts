@@ -84,4 +84,24 @@ describe("insights tools", () => {
     expect(result.content[0].text).toContain("PLAN_REQUIRED");
     expect(result.content[0].text).toContain("part of the Pro plan");
   });
+
+  it("passes what Pro adds from a 402 through to the hint", async () => {
+    mockFetch.mockResolvedValue(mockResponse(402, {
+      status: "error",
+      message: "Comparing circles side by side is part of the Pro plan.",
+      upgrade: {
+        requiredPlan: "plan_pro",
+        requested: "compare_circles",
+        proAdds: [
+          { id: "circle", title: "Insights for one circle", how: "nestId=<circleId>" },
+          { id: "personal", title: "Personal insights for the person asking", how: "userId=me" },
+        ],
+      },
+    }));
+    const result = await handleToolCall(client, "nestr_compare_insight_circles", { workspaceId: "ws1", metricId: "m" });
+    const text = result.content[0].text;
+    expect(text).toContain("Insights for one circle (nestId=<circleId>)");
+    expect(text).toContain("userId=me");
+    expect(text).toContain("offer what Pro adds");
+  });
 });

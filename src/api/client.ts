@@ -730,6 +730,19 @@ export interface ToolError {
   correlationId?: string;
 }
 
+interface ProFeature { title?: string; how?: string }
+
+/** Turns a 402's upgrade.proAdds into an offer the agent can make, not a dead end. */
+export function planRequiredHint(body: unknown): string {
+  const proAdds = (body as { upgrade?: { proAdds?: ProFeature[] } } | undefined)?.upgrade?.proAdds;
+  const features = Array.isArray(proAdds)
+    ? proAdds.filter((f) => f && f.title).map((f) => (f.how ? `${f.title} (${f.how})` : f.title))
+    : [];
+  if (!features.length) return "This feature requires a Pro plan. Upgrade in workspace settings.";
+  return "This view is part of the Pro plan. Answer with what is available on the current plan, then offer what Pro adds: "
+    + `${features.join("; ")}. A workspace admin can upgrade in workspace settings under Billing.`;
+}
+
 export class NestrApiError extends Error {
   public code: ErrorCode;
   public hint?: string;
@@ -919,8 +932,10 @@ export class NestrClient {
 
       // Try to parse JSON error response for clearer error messages
       let errorMessage = errorText;
+      let errorBody: unknown;
       try {
         const errorJson = JSON.parse(errorText);
+        errorBody = errorJson;
         // Check common error message field patterns
         errorMessage =
           errorJson.message ||
@@ -969,7 +984,7 @@ export class NestrClient {
           error.hint = "This is a person's choice in the app, not a permissions problem. Give the workspace admin the settings link in the message, or have each person connect their own account.";
           break;
         case "PLAN_REQUIRED":
-          error.hint = "This feature requires a Pro plan. Upgrade in workspace settings.";
+          error.hint = planRequiredHint(errorBody);
           break;
         case "NOT_FOUND":
           error.hint = "The resource doesn't exist or you don't have access to it.";
