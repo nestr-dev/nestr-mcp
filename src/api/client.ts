@@ -1064,22 +1064,22 @@ export class NestrClient {
     workspaceId: string,
     search: string,
     options?: NestrReadOptions
-  ): Promise<Nest[]> {
+  ): Promise<MaybeListEnvelope<Nest>> {
     const params = new URLSearchParams({ search });
     NestrClient.appendReadParams(params, options);
 
-    return this.fetch<Nest[]>(`/workspaces/${workspaceId}/search?${params}`);
+    return this.fetch<MaybeListEnvelope<Nest>>(`/workspaces/${workspaceId}/search?${params}`);
   }
 
   async getWorkspaceProjects(
     workspaceId: string,
     options?: NestrReadOptions
-  ): Promise<Nest[]> {
+  ): Promise<MaybeListEnvelope<Nest>> {
     const params = new URLSearchParams();
     NestrClient.appendReadParams(params, options);
 
     const query = params.toString();
-    return this.fetch<Nest[]>(
+    return this.fetch<MaybeListEnvelope<Nest>>(
       `/workspaces/${workspaceId}/projects${query ? `?${query}` : ""}`
     );
   }
@@ -1163,13 +1163,13 @@ export class NestrClient {
   async getNestChildren(
     nestId: string,
     options?: NestrReadOptions & { search?: string }
-  ): Promise<Nest[]> {
+  ): Promise<MaybeListEnvelope<Nest>> {
     const params = new URLSearchParams();
     if (options?.search) params.set("search", options.search);
     NestrClient.appendReadParams(params, options);
 
     const query = params.toString();
-    return this.fetch<Nest[]>(`/nests/${nestId}/children${query ? `?${query}` : ""}`);
+    return this.fetch<MaybeListEnvelope<Nest>>(`/nests/${nestId}/children${query ? `?${query}` : ""}`);
   }
 
   /**

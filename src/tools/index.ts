@@ -43,22 +43,53 @@ const completableListUi = { ui: { resourceUri: appResources.completableList.uri 
 // Sources for the completable list app - tells the UI which reorder API to use
 type CompletableSource = "inbox" | "daily-plan" | "children" | "projects" | "search";
 
-// Wrap a compacted response with title and source for the completable list app
+// Derive an unmissable paging signal from the envelope's own meta, so a reader
+// does not have to divide total by per_page to notice the answer is partial.
+// Absent entirely when meta says nothing about paging: a guess here would be
+// worse than the silence it replaces.
+function pageSignal(meta: unknown): { hasMore?: boolean; nextPage?: number } {
+  if (!meta || typeof meta !== "object") return {};
+  const { page, total_pages: totalPages } = meta as { page?: unknown; total_pages?: unknown };
+  if (typeof page !== "number" || typeof totalPages !== "number") return {};
+  return page < totalPages ? { hasMore: true, nextPage: page + 1 } : { hasMore: false };
+}
+
+// Wrap a compacted response with title and source for the completable list app,
+// keeping everything the API sent beside the rows.
+//
+// This used to return title/source/items and nothing else, which threw away
+// `meta` (the real match count), `searchWarnings` (which filter the server could
+// not apply), `links` and `linked`. A 50-row first page then read as the complete
+// answer, and a mistyped filter came back as a larger, confident result with
+// nothing to say the filter never ran. `status` is the only key dropped: it is
+// always "success" here, since an error never reaches this helper. `title` and
+// `source` are dropped for a different reason: they are this helper's contract
+// with the list UI, naming the header it shows and the reorder endpoint it routes
+// to, so an envelope key of the same name must not quietly take them over.
 export function completableResponse(
   data: unknown,
   source: CompletableSource,
   title: string,
-): { title: string; source: CompletableSource; items: unknown[] } {
+): { title: string; source: CompletableSource; items: unknown[] } & Record<string, unknown> {
   // Extract items array from different response shapes
   let items: unknown[];
+  let head: Record<string, unknown> = {};
   if (Array.isArray(data)) {
     items = data;
   } else if (data && typeof data === "object" && "data" in data && Array.isArray((data as { data: unknown[] }).data)) {
-    items = (data as { data: unknown[] }).data;
+    const {
+      data: rows, status: _status, title: _title, source: _source, ...rest
+    } = data as Record<string, unknown>;
+    items = rows as unknown[];
+    head = rest;
   } else {
     items = [];
   }
-  return { title, source, items };
+  // `items` last, for the reason the API's own buildListEnvelope gives for
+  // putting `data` last: it is by far the largest part, and an agent runtime
+  // that keeps only the head of a long response must not lose the part that
+  // says the response is partial.
+  return { title, source, ...head, ...pageSignal(head.meta), items };
 }
 
 // Fields to keep for compact list responses (reduces token usage)
@@ -2330,13 +2361,13 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_search",
-    description: "Search nests in a workspace. Supports operators like label:, assignee:, createdby:, completed:, in:, sort:. createdby: accepts me, an email address, or a user id. Always use completed:false for active work. See nestr_help('search') for full syntax. Results carry user ids; when presenting to a person, show names and/or emails. Pass `linkedUsers: true` to get them all resolved in the same request rather than calling nestr_get_user per id." + LIST_TEXT_TAB_NOTE,
+    description: "Search nests in a workspace. Supports operators like label:, assignee:, createdby:, completed:, in:, sort:. `in:nestId` scopes to one subtree and `in:id1,id2` to any of several; a value that is not a nest id is refused rather than answered with an empty list. createdby: accepts me, an email address, or a user id. Always use completed:false for active work. See nestr_help('search') for full syntax. Results carry user ids; when presenting to a person, show names and/or emails. Pass `linkedUsers: true` to get them all resolved in the same request rather than calling nestr_get_user per id. Read the response before you count from it: `meta.total` is the full match count while `items` is one page of at most 50, `hasMore` and `nextPage` say whether rows were left behind, and `searchWarnings` names any filter the server could not apply, so a dropped filter never passes as a wider answer." + LIST_TEXT_TAB_NOTE,
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID to search in" },
         query: { type: "string", description: "Search query with optional operators (e.g., 'label:role', 'assignee:me completed:false')" },
-        strict: { type: "boolean", description: "Reject the search when any operator, label or field filter in it was not recognised, rather than silently returning a broader result. Use it whenever you are counting rather than browsing: without it, a mistyped filter comes back as a real and larger answer with nothing to say the filter was dropped." },
+        strict: { type: "boolean", description: "Reject the search outright when any operator, label or field filter in it was not recognised, instead of returning the broader result. Without it the dropped filter is still reported in `searchWarnings` and the broader result comes back, so you can tell the two apart either way. Pass strict when you would rather have no answer than a wider one." },
         linkedUsers: { type: "boolean", description: "Resolve every user id in the results to a full user, returned once in `linked.users`. Prefer this over calling nestr_get_user per id." },
         sort: { type: "string", description: `${SORT_DESCRIPTION} Takes precedence over sort:/sort-order: operators in the query.` },
         limit: { type: "number", description: "Page size, default and maximum 50. meta.total is always the full match count, whatever you pass; fetch the rest with page." },

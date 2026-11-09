@@ -138,3 +138,130 @@ describe("nestr_list_labels rows", () => {
     }
   });
 });
+
+// A search that returned 50 of 137 rows, with the one filter the server could
+// not apply dropped, and said neither. The API reported both; the MCP's own
+// response shaping discarded them, so the tool text promising `meta.total`
+// described something no caller could read.
+describe("nestr_search reports how complete its answer is", () => {
+  const envelope = {
+    status: "success",
+    meta: { per_page: 50, total: 137, page: 1, total_pages: 3 },
+    searchWarnings: [
+      { code: "unknown_operator", message: "Unknown search operator 'project.status:'. This term was ignored." },
+    ],
+    data: [{ _id: "n1", title: "A project", labels: ["project"] }],
+  };
+
+  const callSearch = async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      return { ok: true, status: 200, json: async () => envelope, text: async () => JSON.stringify(envelope) };
+    }));
+    try {
+      const client = new NestrClient({ apiKey: "t", baseUrl: "https://api.test.io/api" });
+      const result = await handleToolCall(client, "nestr_search", { workspaceId: "ws-1", query: "label:project project.status:Future" });
+      return JSON.parse(result.content[0].text);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  };
+
+  it("carries meta.total through, not the page size", async () => {
+    const out = await callSearch();
+    expect(out.meta.total).toBe(137);
+    expect(out.meta.total_pages).toBe(3);
+  });
+
+  it("says the result is partial without the caller doing arithmetic", async () => {
+    const out = await callSearch();
+    expect(out.hasMore).toBe(true);
+    expect(out.nextPage).toBe(2);
+  });
+
+  it("names the filter the server could not apply", async () => {
+    const out = await callSearch();
+    expect(out.searchWarnings).toHaveLength(1);
+    expect(out.searchWarnings[0].message).toContain("project.status:");
+  });
+
+  it("still returns the rows", async () => {
+    const out = await callSearch();
+    expect(out.items).toHaveLength(1);
+    expect(out.items[0]._id).toBe("n1");
+    expect(out.items[0].title).toBe("A project");
+  });
+
+  it("the tool text names the keys that say so", () => {
+    const d = tool("nestr_search").description;
+    expect(d).toContain("meta.total");
+    expect(d).toContain("hasMore");
+    expect(d).toContain("searchWarnings");
+  });
+
+  // strict used to be the only way to find out a filter was dropped, so its
+  // text said so. A warning now arrives either way, and the text has to say
+  // what strict still adds: a refusal instead of a wider answer.
+  it("strict says what it adds now that a warning arrives either way", () => {
+    const d = tool("nestr_search").props.strict.description ?? "";
+    expect(d).toContain("searchWarnings");
+    expect(d).toMatch(/reject/i);
+  });
+
+  it("limit says it clamps, where a caller reads it", () => {
+    expect(tool("nestr_search").props.limit.description).toMatch(/maximum 50/i);
+    expect(tool("nestr_get_nest_children").props.limit.description).toMatch(/maximum 50/i);
+  });
+});
+
+// in: was reachable but its syntax was written down nowhere a caller would
+// find it: the tool description named the operator and stopped. A multi-id
+// value silently matched nothing, and no document said whether it was meant to.
+describe("in: syntax is written down", () => {
+  it("the search help topic shows the comma form and what it means", () => {
+    const t = HELP_TOPICS["search"];
+    expect(t).toContain("in:id1,id2");
+    expect(t).toMatch(/under any of them|any of the listed/i);
+  });
+
+  it("the search help topic says a bad in: value is refused, not answered with nothing", () => {
+    const t = HELP_TOPICS["search"];
+    expect(t).toMatch(/searchWarnings/);
+    expect(t).toMatch(/strict:true/);
+  });
+
+  it("the tool description carries the comma form too", () => {
+    expect(tool("nestr_search").description).toContain("in:id1,id2");
+  });
+});
+
+// The children route applies depth:1 when the query sets no depth and says so in
+// appliedDefaults, which the tool description promises. completableResponse
+// discarded that key too, so the scope was narrowed with no way to find out: the
+// same failure as a dropped filter, in the API's own words.
+describe("nestr_get_nest_children reports a default it applied", () => {
+  it("carries appliedDefaults through", async () => {
+    const body = {
+      status: "success",
+      meta: { per_page: 50, total: 3, page: 1, total_pages: 1 },
+      appliedDefaults: [{
+        operator: "depth:1",
+        reason: "This route returns children, so the search was scoped to direct children.",
+        override: "Set a depth yourself to reach further.",
+      }],
+      data: [{ _id: "c1", title: "A child" }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+    }));
+    try {
+      const client = new NestrClient({ apiKey: "t", baseUrl: "https://api.test.io/api" });
+      const result = await handleToolCall(client, "nestr_get_nest_children", { nestId: "n1", search: "label:project" });
+      const out = JSON.parse(result.content[0].text);
+      expect(out.appliedDefaults).toHaveLength(1);
+      expect(out.appliedDefaults[0].operator).toBe("depth:1");
+      expect(out.meta.total).toBe(3);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

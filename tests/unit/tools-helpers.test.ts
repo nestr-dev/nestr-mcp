@@ -556,6 +556,121 @@ describe("completableResponse", () => {
     const result = completableResponse("not-an-array", "search", "Search");
     expect(result.items).toEqual([]);
   });
+
+  // A 50-row page that reads as the complete answer is the worst failure this
+  // helper can produce, because nothing about it looks wrong. The API already
+  // sends the real match count; reducing its envelope to title/source/items is
+  // what lost it.
+  it("keeps meta, so a caller can tell a page from the whole answer", () => {
+    const data = {
+      status: "success",
+      meta: { per_page: 50, total: 137, page: 1, total_pages: 3 },
+      data: [{ _id: "1" }],
+    };
+    const result = completableResponse(data, "search", "Search") as Record<string, unknown>;
+    expect(result.meta).toEqual({ per_page: 50, total: 137, page: 1, total_pages: 3 });
+  });
+
+  // The API reports a filter it could not apply instead of silently widening the
+  // result. Dropping that here turns a mistyped filter into a larger, confident
+  // answer with nothing to say the filter never ran.
+  it("keeps searchWarnings, so a dropped filter is never silent", () => {
+    const data = {
+      status: "success",
+      meta: { per_page: 50, total: 1, page: 1, total_pages: 1 },
+      searchWarnings: [{ code: "unknown_operator", message: "Unknown search operator 'project.status:'. This term was ignored." }],
+      data: [{ _id: "1" }],
+    };
+    const result = completableResponse(data, "search", "Search") as Record<string, unknown>;
+    expect(result.searchWarnings).toEqual([
+      { code: "unknown_operator", message: "Unknown search operator 'project.status:'. This term was ignored." },
+    ]);
+  });
+
+  it("keeps links and linked", () => {
+    const data = {
+      status: "success",
+      links: { next: "https://example.test/x?page=2" },
+      linked: { users: [{ _id: "u1" }] },
+      data: [{ _id: "1" }],
+    };
+    const result = completableResponse(data, "search", "Search") as Record<string, unknown>;
+    expect(result.links).toEqual({ next: "https://example.test/x?page=2" });
+    expect(result.linked).toEqual({ users: [{ _id: "u1" }] });
+  });
+
+  // An explicit boolean rather than arithmetic over per_page and total. The
+  // reported failure was a reader not noticing partiality, not a reader unable
+  // to divide.
+  it("says hasMore and which page is next when pages remain", () => {
+    const data = {
+      meta: { per_page: 50, total: 137, page: 2, total_pages: 3 },
+      data: [{ _id: "1" }],
+    };
+    const result = completableResponse(data, "search", "Search") as Record<string, unknown>;
+    expect(result.hasMore).toBe(true);
+    expect(result.nextPage).toBe(3);
+  });
+
+  it("says hasMore false on the last page, and offers no next page", () => {
+    const data = {
+      meta: { per_page: 50, total: 137, page: 3, total_pages: 3 },
+      data: [{ _id: "1" }],
+    };
+    const result = completableResponse(data, "search", "Search") as Record<string, unknown>;
+    expect(result.hasMore).toBe(false);
+    expect(result).not.toHaveProperty("nextPage");
+  });
+
+  it("claims nothing about paging when the response carried no meta", () => {
+    const result = completableResponse([{ _id: "1" }], "search", "Search") as Record<string, unknown>;
+    expect(result).not.toHaveProperty("hasMore");
+    expect(result).not.toHaveProperty("nextPage");
+  });
+
+  // Key order is the contract, for the reason the API's own buildListEnvelope
+  // states: `items` is by far the largest part, and an agent runtime that keeps
+  // only the head of a long response must not lose the part saying it is partial.
+  it("puts items last so a capped reader keeps meta and the warnings", () => {
+    const data = {
+      status: "success",
+      meta: { per_page: 50, total: 137, page: 1, total_pages: 3 },
+      searchWarnings: [{ code: "unknown_operator", message: "dropped" }],
+      data: [{ _id: "1" }],
+    };
+    const keys = Object.keys(completableResponse(data, "search", "Search"));
+    expect(keys[keys.length - 1]).toBe("items");
+    expect(keys.indexOf("meta")).toBeLessThan(keys.indexOf("items"));
+    expect(keys.indexOf("searchWarnings")).toBeLessThan(keys.indexOf("items"));
+  });
+
+  // `title` and `source` are this helper's contract with the list UI: the header
+  // it shows and the reorder endpoint it routes to. An envelope key of the same
+  // name must not quietly take them over, which is a silent wrong behaviour
+  // rather than a visible failure.
+  it("keeps its own title and source when the envelope carries those keys", () => {
+    const data = {
+      status: "success",
+      title: "from the server",
+      source: "something-else",
+      meta: { per_page: 50, total: 2, page: 1, total_pages: 1 },
+      data: [{ _id: "1" }],
+    };
+    const result = completableResponse(data, "inbox", "My Inbox");
+    expect(result.title).toBe("My Inbox");
+    expect(result.source).toBe("inbox");
+    expect(result.meta).toEqual({ per_page: 50, total: 2, page: 1, total_pages: 1 });
+  });
+
+  // The completable list UI reads `title`, `source` and `items` by name and
+  // ignores anything else, so the extra keys above must not displace them.
+  it("still carries the shape the completable list app reads", () => {
+    const data = { status: "success", meta: { page: 1, total_pages: 2 }, data: [{ _id: "1" }] };
+    const result = completableResponse(data, "inbox", "My Inbox");
+    expect(result.title).toBe("My Inbox");
+    expect(result.source).toBe("inbox");
+    expect(result.items).toEqual([{ _id: "1" }]);
+  });
 });
 
 // ─── unescapeRichTextFields ─────────────────────────────────────────

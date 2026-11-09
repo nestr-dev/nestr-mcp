@@ -1000,6 +1000,21 @@ Public help articles covering the same ground, each fetched by passing its slug 
 
 Use \`in:nestId\` to limit search results to only items within a specific nest (its descendants at any depth).
 
+**Several subtrees at once: \`in:id1,id2,id3\`.** A comma means under any of them, the same
+way \`label:a,b\` means either label. Use it to ask one question across a set of circles,
+roles or projects instead of one search each, and read \`meta.total\` for the combined count.
+
+Separate \`in:\` terms still mean under all of them, so \`in:a in:b\` is the intersection
+while \`in:a,b\` is the union.
+
+**A value that is not a nest id is refused, never answered with an empty list.** Because
+\`in:\` narrows by ancestor, a value the parser cannot use matches nothing, and zero rows
+reads exactly like a real "none found". So a malformed value (empty, or holding a character
+no nest id can hold) comes back as a \`malformed_in_value\` entry in \`searchWarnings\`, and
+as a 422 under \`strict:true\`. A well-formed id that no nest here answers to is reported as
+\`unknown_in_nest\`, which is advisory: it is also what a workspace-scoped key sees for a
+nest it cannot read, so it is always reported and never a rejection.
+
 **Combine with \`depth:\` to control how deep to search:**
 - \`depth:1\` - Direct children only
 - \`depth:2\` - Children and grandchildren
@@ -1018,6 +1033,9 @@ in:circleId label:role
 
 in:projectId completed:false
   -> Incomplete tasks within a specific project
+
+in:circleA,circleB,circleC label:task completed:false
+  -> Open tasks under any of the three circles, in one query
 
 in:roleId label:project project->status:Current
   -> Current projects owned by a specific role
