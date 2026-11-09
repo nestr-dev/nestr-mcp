@@ -233,3 +233,35 @@ describe("in: syntax is written down", () => {
     expect(tool("nestr_search").description).toContain("in:id1,id2");
   });
 });
+
+// The children route applies depth:1 when the query sets no depth and says so in
+// appliedDefaults, which the tool description promises. completableResponse
+// discarded that key too, so the scope was narrowed with no way to find out: the
+// same failure as a dropped filter, in the API's own words.
+describe("nestr_get_nest_children reports a default it applied", () => {
+  it("carries appliedDefaults through", async () => {
+    const body = {
+      status: "success",
+      meta: { per_page: 50, total: 3, page: 1, total_pages: 1 },
+      appliedDefaults: [{
+        operator: "depth:1",
+        reason: "This route returns children, so the search was scoped to direct children.",
+        override: "Set a depth yourself to reach further.",
+      }],
+      data: [{ _id: "c1", title: "A child" }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+    }));
+    try {
+      const client = new NestrClient({ apiKey: "t", baseUrl: "https://api.test.io/api" });
+      const result = await handleToolCall(client, "nestr_get_nest_children", { nestId: "n1", search: "label:project" });
+      const out = JSON.parse(result.content[0].text);
+      expect(out.appliedDefaults).toHaveLength(1);
+      expect(out.appliedDefaults[0].operator).toBe("depth:1");
+      expect(out.meta.total).toBe(3);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
