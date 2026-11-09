@@ -1623,14 +1623,27 @@ export const schemas = {
   getInsights: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     includeSubCircles: z.boolean().optional().describe("Include metrics from sub-circles (default: true). Cannot be false when userId is provided."),
-    userId: z.string().optional().describe("Filter metrics for a specific user (Pro plan only). When provided, includes user-specific metrics like feedback_given/received."),
+    userId: z.string().optional().describe("Filter metrics for one user (Pro plan only). Pass 'me' for the person you act for. When provided, includes user-specific metrics like feedback_given/received."),
     nestId: z.string().optional().describe("Filter metrics for a specific circle/nest (Pro plan only). Cannot be combined with userId."),
-    endDate: z.string().optional().describe("End date for metrics query (ISO format)"),
+    from: z.string().optional().describe("Start of the analysed period (ISO 8601). Defaults to one month before `to`. The comparison period has the same length and ends at `from`."),
+    to: z.string().optional().describe("End of the analysed period (ISO 8601). Defaults to now."),
+    endDate: z.string().optional().describe("Deprecated alias of `to`."),
   }),
 
   getInsight: z.object({
     workspaceId: z.string().describe("Workspace ID"),
     metricId: z.string().describe("Metric ID/type from getInsights (e.g., 'role_count', 'tactical_completed')"),
+    from: z.string().optional().describe("Start of the analysed period (ISO 8601). Defaults to one month before `to`. The comparison period has the same length and ends at `from`."),
+    to: z.string().optional().describe("End of the analysed period (ISO 8601). Defaults to now."),
+  }),
+
+  compareInsightCircles: z.object({
+    workspaceId: z.string().describe("Workspace ID"),
+    metricId: z.string().describe("Metric ID from nestr_get_insights, e.g. 'tactical_completed'"),
+    parentNestId: z.string().optional().describe("The circle whose direct child circles to compare. Defaults to the workspace."),
+    from: z.string().optional().describe("Start of the analysed period (ISO 8601). Defaults to one month before `to`. The comparison period has the same length and ends at `from`."),
+    to: z.string().optional().describe("End of the analysed period (ISO 8601). Defaults to now."),
+    includeSubCircles: z.boolean().optional().describe("Whether each circle's value includes its sub-circles (default: true)."),
   }),
 
   listUsers: z.object({
@@ -1692,6 +1705,8 @@ export const schemas = {
     from: z.string().optional().describe("Start date (ISO format)"),
     to: z.string().optional().describe("End date (ISO format)"),
     limit: z.number().optional().describe("Maximum data points"),
+    nestId: z.string().optional().describe("The circle whose series to return (Pro plan when not the workspace). Defaults to the workspace."),
+    userId: z.string().optional().describe("One person's series instead of the shared one (Pro plan). Pass 'me' for the person you act for."),
   }),
 
   getWorkspaceApps: z.object({
@@ -2815,15 +2830,17 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_insights",
-    description: "Get organizational health metrics and trends. Each metric has currentValue and compareValue for direction. Pro plan: filter by circle (nestId) or user (userId). Requires Insights app. See nestr_help('insights').",
+    description: "Get organizational health metrics and trends. Each metric has currentValue (in meta.period) and compareValue (in meta.comparePeriod). The response's meta.period and meta.comparePeriod name the exact dates analysed and compared against: quote both whenever you report a value or a change. meta.valueSemantics says how each dataType reads. Pro plan: one circle (nestId), personal (userId: 'me'); below Pro these return a 402 whose message says what Pro adds. Requires Insights app. See nestr_help('insights').",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         includeSubCircles: { type: "boolean", description: "Include metrics from sub-circles (default: true). Cannot be false when userId is provided." },
-        userId: { type: "string", description: "Filter metrics for a specific user (Pro plan only). Cannot be combined with nestId." },
+        userId: { type: "string", description: "Filter metrics for one user (Pro plan only). Pass 'me' for the person you act for. Cannot be combined with nestId." },
         nestId: { type: "string", description: "Filter metrics for a specific circle/nest (Pro plan only). Cannot be combined with userId." },
-        endDate: { type: "string", description: "End date for metrics query (ISO format)" },
+        from: { type: "string", description: "Start of the analysed period (ISO 8601). Defaults to one month before `to`. The comparison period has the same length and ends at `from`." },
+        to: { type: "string", description: "End of the analysed period (ISO 8601). Defaults to now." },
+        endDate: { type: "string", description: "Deprecated alias of `to`." },
       },
       required: ["workspaceId"],
     },
@@ -2831,12 +2848,31 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_insight",
-    description: "Get a single metric with its current and compare values. Use after nestr_get_insights to drill into a specific metric. Requires the Insights app to be enabled.",
+    description: "Get a single workspace metric with its current and compare values. Use after nestr_get_insights to drill into a specific metric. The response's meta.period and meta.comparePeriod name the exact dates analysed and compared against: quote both whenever you report a value or a change. Requires the Insights app to be enabled.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
         metricId: { type: "string", description: "Metric ID/type from getInsights (e.g., 'role_count', 'tactical_completed')" },
+        from: { type: "string", description: "Start of the analysed period (ISO 8601). Defaults to one month before `to`. The comparison period has the same length and ends at `from`." },
+        to: { type: "string", description: "End of the analysed period (ISO 8601). Defaults to now." },
+      },
+      required: ["workspaceId", "metricId"],
+    },
+    ...readOnly,
+  },
+  {
+    name: "nestr_compare_insight_circles",
+    description: "Compare one Nestr usage metric across the direct child circles of a circle (Pro plan; below Pro a 402 says what Pro adds). Each row has the circle's value, compareValue, delta and direction. A row with excludeFromComparison:true is the parent, whose value includes its children, so do not rank it against them. The response's meta.period and meta.comparePeriod name the exact dates analysed and compared against: quote both whenever you report a value or a change. Requires Insights app.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        workspaceId: { type: "string", description: "Workspace ID" },
+        metricId: { type: "string", description: "Metric ID from nestr_get_insights, e.g. 'tactical_completed'" },
+        parentNestId: { type: "string", description: "The circle whose direct child circles to compare. Defaults to the workspace." },
+        from: { type: "string", description: "Start of the analysed period (ISO 8601). Defaults to one month before `to`. The comparison period has the same length and ends at `from`." },
+        to: { type: "string", description: "End of the analysed period (ISO 8601). Defaults to now." },
+        includeSubCircles: { type: "boolean", description: "Whether each circle's value includes its sub-circles (default: true)." },
       },
       required: ["workspaceId", "metricId"],
     },
@@ -2981,7 +3017,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_insight_history",
-    description: "Get historical data points for a Nestr usage metric (a metricId from nestr_get_insights) over time. Use from/to for date range. Requires Insights app. The history of a metric nest, goal, sprint or other dataseries field is not here: use nestr_list_series and nestr_get_series_points.",
+    description: "Get historical data points for a Nestr usage metric (a metricId from nestr_get_insights) over time. Use from/to for date range. The series is the workspace's own unless you pass nestId (a circle, Pro) or userId ('me', Pro). Requires Insights app. The history of a metric nest, goal, sprint or other dataseries field is not here: use nestr_list_series and nestr_get_series_points.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2990,6 +3026,8 @@ export const toolDefinitions = [
         from: { type: "string", description: "Start date (ISO format)" },
         to: { type: "string", description: "End date (ISO format)" },
         limit: { type: "number", description: "Maximum data points" },
+        nestId: { type: "string", description: "The circle whose series to return (Pro plan when not the workspace). Defaults to the workspace." },
+        userId: { type: "string", description: "One person's series instead of the shared one (Pro plan). Pass 'me' for the person you act for." },
       },
       required: ["workspaceId", "metricId"],
     },
@@ -5026,6 +5064,8 @@ async function _handleToolCall(
           includeSubCircles: parsed.includeSubCircles,
           userId: parsed.userId,
           nestId: parsed.nestId,
+          from: parsed.from,
+          to: parsed.to,
           endDate: parsed.endDate,
         });
         return formatResult(insights);
@@ -5033,8 +5073,22 @@ async function _handleToolCall(
 
       case "nestr_get_insight": {
         const parsed = schemas.getInsight.parse(args);
-        const insight = await client.getInsight(parsed.workspaceId, parsed.metricId);
+        const insight = await client.getInsight(parsed.workspaceId, parsed.metricId, {
+          from: parsed.from,
+          to: parsed.to,
+        });
         return formatResult(insight);
+      }
+
+      case "nestr_compare_insight_circles": {
+        const parsed = schemas.compareInsightCircles.parse(args);
+        const comparison = await client.compareInsightCircles(parsed.workspaceId, parsed.metricId, {
+          parentNestId: parsed.parentNestId,
+          from: parsed.from,
+          to: parsed.to,
+          includeSubCircles: parsed.includeSubCircles,
+        });
+        return formatResult(comparison);
       }
 
       case "nestr_list_users": {
@@ -5123,6 +5177,8 @@ async function _handleToolCall(
             from: parsed.from,
             to: parsed.to,
             limit: parsed.limit,
+            nestId: parsed.nestId,
+            userId: parsed.userId,
           }
         );
         return formatResult(history);
