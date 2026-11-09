@@ -644,6 +644,24 @@ describe("completableResponse", () => {
     expect(keys.indexOf("searchWarnings")).toBeLessThan(keys.indexOf("items"));
   });
 
+  // `title` and `source` are this helper's contract with the list UI: the header
+  // it shows and the reorder endpoint it routes to. An envelope key of the same
+  // name must not quietly take them over, which is a silent wrong behaviour
+  // rather than a visible failure.
+  it("keeps its own title and source when the envelope carries those keys", () => {
+    const data = {
+      status: "success",
+      title: "from the server",
+      source: "something-else",
+      meta: { per_page: 50, total: 2, page: 1, total_pages: 1 },
+      data: [{ _id: "1" }],
+    };
+    const result = completableResponse(data, "inbox", "My Inbox");
+    expect(result.title).toBe("My Inbox");
+    expect(result.source).toBe("inbox");
+    expect(result.meta).toEqual({ per_page: 50, total: 2, page: 1, total_pages: 1 });
+  });
+
   // The completable list UI reads `title`, `source` and `items` by name and
   // ignores anything else, so the extra keys above must not displace them.
   it("still carries the shape the completable list app reads", () => {

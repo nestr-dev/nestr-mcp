@@ -62,7 +62,10 @@ function pageSignal(meta: unknown): { hasMore?: boolean; nextPage?: number } {
 // not apply), `links` and `linked`. A 50-row first page then read as the complete
 // answer, and a mistyped filter came back as a larger, confident result with
 // nothing to say the filter never ran. `status` is the only key dropped: it is
-// always "success" here, since an error never reaches this helper.
+// always "success" here, since an error never reaches this helper. `title` and
+// `source` are dropped for a different reason: they are this helper's contract
+// with the list UI, naming the header it shows and the reorder endpoint it routes
+// to, so an envelope key of the same name must not quietly take them over.
 export function completableResponse(
   data: unknown,
   source: CompletableSource,
@@ -74,7 +77,9 @@ export function completableResponse(
   if (Array.isArray(data)) {
     items = data;
   } else if (data && typeof data === "object" && "data" in data && Array.isArray((data as { data: unknown[] }).data)) {
-    const { data: rows, status: _status, ...rest } = data as Record<string, unknown>;
+    const {
+      data: rows, status: _status, title: _title, source: _source, ...rest
+    } = data as Record<string, unknown>;
     items = rows as unknown[];
     head = rest;
   } else {
