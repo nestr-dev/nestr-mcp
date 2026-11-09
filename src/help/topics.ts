@@ -844,7 +844,7 @@ For fields of type \`term\` (date ranges stored as \`{from, to}\` ISO date strin
 | \`goal->term:this_quarter\` | Objectives running any portion of this quarter |
 | \`sprint->term:!now\` | Sprints NOT currently active |
 
-Accepted value forms: \`now\`, ISO \`YYYY-MM-DD\`, \`DATE_DATE\` range (same \`_\`-separated convention as \`completed:DATE_DATE\`), or named ranges (\`past_7_days\`, \`this_month\`, \`last_month\`, \`this_quarter\`, \`last_quarter\`, \`this_year\`, \`last_year\`, etc. — the same set as \`completed:\` and \`updated-date:\`).
+Accepted value forms: \`now\`, ISO \`YYYY-MM-DD\`, \`DATE_DATE\` or \`DATE..DATE\` range (same convention as \`completed:DATE_DATE\`), or named ranges (\`past_7_days\`, \`this_month\`, \`last_month\`, \`this_quarter\`, \`last_quarter\`, \`this_year\`, \`last_year\`, etc. — the same set as \`completed:\` and \`updated-date:\`).
 
 Prefix the value with \`!\` to invert (no overlap).
 
@@ -918,8 +918,13 @@ Both support \`!\` prefix for negation.
 Deleted items are soft-deleted and stay in the workspace, so they remain findable. Searches exclude them unless one of these operators is present.
 
 - \`deleted:true\` - ONLY deleted items, no date limit. This does not mean "live plus deleted"
-- \`deleted:today\`, \`deleted:past_7_days\`, \`deleted:past_30_days\`, \`deleted:past_12_months\` - ONLY items deleted in that window
+- \`deleted:today\`, \`deleted:past_7_days\`, \`deleted:past_30_days\`, \`deleted:past_12_months\`, \`deleted:this_month\`, \`deleted:last_month\` - ONLY items deleted in that window
+- \`deleted:2026-10-10..2026-11-09\` (or \`deleted:2026-10-10_2026-11-09\`) - ONLY items deleted between those days, both included
+- \`deleted:2026-10-10..\` - ONLY items deleted on or since that day
+- \`deleted:2026-10-10\` - ONLY items deleted on that one day. A bare date is a single day here, as on every date operator; use \`2026-10-10..\` for "since"
 - \`include-deleted:<range>\` - live items AND those deleted in the range, in one result set. Same ranges as above, plus \`include-deleted:all\` for no date limit
+
+Each deleted row carries \`deleted: true\` and \`deletedAt\`, the moment it was deleted. Sort on it with \`sort:-deletedAt\` (newest first) and read the dates off the rows. Opening a deleted item by id is refused, so the search rows are where its details are. A \`deleted:\` value the search cannot read falls back to LIVE items and the response carries a search warning saying so: check \`searchWarnings\` before reading a result as deleted items.
 
 Use \`include-deleted:\` when the user asks "did this ever exist" or "find X, including anything deleted". Use \`deleted:\` when they want the deleted set on its own, for example "what was removed last week".
 
@@ -1073,7 +1078,7 @@ The \`completed:\` operator accepts:
 - \`completed:true\` - Only completed items
 - \`completed:any\` - Both completed AND uncompleted (skips the default 1-week-old filter). Use when you need full history.
 - Presets: \`completed:past_7_days\`, \`completed:this_month\`, \`completed:last_quarter\`, etc.
-- Custom date range: \`completed:2024-01-01_2024-03-31\` (format: \`YYYY-MM-DD_YYYY-MM-DD\`)
+- Custom date range: \`completed:2024-01-01_2024-03-31\` or \`completed:2024-01-01..2024-03-31\`; \`completed:2024-01-01..\` for on or since that day
 
 **Strict variant** (\`completed-strict:false\` / \`completed-strict:true\`): drops the \`_p.completable || _p.eventable\` guard that \`completed:false\` adds. Use when the rest of the search already restricts to labels declared \`completable: false\` at the label level but whose status field has \`completed: true\` options — e.g. \`label:sprint completed-strict:false\` returns planned + active sprints (hiding closed/cancelled). Without the strict variant the sprint label's \`completable: false\` would filter out every sprint.
 
@@ -1109,7 +1114,7 @@ Use \`updated-date:\` to find items modified within a time period. Useful for fi
 - \`updated-date:this_year\` - This calendar year
 - \`updated-date:last_year\` - Last calendar year
 
-**Custom date range:** \`updated-date:2024-01-01_2024-03-31\` (format: \`YYYY-MM-DD_YYYY-MM-DD\`)
+**Custom date range:** \`updated-date:2024-01-01_2024-03-31\` or \`updated-date:2024-01-01..2024-03-31\`; \`updated-date:2024-01-01..\` for on or since that day
 
 **Invert with \`!\`:** \`updated-date:!past_30_days\` finds items NOT updated recently (stale items)
 

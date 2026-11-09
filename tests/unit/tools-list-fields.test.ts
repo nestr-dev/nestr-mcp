@@ -132,3 +132,26 @@ describe("list rows drop text tab bodies from fields", () => {
     },
   );
 });
+
+// A deleted:<range> search filters on deletedAt, so the rows it returns have to be
+// able to say when each nest was deleted. The allowlist dropped both keys, and an
+// agent asked how many projects went in a period could not show one date.
+describe("deleted rows say they are deleted, and when", () => {
+  const DELETED = { ...ROW, deleted: true, deletedAt: "2026-10-21T20:34:57.331Z" };
+
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("nestr_search rows keep deleted and deletedAt", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => mockResponse({ status: "success", meta: { total: 1 }, data: [DELETED] })));
+    const client = new NestrClient({ apiKey: "t", baseUrl: "https://api.test.io/api" });
+    const out = JSON.parse((await handleToolCall(client, "nestr_search", { workspaceId: "ws-1", query: "label:project deleted:2026-10-10.." })).content[0].text);
+    expect(out.items[0].deleted).toBe(true);
+    expect(out.items[0].deletedAt).toBe("2026-10-21T20:34:57.331Z");
+  });
+
+  it("a live row gains no deleted keys", () => {
+    const rows = compactResponse([ROW], "nest") as Record<string, unknown>[];
+    expect(rows[0]).not.toHaveProperty("deleted");
+    expect(rows[0]).not.toHaveProperty("deletedAt");
+  });
+});

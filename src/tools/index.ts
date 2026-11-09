@@ -100,9 +100,13 @@ const COMPACT_FIELDS = {
   // has no answer in the data and a model fills the gap by guessing. It costs a short
   // id array per item and it is the difference between an answer and a fabrication.
   // `start`/`allDay` with `due` are the schedule: without them a span reads as a bare deadline.
+  // `deleted`/`deletedAt` exist only on a deleted nest, so they cost nothing on a live
+  // row. Without them a deleted:<range> search answered "which were deleted" but not
+  // "when", and a row could not even say it was deleted: an agent asked how many went
+  // in a period could filter by date and still not show a single date.
   base: [
     "_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description",
-    "due", "start", "allDay", "users", "hints",
+    "due", "start", "allDay", "users", "hints", "deleted", "deletedAt",
   ],
   // Nest rows only (nest, role, graph). `fields` is where a status, a channel id or
   // any custom value lives. The server sends it on list rows; dropping it here made
