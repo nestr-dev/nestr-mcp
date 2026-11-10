@@ -924,7 +924,7 @@ Deleted items are soft-deleted and stay in the workspace, so they remain findabl
 - \`deleted:2026-10-10\` - ONLY items deleted on that one day. A bare date is a single day here, as on every date operator; use \`2026-10-10..\` for "since"
 - \`include-deleted:<range>\` - live items AND those deleted in the range, in one result set. Same ranges as above, plus \`include-deleted:all\` for no date limit
 
-Each deleted row carries \`deleted: true\` and \`deletedAt\`, the moment it was deleted. Sort on it with \`sort:-deletedAt\` (newest first) and read the dates off the rows. Opening a deleted item by id is refused, so the search rows are where its details are. A \`deleted:\` value the search cannot read falls back to LIVE items and the response carries a search warning saying so: check \`searchWarnings\` before reading a result as deleted items.
+Each deleted row carries \`deleted: true\` and \`deletedAt\`, the moment it was deleted. Sort on it with \`sort:deletedAt sort-order:desc\` (newest first) and read the dates off the rows. Opening a deleted item by id is refused, so the search rows are where its details are. A \`deleted:\` value the search cannot read falls back to LIVE items and the response carries a search warning saying so: check \`searchWarnings\` before reading a result as deleted items.
 
 Use \`include-deleted:\` when the user asks "did this ever exist" or "find X, including anything deleted". Use \`deleted:\` when they want the deleted set on its own, for example "what was removed last week".
 
@@ -942,6 +942,7 @@ Use \`sort:\` to specify the sort field and \`sort-order:\` to set direction.
 - \`sort:activityAt\` - By last activity anywhere in the item, its own edits or its subtree. Use this for "recently active" questions; \`updatedAt\` misses items whose action is in their children
 - \`sort:due\` - By due date
 - \`sort:completedAt\` - By completion date
+- \`sort:deletedAt\` - By deletion date, for a \`deleted:\` or \`include-deleted:\` search
 
 **Sort order:**
 - \`sort-order:asc\` - Ascending (default)
