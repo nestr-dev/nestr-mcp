@@ -780,6 +780,7 @@ The \`nestr_search\` tool supports powerful query operators. Combine multiple op
 | \`type:\` | \`type:comment\` | Filter by nest type (e.g., \`comment\`, \`nest\` for untyped items) |
 | \`has:\` | \`has:due\` | Items with a property (see has: values below) |
 | \`depth:\` | \`depth:1\` | Limit search depth (1 = direct children only) |
+| \`depth:-n\` | \`label:skill depth:-25\` | Look up n levels: direct children of the search context and of each of its n nearest ancestors |
 | \`mindepth:\` | \`mindepth:2\` | Minimum depth from search context |
 | \`limit:\` | \`limit:10\` | Limit number of results |
 | \`groupby:\` | \`groupby:parent\` | Group results into sections (app + tabs; inert here) |
@@ -1025,6 +1026,7 @@ nest it cannot read, so it is always reported and never a rejection.
 - \`depth:1\` - Direct children only
 - \`depth:2\` - Children and grandchildren
 - \`depth:N\` - Up to N levels deep
+- \`depth:-N\` - Up instead of down: direct children of the search context and of each of its N nearest ancestors (clamped at the workspace root). It does not reach siblings' subtrees. Example, from a role: \`label:skill depth:-25\` lists the role's own skills plus every shared skill above it. Use it with \`nestr_get_nest_children({ nestId: roleId, search: "label:skill depth:-25" })\`, or search with that role as context.
 
 **Examples:**
 \`\`\`
@@ -1766,10 +1768,17 @@ When using the HTTP transport (\`https://mcp.nestr.io/mcp\`), each MCP session i
 
   "skills": `## Skills
 
-Skills are nests with the \`skill\` label that live directly under a role or circle. They represent processes, knowledge, or learned patterns that the role holds and uses when doing its work.
+Skills are nests with the \`skill\` label. They represent processes, knowledge, or learned patterns that a role holds and uses when doing its work.
+
+### Where a Skill Lives Decides Who Gets It
+- A skill directly under a **role** is for that role only.
+- A skill directly under a **circle** is for every role anywhere below that circle, sub-circles included.
+- A skill directly under the **workspace root** is for every role in the workspace.
+
+A role's own skills describe how to run that role: they are its instructions. Skills shared from the circles above it and from the workspace are reference. Load them when a task needs them; they are not instructions for the role.
 
 ### What Skills Are
-- A skill is a labeled nest (\`skill\` label) under a role or circle
+- A skill is a labeled nest (\`skill\` label) under a role, a circle, or the workspace root
 - Skills make AI-persisted knowledge visible, searchable, and a first-class citizen in Nestr
 - They transfer with the role — when a role is reassigned, skills stay with the role, not the previous holder
 
@@ -1791,11 +1800,20 @@ When untyped, skills default to general-purpose knowledge. Use the type to help 
 - When organizational principles emerge that should guide future decisions (doctrine)
 
 ### How to Use Skills
-- Before starting work from a role, search for skills under that role: \`in:roleId label:skill\`
+- Before starting work from a role, list its own skills and every shared skill above it: \`label:skill depth:-25\` on the role (\`nestr_get_nest_children({ nestId: roleId, search: "label:skill depth:-25" })\`)
+- Read the role's own skills as its instructions. Load a shared skill only when the task needs it
+- Role reads carry a \`shared_skills\` hint next to the \`skills\` hint: \`count\`, \`sources\` (\`[{ id, title, count }]\`, nearest circle first) and a url to that search. The \`skills\` hint still counts only the role's own skills
 - Review relevant skills for context, processes, and prior decisions
 - Check doctrine skills before proposing governance changes or making decisions
 - After completing work, create or update skills to reflect what was learned
 - Keep skills focused — one skill per process or knowledge area
+
+### Where to Put a New Skill
+- On the role, if only that role needs it
+- On the lowest circle whose roles all need it
+- On the workspace root, only for organisation-wide knowledge
+
+In the app, the Skills tab marks a shared skill with a "Shared from: <circle>" pill.
 
 ### Nestr as Context and History
 All work in Nestr — projects, tasks, comments, tensions, and skills — forms the complete context and history for a role. Skills complement this by capturing the *how* and *why* alongside the *what*. Together, they ensure continuity whether the role is energized by a human, an AI agent, or transitions between them.`,
@@ -1808,8 +1826,8 @@ All work in Nestr — projects, tasks, comments, tensions, and skills — forms 
 4. **Use @mentions** in comments to notify team members. **The literal \`{\` and \`}\` braces are required** — \`@aBcD1234eFgH5678i\` does NOT mention anyone; \`@{aBcD1234eFgH5678i:roleNestId}\` does. Prefer \`@{userId:roleId}\` so the user knows which role they're being addressed in (the second part can be a role nest or a circle nest for "individual action on a circle"). Fall back to \`@{userId}\` only when no role context applies, or use \`@{email}\` / \`@{circle}\` (notifies all role fillers in the nearest ancestor circle)
 5. **Respect the hierarchy**: nests live under parents (workspace → circle → role/project → task)
 6. **Maintain skills on roles and circles** for AI knowledge persistence:
-   - Before doing work from a role, check for existing skills under that role or its circle — they contain processes, patterns, and domain knowledge from prior sessions
-   - When completing work that is likely repeatable, capture it as a skill under the appropriate role or circle
+   - Before doing work from a role, search \`label:skill depth:-25\` on the role. It lists the role's own skills and the skills shared from its circles and the workspace, which hold processes, patterns, and domain knowledge from prior sessions
+   - When completing work that is likely repeatable, capture it as a skill on the role, or on the lowest circle whose roles all need it
    - Skills are the primary mechanism for AI context persistence — they're visible, searchable, and transfer with the role when it's reassigned
    - The \`data\` field is shared with Nestr internals and other integrations — never overwrite or remove existing keys. If you must store custom data, namespace under \`mcp.\` (e.g., \`data: { "mcp.lastSync": "..." }\`)`,
 
