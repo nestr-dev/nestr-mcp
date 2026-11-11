@@ -617,7 +617,7 @@ Labels define what type a nest is. The API strips the "circleplus-" prefix, so u
 - *(no system label)* - **Every nest is completable by default.** A nest without system labels is a todo/action — a single, concrete step that can be done in one sitting (e.g., "Call supplier about pricing", "Draft intro paragraph"). To create a todo, simply create a nest without labels. There is NO "todo" label — do NOT add \`labels: ["todo"]\`. Labels change behavior (e.g., \`project\` adds status tracking), but the default nest is already a completable work item. Todos CAN have workspace or personal labels for categorization — what makes them todos is the absence of *system* labels.
 
 **AI Knowledge:**
-- \`skill\` - A process, piece of knowledge, or learned pattern that a role or circle holds. Lives directly under a role, a circle, or the workspace root. A role's own skills are its instructions; skills on a circle or the workspace root are shared, reference for every role below them. Used by AI agents to persist and retrieve operational knowledge across sessions. When doing work that is likely to be repeated, capture it as a skill for future reference.
+- \`skill\` - A process, piece of knowledge, or learned pattern that a role, a circle, or the workspace holds. Lives directly under a role, a circle, or the workspace root. A role's own skills are its instructions; skills on a circle or the workspace root are shared, reference for every role below them. Used by AI agents to persist and retrieve operational knowledge across sessions. When doing work that is likely to be repeated, capture it as a skill for future reference.
 
 **Workspace App labels** (only present when the corresponding app is enabled — check with \`nestr_get_workspace_apps\`):
 - \`userstory\`, \`sprint\`, \`epic\`, \`milestone\` — Scrum/Agile app. See \`nestr_help({ topic: "scrum" })\` for the data model, fields, and graph relations.
@@ -1026,7 +1026,7 @@ nest it cannot read, so it is always reported and never a rejection.
 - \`depth:1\` - Direct children only
 - \`depth:2\` - Children and grandchildren
 - \`depth:N\` - Up to N levels deep
-- \`depth:-N\` - Up instead of down: direct children of the search context and of each of its N nearest ancestors (clamped at the workspace root). It does not reach siblings' subtrees. Example, from a role: \`label:skill depth:-25\` lists the role's own skills plus every shared skill above it. Use it with \`nestr_get_nest_children({ nestId: roleId, search: "label:skill depth:-25" })\`, or \`nestr_search\` with \`in:<roleId> label:skill depth:-25\`: a single \`in:\` nest is where the walk starts. With several \`in:\` ids it walks up from the search context instead.
+- \`depth:-N\` - Up instead of down: direct children of the search context and of each of its N nearest ancestors (clamped at the workspace root). It does not reach siblings' subtrees. Example, from a role: \`label:skill depth:-25\` lists the role's own skills plus every shared skill above it. Use it with \`nestr_get_nest_children({ nestId: roleId, search: "label:skill depth:-25" })\`, or \`nestr_search\` with \`in:<roleId> label:skill depth:-25\`: a single \`in:\` nest is where the walk starts. Do not pass several \`in:\` ids: the walk then starts from the search context (for \`nestr_search\` usually the workspace root) and keeps only nests inside those subtrees, so it returns little or nothing. Run one search per role instead.
 
 **Examples:**
 \`\`\`
