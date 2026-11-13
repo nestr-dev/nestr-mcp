@@ -3052,10 +3052,9 @@ export class NestrClient {
 
   /**
    * Bind a connector to an owner. Workspace-admin only (403 maps to
-   * AUTH_SCOPE_INSUFFICIENT for a non-admin caller). For a role-connector owner
-   * the response also carries credentialsField, the credentials field
-   * materialised on the domain nest so the role can use the connector and the
-   * Connect button renders. The secret is captured out-of-band, never here.
+   * AUTH_SCOPE_INSUFFICIENT for a non-admin caller). Bound to a role, the tool
+   * is held by the role's connector nest (connectorNestId in the response), which
+   * shows the Connect button. The secret is captured out-of-band, never here.
    * Wraps POST /workspaces/:workspaceId/connections. The route returns
    * { status, data }; this unwraps to the connection.
    */
