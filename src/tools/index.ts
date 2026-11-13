@@ -1494,6 +1494,8 @@ export const schemas = {
       connectionId: z.string().describe("The mailbox connection the message is in, as this run was given it"),
       messageId: z.string().describe("The provider's message id (Gmail or Outlook)"),
     }).optional().describe("Attach an existing email from a connected mailbox, fetched by Nestr, so you never handle its contents or attachments"),
+  }).refine((v) => !!(v.body && v.body.trim()) || !!v.forward, {
+    message: "Give a body, or forward an email (or both).",
   }),
 
   escalateToSupport: z.object({

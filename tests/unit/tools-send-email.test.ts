@@ -75,6 +75,17 @@ describe("nestr_send_email", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it("refuses a call with neither a body nor a forward before calling Nestr", async () => {
+    const result = await handleToolCall(client, "nestr_send_email", { to: ["u1"], subject: "x" });
+    expect(result.isError).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("accepts a forward without a body", async () => {
+    const result = await call({ to: ["u1"], subject: "Fwd", forward: { connectionId: "c1", messageId: "m1" } });
+    expect(result.isError).toBeFalsy();
+  });
+
   it("surfaces Nestr's refusal", async () => {
     mockFetch.mockResolvedValue(mockResponse(403, {
       status: "error",

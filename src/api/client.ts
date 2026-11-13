@@ -1699,15 +1699,6 @@ export class NestrClient {
     return this.fetch<Record<string, unknown>>(`/posts/${postId}/read`, { method: "POST" });
   }
 
-  // suppressStatusMessage always rides along: whoever called this tool is told to say a
-  // human is coming, so the canned confirmation on the thread would be the same news
-  // twice. It is a request, not an instruction. Nestr grants it only while an agent
-  // reply to that same thread is pending, so a client whose answer lands somewhere else
-  // (this server also runs outside the Nestradamus runtime) leaves the thread with the
-  // confirmation it needs. The response says which way it went.
-  // Unwrapped to `data`, unlike its DM siblings: the caller reads flags off this
-  // (alreadyQueued, statusMessagePosted) and reading them off the envelope silently
-  // yielded undefined every time, so the already-queued branch never fired.
   // An agent run emails workspace members (POST /agents/runs/email). Only a run's own
   // dispatch token is accepted; Nestr resolves and gates every recipient, fetches a
   // forwarded email itself, and sends from its own mail.
@@ -1729,6 +1720,15 @@ export class NestrClient {
     return response?.data ?? {};
   }
 
+  // suppressStatusMessage always rides along: whoever called this tool is told to say a
+  // human is coming, so the canned confirmation on the thread would be the same news
+  // twice. It is a request, not an instruction. Nestr grants it only while an agent
+  // reply to that same thread is pending, so a client whose answer lands somewhere else
+  // (this server also runs outside the Nestradamus runtime) leaves the thread with the
+  // confirmation it needs. The response says which way it went.
+  // Unwrapped to `data`, unlike its DM siblings: the caller reads flags off this
+  // (alreadyQueued, statusMessagePosted) and reading them off the envelope silently
+  // yielded undefined every time, so the already-queued branch never fired.
   async escalateDMThread(threadId: string, reason?: string): Promise<Record<string, unknown>> {
     const body: Record<string, unknown> = { suppressStatusMessage: true };
     if (reason) body.reason = reason;
