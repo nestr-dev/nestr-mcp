@@ -2136,7 +2136,7 @@ If a meeting genuinely seems to want a circle of its own, that is a claim about 
 - \`due\` — the meeting start time as an ISO datetime. A future \`due\` schedules it (the web app shows a countdown and a "Start meeting now" link); omit it to mean now.
 - \`users\` — everyone who should attend: the people and agents energizing roles in the circle, plus circle-lead and rep-link fillers from its sub-circles.
 
-Agenda items are tensions. Put one on the agenda by setting its meeting field (\`fields: { "tension.meeting": <meetingId> }\` with \`nestr_update_nest\`, \`null\` to take it off); a \`meeting\` graph link written directly is refused. An agenda item with no originating role can be a plain child nest of the meeting instead.
+Agenda items are tensions. Put one on the agenda by setting its meeting field (\`fields: { "tension.meeting": <meetingId> }\` with \`nestr_update_nest\`, \`null\` to take it off); a \`meeting\` graph link written directly is refused. An agenda item with no originating role can be a plain child nest of the meeting instead. Deleting a meeting that has not been closed gives its open agenda items back: they leave the agenda and show up again as open tensions. Deleting a meeting that was already closed leaves its items as they are.
 
 ### Before you create one
 

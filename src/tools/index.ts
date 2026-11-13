@@ -3806,7 +3806,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_tension_part",
-    description: "Add a part to a tension. A part is either the operational work the tension asks for or a governance change it proposes. Modes: OPERATIONAL OUTPUT (title, description, users, role, and no governance label) is what a work request is made of, and is the common case; new governance item (omit _id, give title plus a governance label such as ['role'] or ['policy']); change one (_id plus the changed fields; editing a role copies its accountabilities/domains in, so it reads as a full role edit); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities/domains untouched). The part you get back has its own _id and a sourceId, the output nest underneath it; nestr_modify_tension_part takes the part _id, not the sourceId. See nestr_help('tension-processing')." + writeReturns("part", "part"),
+    description: "Add a part to a tension. A part is either the operational work the tension asks for or a governance change it proposes. Modes: OPERATIONAL OUTPUT (title, description, users, role, and no governance label) is what a work request is made of, and is the common case; new governance item (omit _id, give title plus a governance label such as ['role'] or ['policy']); change one (_id plus the changed fields; the role's accountabilities and domains are copied in, and a list you send replaces only that list while one you leave out stays as it is); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities/domains untouched). The part you get back has its own _id and a sourceId, the output nest underneath it; nestr_modify_tension_part takes the part _id, not the sourceId. See nestr_help('tension-processing')." + writeReturns("part", "part"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -4684,7 +4684,7 @@ async function _handleToolCall(
         code: "AUTH_SCOPE_INSUFFICIENT",
         message: `Tool '${name}' is not available on the read-only Nestr MCP. This workspace is out of AI credit, so the agent can read but not change anything.`,
         retryable: false,
-        hint: "Add AI credit, or raise the monthly ceiling if that is what was reached, to restore the full toolset.",
+        hint: "Add AI credit to restore the full toolset.",
       });
     }
 
@@ -5988,7 +5988,7 @@ async function _handleToolCall(
           const part = await client.proposeTensionDeletion(nestId, tensionId, body._id);
           return formatResult({ message: "Deletion proposal added successfully", _id: writtenId(part), part });
         } else if (body._id) {
-          // Propose change to existing item (existing children auto-copied if accountabilities/domains not provided)
+          // Propose change to existing item (a list left out of the body is copied over unchanged)
           const part = await client.proposeTensionChange(nestId, tensionId, body);
           return formatResult({ message: "Change proposal added successfully", _id: writtenId(part), part });
         } else {
