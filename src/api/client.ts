@@ -1153,6 +1153,17 @@ export class NestrClient {
 
   // ============ NESTS ============
 
+  /**
+   * The templates offered when creating at a nest: what the app's "Apply template" dropdown shows
+   * there. `labels` narrows by label id.
+   */
+  async listTemplates(nestId: string, labels: string[] = []): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (labels.length) params.set("label", labels.join(","));
+    const query = params.toString();
+    return this.fetch<unknown>(`/nests/${nestId}/templates${query ? `?${query}` : ""}`);
+  }
+
   async getNest(
     nestId: string,
     options?: {
@@ -1268,7 +1279,19 @@ export class NestrClient {
 
   async createNest(data: {
     parentId: string;
-    title: string;
+    /** Required unless template or source is given. */
+    title?: string;
+    /** Create from a template (a template id or core role key). */
+    template?: string;
+    /** Only 'template': make (or add to) a template. */
+    type?: "template";
+    /** With type 'template': capture this item as a template. */
+    source?: string;
+    dryRun?: boolean;
+    followTemplate?: boolean;
+    governanceOnly?: boolean;
+    includeUsers?: boolean;
+    includeComments?: boolean;
     purpose?: string;
     description?: string;
     labels?: string[];
