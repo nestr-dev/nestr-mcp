@@ -46,7 +46,7 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 
   "connector-instruction-approval": `### Connectors held back for instruction approval
 
-A role's connector (Gmail, a CRM, any account bound to one of the role's connectors) can be **held back on scheduled runs** — runs nobody started, such as an autonomous agent's recurring check — until someone approves the role's latest instructions. Manual runs, which a person starts, still get it.
+A role's connector (Gmail, a CRM, any account the role reaches through one of its connectors) can be **held back on scheduled runs** — runs nobody started, such as an autonomous agent's recurring check — until someone approves the role's latest instructions. Manual runs, which a person starts, still get it.
 
 **Why it happens.** On a run nobody started, Nestr checks everyone who wrote the instructions the agent will follow (the role's and its skills' and the task's title, description and purpose) against the connector's audience: the people it is shared with. If an edit came from someone outside that audience, or from an author Nestr cannot name, a person in the audience has to approve the new text before the connector is handed over.
 

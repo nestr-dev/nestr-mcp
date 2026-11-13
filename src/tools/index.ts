@@ -2040,8 +2040,8 @@ export const schemas = {
     parentId: z.string().optional().describe("Parent ID — use to move/restructure items (e.g., move role to different circle)"),
     users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign. For an election (with roleId), the one user being elected."),
     due: z.string().optional().describe("Due or re-election date, ISO. For an election, the term end; omit for no term."),
-    accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles on a role (replaces all; children tools for individual edits)"),
-    domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles on a role (replaces all; children tools for individual edits). Domains are exclusive control; the tools a role may use go in connectors."),
+    accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles on a role. Sending this list replaces the accountabilities; leave it out to keep them as they are, or send [] to remove them all. Use the children tools for individual edits."),
+    domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles on a role. Sending this list replaces the domains; leave it out to keep them as they are, or send [] to remove them all. Use the children tools for individual edits. Domains are exclusive control; the tools a role may use go in connectors."),
     connectors: coerceFromJson(z.array(z.object({
       _id: z.string().optional(),
       title: z.string().optional(),
@@ -2072,8 +2072,8 @@ export const schemas = {
     parentId: z.string().optional().describe("Updated parent ID"),
     users: coerceFromJson(z.array(z.string())).optional().describe("Updated user assignments"),
     due: z.string().optional().describe("Updated due date (ISO format)"),
-    accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Updated accountabilities (replaces all; children tools for individual edits)"),
-    domains: coerceFromJson(z.array(z.string())).optional().describe("Updated domains (replaces all; children tools for individual edits)"),
+    accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Updated accountabilities. Sending this list replaces the part's accountabilities; leave it out to keep them, or send [] to remove them all. Use the children tools for individual edits."),
+    domains: coerceFromJson(z.array(z.string())).optional().describe("Updated domains. Sending this list replaces the part's domains; leave it out to keep them, or send [] to remove them all. Use the children tools for individual edits."),
     connectors: coerceFromJson(z.array(z.object({
       _id: z.string().optional(),
       title: z.string().optional(),
@@ -2192,7 +2192,7 @@ export const schemas = {
     name: z.string().optional().describe("Unique connector name within the workspace catalog. Required unless templateId is given, where it defaults to the template's own name."),
     config: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Per-type transport config, no secret. mcp/api need a url (e.g., { url: 'https://...' }); cli needs a command (e.g., { command: 'some-cli' }). Optional non-secret headers go under headers."),
     capabilities: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Capability descriptor: { discover: boolean, tools: [{ name, description, inputSchema }] }. discover:true lets the connector self-describe its tools at runtime."),
-    exposure: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Exposure policy deciding which owners may bind: { userAgent: boolean, domainGated: boolean, allowShared: boolean }. Set domainGated:true to allow binding to a role's domain. allowShared is off by default and cannot be set to true here: a workspace admin turns it on in the app, under workspace settings > Integrations."),
+    exposure: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Exposure policy deciding which owners may bind: { userAgent: boolean, domainGated: boolean, allowShared: boolean }. Set domainGated:true to allow binding to a role, as one of its connectors (the name is historical; it no longer involves domains). allowShared is off by default and cannot be set to true here: a workspace admin turns it on in the app, under workspace settings > Integrations."),
     authStrategy: z.enum(["secret", "oauth2"]).optional().describe("How a principal connects: 'secret' (a one-time secret captured via the Connect button) or 'oauth2'. The agent never sees the secret."),
   }),
 
@@ -3820,8 +3820,8 @@ export const toolDefinitions = [
         parentId: { type: "string", description: "Parent ID — use to move/restructure items (e.g., move role to different circle)" },
         users: { type: "array", items: { type: "string" }, description: "User IDs to assign. For an election (with roleId), the one user being elected." },
         due: { type: "string", description: "Due or re-election date, ISO. For an election, the term end; omit for no term." },
-        accountabilities: { type: "array", items: { type: "string" }, description: "Accountability titles on a role (replaces all; children tools for individual edits)" },
-        domains: { type: "array", items: { type: "string" }, description: "Domain titles on a role (replaces all; children tools for individual edits). Domains are exclusive control; the tools a role may use go in connectors." },
+        accountabilities: { type: "array", items: { type: "string" }, description: "Accountability titles on a role. Sending this list replaces the accountabilities; leave it out to keep them as they are, or send [] to remove them all. Use the children tools for individual edits." },
+        domains: { type: "array", items: { type: "string" }, description: "Domain titles on a role. Sending this list replaces the domains; leave it out to keep them as they are, or send [] to remove them all. Use the children tools for individual edits. Domains are exclusive control; the tools a role may use go in connectors." },
         connectors: { type: "array", items: { type: "object", properties: { _id: { type: "string" }, title: { type: "string" }, connector: { type: "string", description: "Catalog id of the tool" } } }, description: "Connectors on a role (agents app): the tools it may use, each { _id?, title, connector } where connector is the catalog id from nestr_list_connectors. A connector is its own governance list, never a domain. Same semantics as accountabilities: on a change, connectors left out are proposed for removal; leave the field out to keep them untouched." },
         role: { type: "string", description: "The role this output belongs to, for an operational output (pathway 3/4). Pair with users: users is WHO does it, role is the role it is asked of, and the work request names both (\"Ada as Systems: ...\"). A role id, not a title. Distinct from roleId, which is election mode." },
         roleId: { type: "string", description: "ELECTION mode: the electable role to fill (Facilitator, Secretary, Rep Link or any electable role). Pair with users:[oneUserId] and optional due. Never with _id." },
@@ -3848,8 +3848,8 @@ export const toolDefinitions = [
         users: { type: "array", items: { type: "string" }, description: "Updated user assignments" },
         due: { type: "string", description: "Updated due date (ISO format)" },
         role: { type: "string", description: "Updated role for an operational output. A role id; pass an empty string to clear it." },
-        accountabilities: { type: "array", items: { type: "string" }, description: "Updated accountabilities (replaces all; children tools for individual edits)" },
-        domains: { type: "array", items: { type: "string" }, description: "Updated domains (replaces all; children tools for individual edits)" },
+        accountabilities: { type: "array", items: { type: "string" }, description: "Updated accountabilities. Sending this list replaces the part's accountabilities; leave it out to keep them, or send [] to remove them all. Use the children tools for individual edits." },
+        domains: { type: "array", items: { type: "string" }, description: "Updated domains. Sending this list replaces the part's domains; leave it out to keep them, or send [] to remove them all. Use the children tools for individual edits." },
         connectors: { type: "array", items: { type: "object", properties: { _id: { type: "string" }, title: { type: "string" }, connector: { type: "string" } } }, description: "Updated connectors, each { _id?, title, connector }. Replaces the connectors only; accountabilities and domains are left alone unless sent too." },
       },
       required: ["nestId", "tensionId", "partId"],
@@ -3872,7 +3872,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_tension_part_children",
-    description: "List accountabilities/domains of a proposal part. Use to review before managing individually.",
+    description: "List the accountabilities, domains and connectors of a proposal part. Use to review before managing individually.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -4082,7 +4082,7 @@ export const toolDefinitions = [
         },
         exposure: {
           type: "object",
-          description: "Which owners may bind: { userAgent: boolean, domainGated: boolean, allowShared: boolean }. domainGated:true allows binding to a role's domain. allowShared decides whether one shared account may stand in for everyone who reaches the connector. It is off by default and this tool cannot set it to true: a workspace admin turns it on in the app, under workspace settings > Integrations.",
+          description: "Which owners may bind: { userAgent: boolean, domainGated: boolean, allowShared: boolean }. domainGated:true allows binding to a role, as one of its connectors (the name is historical; it no longer involves domains). allowShared decides whether one shared account may stand in for everyone who reaches the connector. It is off by default and this tool cannot set it to true: a workspace admin turns it on in the app, under workspace settings > Integrations.",
         },
         authStrategy: {
           type: "string",
