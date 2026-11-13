@@ -4030,7 +4030,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_list_connectors",
-    description: "List the workspace's connector catalog: the mcp / cli / api templates an admin has registered. Each entry holds no secret and shows its type, name, authStrategy, config, capabilities, exposure ({ userAgent, domainGated }) and whether it is enabled. Typical flow: register a connector, then bind it to a role with nestr_bind_connector (ownerType 'role'; the role's connector for it is found or created), then a human or agent connects the account via the connector's's Connect button (the secret is captured out-of-band, never by the agent). Auth: any valid token can list.",
+    description: "List the workspace's connector catalog: the mcp / cli / api templates an admin has registered. Each entry holds no secret and shows its type, name, authStrategy, config, capabilities, exposure ({ userAgent, domainGated }) and whether it is enabled. Typical flow: register a connector, then bind it to a role with nestr_bind_connector (ownerType 'role'; the role's connector for it is found or created), then a human or agent connects the account via the connector's Connect button (the secret is captured out-of-band, never by the agent). Auth: any valid token can list.",
     inputSchema: {
       type: "object" as const,
       properties: {
