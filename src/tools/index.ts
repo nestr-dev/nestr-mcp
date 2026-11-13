@@ -2040,8 +2040,8 @@ export const schemas = {
     parentId: z.string().optional().describe("Parent ID — use to move/restructure items (e.g., move role to different circle)"),
     users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign. For an election (with roleId), the one user being elected."),
     due: z.string().optional().describe("Due or re-election date, ISO. For an election, the term end; omit for no term."),
-    accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles on a role (replaces all; children tools for individual edits)"),
-    domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles on a role (replaces all; children tools for individual edits)"),
+    accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles on a role. Sending this list replaces the accountabilities; leave it out to keep them as they are, or send [] to remove them all. Use the children tools for individual edits."),
+    domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles on a role. Sending this list replaces the domains; leave it out to keep them as they are, or send [] to remove them all. Use the children tools for individual edits."),
     role: z.string().optional().describe("The role this output belongs to, for an operational output (pathway 3/4). Pair with users: users is WHO does it, role is the role it is asked of, and the work request names both (\"Ada as Systems: ...\"). A role id, not a title. Distinct from roleId, which is election mode."),
     roleId: z.string().optional().describe("Hold an ELECTION: the electable role to fill (Facilitator/Secretary/Rep Link or any electable role). Assigns or reconfirms the role's filler for a term WITHOUT changing its accountabilities/domains — provide users:[userId] (one person) and optional due (term). Do not combine with _id."),
     removeNest: z.boolean().optional().describe("Set true with _id to propose deletion of the referenced governance item (when the proposal is accepted, the item is removed). Distinct from nestr_remove_tension_part, which undoes a proposal part you already added. Requires _id; other body fields are ignored."),
@@ -2067,8 +2067,8 @@ export const schemas = {
     parentId: z.string().optional().describe("Updated parent ID"),
     users: coerceFromJson(z.array(z.string())).optional().describe("Updated user assignments"),
     due: z.string().optional().describe("Updated due date (ISO format)"),
-    accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Updated accountabilities (replaces all; children tools for individual edits)"),
-    domains: coerceFromJson(z.array(z.string())).optional().describe("Updated domains (replaces all; children tools for individual edits)"),
+    accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Updated accountabilities. Sending this list replaces the part's accountabilities; leave it out to keep them, or send [] to remove them all. Use the children tools for individual edits."),
+    domains: coerceFromJson(z.array(z.string())).optional().describe("Updated domains. Sending this list replaces the part's domains; leave it out to keep them, or send [] to remove them all. Use the children tools for individual edits."),
     role: z.string().optional().describe("Updated role for an operational output. A role id; pass an empty string to clear it."),
   }),
 
@@ -3796,7 +3796,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_tension_part",
-    description: "Add a part to a tension. A part is either the operational work the tension asks for or a governance change it proposes. Modes: OPERATIONAL OUTPUT (title, description, users, role, and no governance label) is what a work request is made of, and is the common case; new governance item (omit _id, give title plus a governance label such as ['role'] or ['policy']); change one (_id plus the changed fields; editing a role copies its accountabilities/domains in, so it reads as a full role edit); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities/domains untouched). The part you get back has its own _id and a sourceId, the output nest underneath it; nestr_modify_tension_part takes the part _id, not the sourceId. See nestr_help('tension-processing')." + writeReturns("part", "part"),
+    description: "Add a part to a tension. A part is either the operational work the tension asks for or a governance change it proposes. Modes: OPERATIONAL OUTPUT (title, description, users, role, and no governance label) is what a work request is made of, and is the common case; new governance item (omit _id, give title plus a governance label such as ['role'] or ['policy']); change one (_id plus the changed fields; the role's accountabilities and domains are copied in, and a list you send replaces only that list while one you leave out stays as it is); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities/domains untouched). The part you get back has its own _id and a sourceId, the output nest underneath it; nestr_modify_tension_part takes the part _id, not the sourceId. See nestr_help('tension-processing')." + writeReturns("part", "part"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3810,8 +3810,8 @@ export const toolDefinitions = [
         parentId: { type: "string", description: "Parent ID — use to move/restructure items (e.g., move role to different circle)" },
         users: { type: "array", items: { type: "string" }, description: "User IDs to assign. For an election (with roleId), the one user being elected." },
         due: { type: "string", description: "Due or re-election date, ISO. For an election, the term end; omit for no term." },
-        accountabilities: { type: "array", items: { type: "string" }, description: "Accountability titles on a role (replaces all; children tools for individual edits)" },
-        domains: { type: "array", items: { type: "string" }, description: "Domain titles on a role (replaces all; children tools for individual edits)" },
+        accountabilities: { type: "array", items: { type: "string" }, description: "Accountability titles on a role. Sending this list replaces the accountabilities; leave it out to keep them as they are, or send [] to remove them all. Use the children tools for individual edits." },
+        domains: { type: "array", items: { type: "string" }, description: "Domain titles on a role. Sending this list replaces the domains; leave it out to keep them as they are, or send [] to remove them all. Use the children tools for individual edits." },
         role: { type: "string", description: "The role this output belongs to, for an operational output (pathway 3/4). Pair with users: users is WHO does it, role is the role it is asked of, and the work request names both (\"Ada as Systems: ...\"). A role id, not a title. Distinct from roleId, which is election mode." },
         roleId: { type: "string", description: "ELECTION mode: the electable role to fill (Facilitator, Secretary, Rep Link or any electable role). Pair with users:[oneUserId] and optional due. Never with _id." },
         removeNest: { type: "boolean", description: "With _id, propose deleting that governance item; it goes when the proposal is accepted. Not nestr_remove_tension_part, which undoes a part you already added." },
@@ -3837,8 +3837,8 @@ export const toolDefinitions = [
         users: { type: "array", items: { type: "string" }, description: "Updated user assignments" },
         due: { type: "string", description: "Updated due date (ISO format)" },
         role: { type: "string", description: "Updated role for an operational output. A role id; pass an empty string to clear it." },
-        accountabilities: { type: "array", items: { type: "string" }, description: "Updated accountabilities (replaces all; children tools for individual edits)" },
-        domains: { type: "array", items: { type: "string" }, description: "Updated domains (replaces all; children tools for individual edits)" },
+        accountabilities: { type: "array", items: { type: "string" }, description: "Updated accountabilities. Sending this list replaces the part's accountabilities; leave it out to keep them, or send [] to remove them all. Use the children tools for individual edits." },
+        domains: { type: "array", items: { type: "string" }, description: "Updated domains. Sending this list replaces the part's domains; leave it out to keep them, or send [] to remove them all. Use the children tools for individual edits." },
       },
       required: ["nestId", "tensionId", "partId"],
     },
@@ -4672,7 +4672,7 @@ async function _handleToolCall(
         code: "AUTH_SCOPE_INSUFFICIENT",
         message: `Tool '${name}' is not available on the read-only Nestr MCP. This workspace is out of AI credit, so the agent can read but not change anything.`,
         retryable: false,
-        hint: "Add AI credit, or raise the monthly ceiling if that is what was reached, to restore the full toolset.",
+        hint: "Add AI credit to restore the full toolset.",
       });
     }
 
@@ -5976,7 +5976,7 @@ async function _handleToolCall(
           const part = await client.proposeTensionDeletion(nestId, tensionId, body._id);
           return formatResult({ message: "Deletion proposal added successfully", _id: writtenId(part), part });
         } else if (body._id) {
-          // Propose change to existing item (existing children auto-copied if accountabilities/domains not provided)
+          // Propose change to existing item (a list left out of the body is copied over unchanged)
           const part = await client.proposeTensionChange(nestId, tensionId, body);
           return formatResult({ message: "Change proposal added successfully", _id: writtenId(part), part });
         } else {

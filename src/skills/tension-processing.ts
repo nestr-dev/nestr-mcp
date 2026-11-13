@@ -117,7 +117,7 @@ Then identify the **next physical action** — the very next concrete step.
 2. **Add parts** via \`nestr_add_tension_part\`. A part is either the work the tension asks for or a governance change it proposes:
    - **Operational output** (pathways 1-4, the common case): title + description + \`users\` + \`role\`, and NO governance label. \`users\` is who does it; \`role\` is the role it is asked of, and the work request names both ("Ada as Systems: ..."). Omitting \`role\` is what produces an output with an assignee and no role on it.
    - **New governance item**: title + labels (e.g., \`["role"]\`). For roles, include accountabilities/domains as bulk shorthand.
-   - **Change existing item**: \`_id\` of existing item + fields to change. Existing children auto-copied if accountabilities/domains not provided.
+   - **Change existing item**: \`_id\` of existing item + fields to change. Each list (accountabilities, domains) works on its own: a list you send replaces that list, a list you leave out is copied over unchanged, and \`[]\` removes them all. Sending only new accountabilities keeps every domain.
    - **Remove existing item**: Use \`nestr_remove_tension_part\`.
    - **Hold an election** (assign/reconfirm a role's filler for a term): provide \`roleId\` + \`users: ["userId"]\` + optional \`due\` — see Elections below.
 
