@@ -161,7 +161,7 @@ describe("pendingInstructionApprovals on nestr_list_connections", () => {
     return {
       connectionId: "conn1",
       connectorName: "Gmail",
-      owner: { type: "role-domain", id: "dom1" },
+      owner: { type: "role-connector", id: "dom1" },
       authorizations: [],
       pendingInstructionApprovals: pending,
     };

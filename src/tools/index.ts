@@ -116,7 +116,7 @@ const COMPACT_FIELDS = {
   // are its user-label values (`<labelId>.<code>`), which stay.
   nest: ["fields"],
   // Additional fields for roles
-  role: ["accountabilities", "domains"],
+  role: ["accountabilities", "domains", "connectors"],
   // Additional fields for users. `bot` and `assistant` are not optional trim:
   // stripping them makes an agent indistinguishable from a person in a list, and
   // "which of these can act on my own credentials for me" then has no answer in
@@ -576,7 +576,7 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     pathParamNames: ["nestId", "tensionId"],
     bodyParams: new Set([
       "_id", "title", "labels", "description", "purpose",
-      "parentId", "users", "due", "accountabilities", "domains",
+      "parentId", "users", "due", "accountabilities", "domains", "connectors",
       "role", // operational output: the role the work is asked of
       "roleId", // election mode
     ]),
@@ -590,7 +590,7 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     pathParamNames: ["nestId", "tensionId"],
     bodyParams: new Set([
       "_id", "title", "labels", "description", "purpose",
-      "parentId", "users", "due", "accountabilities", "domains",
+      "parentId", "users", "due", "accountabilities", "domains", "connectors",
       "role",
     ]),
   },
@@ -2041,7 +2041,12 @@ export const schemas = {
     users: coerceFromJson(z.array(z.string())).optional().describe("User IDs to assign. For an election (with roleId), the one user being elected."),
     due: z.string().optional().describe("Due or re-election date, ISO. For an election, the term end; omit for no term."),
     accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Accountability titles on a role (replaces all; children tools for individual edits)"),
-    domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles on a role (replaces all; children tools for individual edits)"),
+    domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles on a role (replaces all; children tools for individual edits). Domains are exclusive control; the tools a role may use go in connectors."),
+    connectors: coerceFromJson(z.array(z.object({
+      _id: z.string().optional(),
+      title: z.string().optional(),
+      connector: z.string().optional(),
+    }))).optional().describe("Connectors on a role (agents app): the tools it may use, each { _id?, title, connector } where connector is the catalog id from nestr_list_connectors. A connector is its own governance list, never a domain. Same semantics as accountabilities: on a change, connectors left out are proposed for removal; leave the field out to keep them untouched."),
     role: z.string().optional().describe("The role this output belongs to, for an operational output (pathway 3/4). Pair with users: users is WHO does it, role is the role it is asked of, and the work request names both (\"Ada as Systems: ...\"). A role id, not a title. Distinct from roleId, which is election mode."),
     roleId: z.string().optional().describe("Hold an ELECTION: the electable role to fill (Facilitator/Secretary/Rep Link or any electable role). Assigns or reconfirms the role's filler for a term WITHOUT changing its accountabilities/domains — provide users:[userId] (one person) and optional due (term). Do not combine with _id."),
     removeNest: z.boolean().optional().describe("Set true with _id to propose deletion of the referenced governance item (when the proposal is accepted, the item is removed). Distinct from nestr_remove_tension_part, which undoes a proposal part you already added. Requires _id; other body fields are ignored."),
@@ -2069,6 +2074,11 @@ export const schemas = {
     due: z.string().optional().describe("Updated due date (ISO format)"),
     accountabilities: coerceFromJson(z.array(z.string())).optional().describe("Updated accountabilities (replaces all; children tools for individual edits)"),
     domains: coerceFromJson(z.array(z.string())).optional().describe("Updated domains (replaces all; children tools for individual edits)"),
+    connectors: coerceFromJson(z.array(z.object({
+      _id: z.string().optional(),
+      title: z.string().optional(),
+      connector: z.string().optional(),
+    }))).optional().describe("Updated connectors, each { _id?, title, connector }. Replaces the connectors only; accountabilities and domains are left alone unless sent too."),
     role: z.string().optional().describe("Updated role for an operational output. A role id; pass an empty string to clear it."),
   }),
 
@@ -2211,8 +2221,8 @@ export const schemas = {
   bindConnector: z.object({
     workspaceId: z.string().describe("Workspace ID the connector and owner belong to"),
     connectorId: z.string().describe("ID of an enabled connector from nestr_list_connectors"),
-    ownerType: z.enum(["role", "role-domain", "workspace", "user", "agent"]).describe("Who gets access. 'role' is usually what you want: pass a role nest ID and the connector's domain is found or created under it. 'role-domain' targets an existing domain directly. 'workspace' gives everyone. 'user' is one person's own account and 'agent' is one bot's own: both are personal, both need a workspace admin, and both are the wrong answer unless the thing really does belong to that one principal. See the tool description."),
-    ownerId: z.string().describe("Owner ID. role: the role nest ID. role-domain: the domain nest ID. workspace: the workspace ID. user: the person's user ID. agent: the bot's user ID."),
+    ownerType: z.enum(["role", "role-connector", "workspace", "user", "agent"]).describe("Who gets access. 'role' is usually what you want: pass a role nest ID and the role's connector for it is found or created. 'role-connector' targets an existing connector nest directly. 'workspace' gives everyone. 'user' is one person's own account and 'agent' is one bot's own: both are personal, both need a workspace admin, and both are the wrong answer unless the thing really does belong to that one principal. See the tool description."),
+    ownerId: z.string().describe("Owner ID. role: the role nest ID. role-connector: the connector nest ID. workspace: the workspace ID. user: the person's user ID. agent: the bot's user ID."),
   }),
 
   updateConnector: z.object({
@@ -3811,7 +3821,8 @@ export const toolDefinitions = [
         users: { type: "array", items: { type: "string" }, description: "User IDs to assign. For an election (with roleId), the one user being elected." },
         due: { type: "string", description: "Due or re-election date, ISO. For an election, the term end; omit for no term." },
         accountabilities: { type: "array", items: { type: "string" }, description: "Accountability titles on a role (replaces all; children tools for individual edits)" },
-        domains: { type: "array", items: { type: "string" }, description: "Domain titles on a role (replaces all; children tools for individual edits)" },
+        domains: { type: "array", items: { type: "string" }, description: "Domain titles on a role (replaces all; children tools for individual edits). Domains are exclusive control; the tools a role may use go in connectors." },
+        connectors: { type: "array", items: { type: "object", properties: { _id: { type: "string" }, title: { type: "string" }, connector: { type: "string", description: "Catalog id of the tool" } } }, description: "Connectors on a role (agents app): the tools it may use, each { _id?, title, connector } where connector is the catalog id from nestr_list_connectors. A connector is its own governance list, never a domain. Same semantics as accountabilities: on a change, connectors left out are proposed for removal; leave the field out to keep them untouched." },
         role: { type: "string", description: "The role this output belongs to, for an operational output (pathway 3/4). Pair with users: users is WHO does it, role is the role it is asked of, and the work request names both (\"Ada as Systems: ...\"). A role id, not a title. Distinct from roleId, which is election mode." },
         roleId: { type: "string", description: "ELECTION mode: the electable role to fill (Facilitator, Secretary, Rep Link or any electable role). Pair with users:[oneUserId] and optional due. Never with _id." },
         removeNest: { type: "boolean", description: "With _id, propose deleting that governance item; it goes when the proposal is accepted. Not nestr_remove_tension_part, which undoes a part you already added." },
@@ -3839,6 +3850,7 @@ export const toolDefinitions = [
         role: { type: "string", description: "Updated role for an operational output. A role id; pass an empty string to clear it." },
         accountabilities: { type: "array", items: { type: "string" }, description: "Updated accountabilities (replaces all; children tools for individual edits)" },
         domains: { type: "array", items: { type: "string" }, description: "Updated domains (replaces all; children tools for individual edits)" },
+        connectors: { type: "array", items: { type: "object", properties: { _id: { type: "string" }, title: { type: "string" }, connector: { type: "string" } } }, description: "Updated connectors, each { _id?, title, connector }. Replaces the connectors only; accountabilities and domains are left alone unless sent too." },
       },
       required: ["nestId", "tensionId", "partId"],
     },
@@ -4143,7 +4155,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_bind_connector",
-    description: "Bind a registered connector to an owner so that owner can use it. Owner types: 'role' (ownerId is the role nest ID — the server finds or creates the connector's domain under it), 'role-domain' (ownerId is an existing domain nest ID), 'workspace' (ownerId is the workspace ID), 'user' (ownerId is a person's user ID, for their own account), or 'agent' (ownerId is a bot's user ID, for its own). A 'role' or 'role-domain' owner materialises a credentials field on the domain nest, so the role can use the connector and the Connect button renders there; the response then carries domainId (and domainCreated when the bind created it). After binding, a human or agent connects the account via that Connect button. The secret is captured out-of-band and is never seen by the agent. Workspace-admin only: a non-admin caller gets AUTH_SCOPE_INSUFFICIENT. The connector must already be registered (nestr_register_connector) and enabled.\n\nBIND TO THE ROLE, not to whoever fills it. A role binding is the governance act: the access belongs to the work, survives the filler changing, and is visible to the circle. Reach for 'role' by default — it is the usual onboarding path: pass the role nest ID and the server does the domain lookup. Use 'role-domain' only when you already have the domain nest ID and want to target it directly.\n\n'user' is for what is genuinely one person's: their own mailbox, their own drive. Binding that to a role would hand it to whoever fills the role next, which is the opposite of what they asked for, so this is the one case where a role binding is wrong. It needs a workspace admin and the connector has to be open to user owners in the catalog; if either is missing, say which and what the admin has to do rather than falling back to a role binding. The work on a personal connection is then done by an agent that fills NO role, because filling a role and assisting are exclusive and only an assistant can act with a person's own access.\n\n'agent' is the same shape for a bot's own account, used where a provider gives the agent its own login rather than borrowing a person's. It is the rarest of the four: prefer 'role', so the access belongs to the work and survives the filler changing. Both personal types are workspace-admin only and both need the connector open to user/agent owners, so a caller who is not an admin gets AUTH_SCOPE_INSUFFICIENT and should say which of the two is missing rather than binding to a role instead. Be careful arranging one agent's credential from another agent's run: it is a decision about what that agent may reach, so name what you are about to do and why before doing it.",
+    description: "Bind a registered connector to an owner so that owner can use it. Owner types: 'role' (ownerId is the role nest ID — the server finds or creates the role's connector for it), 'role-connector' (ownerId is an existing connector nest ID), 'workspace' (ownerId is the workspace ID), 'user' (ownerId is a person's user ID, for their own account), or 'agent' (ownerId is a bot's user ID, for its own). A 'role' or 'role-connector' owner lands on the role's connector nest (its own governance list, not a domain), which shows the Connect button; the response then carries connectorNestId (and connectorNestCreated when the bind created it). After binding, a human or agent connects the account via that Connect button. The secret is captured out-of-band and is never seen by the agent. Workspace-admin only: a non-admin caller gets AUTH_SCOPE_INSUFFICIENT. The connector must already be registered (nestr_register_connector) and enabled.\n\nBIND TO THE ROLE, not to whoever fills it. A role binding is the governance act: the access belongs to the work, survives the filler changing, and is visible to the circle. Reach for 'role' by default — it is the usual onboarding path: pass the role nest ID and the server does the domain lookup. Use 'role-connector' only when you already have the domain nest ID and want to target it directly.\n\n'user' is for what is genuinely one person's: their own mailbox, their own drive. Binding that to a role would hand it to whoever fills the role next, which is the opposite of what they asked for, so this is the one case where a role binding is wrong. It needs a workspace admin and the connector has to be open to user owners in the catalog; if either is missing, say which and what the admin has to do rather than falling back to a role binding. The work on a personal connection is then done by an agent that fills NO role, because filling a role and assisting are exclusive and only an assistant can act with a person's own access.\n\n'agent' is the same shape for a bot's own account, used where a provider gives the agent its own login rather than borrowing a person's. It is the rarest of the four: prefer 'role', so the access belongs to the work and survives the filler changing. Both personal types are workspace-admin only and both need the connector open to user/agent owners, so a caller who is not an admin gets AUTH_SCOPE_INSUFFICIENT and should say which of the two is missing rather than binding to a role instead. Be careful arranging one agent's credential from another agent's run: it is a decision about what that agent may reach, so name what you are about to do and why before doing it.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -4151,12 +4163,12 @@ export const toolDefinitions = [
         connectorId: { type: "string", description: "ID of an enabled connector from nestr_list_connectors" },
         ownerType: {
           type: "string",
-          enum: ["role", "workspace", "role-domain", "user", "agent"],
-          description: "Owner type. 'role' is the usual path: pass the role nest ID and the server finds or creates the connector's domain under it. 'role-domain' targets an existing domain directly. 'workspace' gives everyone. 'user' is one person's own account and 'agent' is one bot's own: both are personal, both are workspace-admin only, and both are wrong unless the thing really belongs to that single principal.",
+          enum: ["role", "workspace", "role-connector", "user", "agent"],
+          description: "Owner type. 'role' is the usual path: pass the role nest ID and the server finds or creates the role's connector for it. 'role-connector' targets an existing connector nest directly. 'workspace' gives everyone. 'user' is one person's own account and 'agent' is one bot's own: both are personal, both are workspace-admin only, and both are wrong unless the thing really belongs to that single principal.",
         },
         ownerId: {
           type: "string",
-          description: "Owner ID. role: the role nest ID. role-domain: the domain nest ID. workspace: the workspace ID. user: the person's user ID. agent: the bot's user ID.",
+          description: "Owner ID. role: the role nest ID. role-connector: the connector nest ID. workspace: the workspace ID. user: the person's user ID. agent: the bot's user ID.",
         },
       },
       required: ["workspaceId", "connectorId", "ownerType", "ownerId"],
@@ -4199,7 +4211,7 @@ export const toolDefinitions = [
   {
     name: "nestr_list_connections",
     ...readOnly,
-    description: "List who has access to what in this workspace: each binding's connector, its owner (a role's domain, a person, an agent, or the whole workspace), and who holds a credential on it. Shows when an agent is using a person's account, and never returns a secret. Use it to check whether access already exists before giving more, and to find the connectionId for nestr_get_connect_link. A row with pendingInstructionApprovals is held back on scheduled runs until a person in its audience approves the role's latest instructions; its instructionApprovalNote says who can release it and how.",
+    description: "List who has access to what in this workspace: each binding's connector, its owner (a role's connector, a person, an agent, or the whole workspace), and who holds a credential on it. Shows when an agent is using a person's account, and never returns a secret. Use it to check whether access already exists before giving more, and to find the connectionId for nestr_get_connect_link. A row with pendingInstructionApprovals is held back on scheduled runs until a person in its audience approves the role's latest instructions; its instructionApprovalNote says who can release it and how.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -4211,7 +4223,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_remove_connection",
-    description: "Take a connector off an owner: the binding is removed and every credential on it revoked. Workspace-admin only. A domain left holding nothing goes back to being an ordinary descriptive domain.",
+    description: "Take a connector off an owner: the binding is removed and every credential on it revoked. Workspace-admin only. The role's connector stays as its governance record, with no tool until one is bound or proposed again.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -6153,7 +6165,7 @@ async function _handleToolCall(
             ...(parsed.name ? { name: parsed.name } : {}),
           });
           return formatResult({
-            message: "Connector registered from a template, so its endpoint and auth strategy are the vendor's own. Next, bind it to a role's DOMAIN with nestr_bind_connector, then a human connects the account via the Connect button.",
+            message: "Connector registered from a template, so its endpoint and auth strategy are the vendor's own. Next, bind it to a ROLE with nestr_bind_connector (ownerType 'role'; the role's connector for it is found or created), then a human connects the account via the Connect button.",
             connector: fromTemplate.connector,
             // The route's hints say what to do next (a Connect link, a missing
             // OAuth client); dropping them cost the model its follow-up.
@@ -6184,7 +6196,7 @@ async function _handleToolCall(
           ...(registered.hints ? { hints: registered.hints } : {}),
         });
         return formatResult({
-          message: "Connector registered. It does nothing yet: nobody has access to it. Give a ROLE access with nestr_bind_connector { ownerType: 'role', ownerId: <role nest id> } and its domain is created under that role, which is the usual onboarding path. Then get a link with nestr_get_connect_link and give it to a person to open, since the credential must never pass through you.",
+          message: "Connector registered. It does nothing yet: nobody has access to it. Give a ROLE access with nestr_bind_connector { ownerType: 'role', ownerId: <role nest id> } and the role's connector for it is created, which is the usual onboarding path. Then get a link with nestr_get_connect_link and give it to a person to open, since the credential must never pass through you.",
           connector: enriched,
         });
       }
@@ -6250,11 +6262,11 @@ async function _handleToolCall(
           connectorId: parsed.connectorId,
           owner: { type: parsed.ownerType, id: parsed.ownerId },
         });
-        // A role binding creates the connector's domain when there isn't one, so
+        // A role binding creates the role's connector nest when there isn't one, so
         // say where the access landed. The credential is always a separate,
         // out-of-band step: hand the human a link from nestr_get_connect_link.
-        const message = parsed.ownerType === "role" || parsed.ownerType === "role-domain"
-          ? "Access given to the role's domain. Nobody can use it until an account is connected: get a link with nestr_get_connect_link and give it to a person to open. The secret is captured out-of-band and never by the agent."
+        const message = parsed.ownerType === "role" || parsed.ownerType === "role-connector"
+          ? "Access given to the role's connector. Nobody can use it until an account is connected: get a link with nestr_get_connect_link and give it to a person to open. The secret is captured out-of-band and never by the agent."
           : "Access given to the owner. Nobody can use it until an account is connected: get a link with nestr_get_connect_link and give it to a person to open. The secret is never seen by the agent.";
         return formatResult({ message: message + sharedAccountNote(connection.reach), connection });
       }

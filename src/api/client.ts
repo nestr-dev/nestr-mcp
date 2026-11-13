@@ -408,6 +408,8 @@ export interface NestFile {
 export interface Role extends Nest {
   accountabilities?: string[];
   domains?: string[];
+  /** The tools the role may use (agents app). Read-only; bind with nestr_bind_connector. */
+  connectors?: Array<{ _id: string; title: string; connector: string | null }>;
 }
 
 export interface Insight {
@@ -497,10 +499,10 @@ export interface Connector {
 
 /** The owner a connector binds to. */
 export interface ConnectionOwner {
-  type: "user" | "agent" | "workspace" | "role-domain" | "role";
+  type: "user" | "agent" | "workspace" | "role-connector" | "role";
   /**
-   * user/agent: user id. workspace: workspace id. role-domain: domain nest id.
-   * role: role nest id — the connector's domain is found or created under it.
+   * user/agent: user id. workspace: workspace id. role-connector: connector nest id.
+   * role: role nest id — the role's connector for it is found or created.
    */
   id: string;
 }
@@ -516,8 +518,8 @@ export interface SharedReach {
 /**
  * A connection: a connector bound to an owner. Holds no secret; the secret
  * lives on an authorization captured out-of-band via the Connect button.
- * Binding with owner type 'role' returns the domain that now holds the access,
- * and whether it had to be created.
+ * Binding with owner type 'role' returns the role's connector nest that now
+ * holds the access, and whether it had to be created.
  */
 export interface Connection {
   _id: string;
@@ -526,10 +528,10 @@ export interface Connection {
   owner: ConnectionOwner;
   metadata?: Record<string, unknown>;
   status?: "active" | "disabled";
-  /** Present when binding with owner type 'role'. */
-  domainId?: string;
-  /** Whether that domain had to be created for this connector. */
-  domainCreated?: boolean;
+  /** Present when binding with owner type 'role': the role's connector nest. */
+  connectorNestId?: string;
+  /** Whether that connector nest had to be created for this tool. */
+  connectorNestCreated?: boolean;
   reach?: SharedReach | null;
   createdAt?: string;
   updatedAt?: string;
@@ -618,14 +620,15 @@ export interface AgentConnectorReach {
   connectorId: string | null;
   connectorName: string;
   /** Where the grant comes from: its own binding, the workspace, or a role. */
-  source: "own" | "workspace" | "role-domain" | null;
+  source: "own" | "workspace" | "role-connector" | null;
   available: boolean;
   /** Why it is unavailable: no-credential, catalog-disabled, no-capabilities, ... */
   reason: string | null;
   roleNestId: string | null;
   roleTitle: string | null;
-  domainId: string | null;
-  domainTitle: string | null;
+  /** The role's connector nest holding the tool. */
+  connectorNestId: string | null;
+  connectorTitle: string | null;
   scope: "personal" | "shared" | null;
   delegatedBy: string | null;
   delegatedByName: string | null;
@@ -3049,7 +3052,7 @@ export class NestrClient {
 
   /**
    * Bind a connector to an owner. Workspace-admin only (403 maps to
-   * AUTH_SCOPE_INSUFFICIENT for a non-admin caller). For a role-domain owner
+   * AUTH_SCOPE_INSUFFICIENT for a non-admin caller). For a role-connector owner
    * the response also carries credentialsField, the credentials field
    * materialised on the domain nest so the role can use the connector and the
    * Connect button renders. The secret is captured out-of-band, never here.
