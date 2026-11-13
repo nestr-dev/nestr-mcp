@@ -90,12 +90,17 @@ describe("list rows keep the fields the server sent", () => {
   });
 });
 
-// `fields` is kept for nest rows only. A label's `fields` is its field schema and a
-// user is not a nest, so neither row type may widen because nest rows did.
-describe("label and user rows still drop fields", () => {
-  it.each(["label", "user"] as const)("%s rows", (type) => {
-    const rows = compactResponse([{ _id: "x", title: "X", username: "x", fields: { code: { type: "text" } } }], type) as Record<string, unknown>[];
+// A label's `fields` is its field schema, so label rows still drop it. A user row's
+// `fields` are its user-label values (`<labelId>.<code>`), which are kept.
+describe("label rows drop fields, user rows keep them", () => {
+  it("label rows", () => {
+    const rows = compactResponse([{ _id: "x", title: "X", fields: { code: { type: "text" } } }], "label") as Record<string, unknown>[];
     expect(rows[0]).not.toHaveProperty("fields");
+  });
+
+  it("user rows", () => {
+    const rows = compactResponse([{ _id: "x", username: "x", fields: { "skill_coding.level": "3" } }], "user") as Record<string, unknown>[];
+    expect(rows[0].fields).toEqual({ "skill_coding.level": "3" });
   });
 });
 

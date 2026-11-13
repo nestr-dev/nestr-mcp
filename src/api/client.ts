@@ -207,6 +207,12 @@ export interface User {
     /** Set on agents: 'active' or otherwise. */
     agentStatus?: string;
   };
+  /** Short ids of the labels this member carries (workspace member reads). */
+  labels?: string[];
+  /** Label field values keyed `<labelId>.<code>`, limited to what the caller may read. */
+  fields?: Record<string, unknown>;
+  /** Per workspace: the user labels and field values the caller may read (GET /users/me). */
+  userLabels?: Record<string, { labels: string[]; fields: Record<string, unknown> }>;
 }
 
 export interface Label {
@@ -214,6 +220,36 @@ export interface Label {
   title: string;
   workspaceId?: string;
   userId?: string;
+  /** Subjects the label applies to: "nests" and/or "users". Absent means nests only. */
+  applicableTo?: Array<"nests" | "users">;
+  /** Field definitions for the label when it is put on a user. */
+  userFields?: Record<string, unknown>[];
+}
+
+/** Result of adding, removing or editing a user label. */
+export interface UserLabelResult {
+  status: string;
+  data: {
+    userId: string;
+    label: string;
+    changed: boolean;
+    labels: string[];
+    fields: Record<string, unknown>;
+  };
+}
+
+export interface UserLabelActivityItem {
+  _id: string;
+  date: string;
+  verb: "userLabel.added" | "userLabel.removed" | "userLabel.fieldsUpdated";
+  label: string;
+  actor?: string;
+  userId: string;
+  apiTokenId?: string;
+  clientConsumer?: string;
+  agentUserId?: string;
+  before?: unknown;
+  after?: unknown;
 }
 
 /**
@@ -1770,10 +1806,12 @@ export class NestrClient {
       limit?: number;
       page?: number;
       includeSuspended?: boolean;
+      label?: string;
     }
   ): Promise<User[]> {
     const params = new URLSearchParams();
     if (options?.search) params.set("search", options.search);
+    if (options?.label) params.set("label", options.label);
     if (options?.agents) params.set("agents", options.agents);
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.page) params.set("page", options.page.toString());
@@ -1809,6 +1847,60 @@ export class NestrClient {
     });
   }
 
+  // ============ USER LABELS ============
+
+  // The label id goes unencoded, as on the label routes: the API decodes paths with decodeURI, which keeps %3A.
+  private userLabelPath(workspaceId: string, userId: string, labelId: string): string {
+    return `/workspaces/${workspaceId}/users/${encodeURIComponent(userId)}/labels/${labelId}`;
+  }
+
+  /** Put a label on a member, optionally setting its field values. */
+  async addUserLabel(
+    workspaceId: string,
+    userId: string,
+    labelId: string,
+    fields?: Record<string, unknown>
+  ): Promise<UserLabelResult> {
+    return this.fetch<UserLabelResult>(this.userLabelPath(workspaceId, userId, labelId), {
+      method: "POST",
+      ...(fields !== undefined ? { body: JSON.stringify({ fields }) } : {}),
+    });
+  }
+
+  /** Take a label off a member. Field values are kept, hidden. */
+  async removeUserLabel(workspaceId: string, userId: string, labelId: string): Promise<UserLabelResult> {
+    return this.fetch<UserLabelResult>(this.userLabelPath(workspaceId, userId, labelId), {
+      method: "DELETE",
+    });
+  }
+
+  /** Set field values of a label the member holds. Only the given fields change. */
+  async updateUserLabelFields(
+    workspaceId: string,
+    userId: string,
+    labelId: string,
+    fields: Record<string, unknown>
+  ): Promise<UserLabelResult> {
+    return this.fetch<UserLabelResult>(this.userLabelPath(workspaceId, userId, labelId), {
+      method: "PATCH",
+      body: JSON.stringify({ fields }),
+    });
+  }
+
+  /** Audit trail of user label changes on one member, newest first. Admin only. */
+  async getUserLabelActivity(
+    workspaceId: string,
+    userId: string,
+    options?: { limit?: number }
+  ): Promise<{ status: string; data: UserLabelActivityItem[] }> {
+    const params = new URLSearchParams();
+    if (options?.limit !== undefined) params.set("limit", options.limit.toString());
+    const query = params.toString();
+    return this.fetch<{ status: string; data: UserLabelActivityItem[] }>(
+      `/workspaces/${workspaceId}/users/${encodeURIComponent(userId)}/labels/activity${query ? `?${query}` : ""}`
+    );
+  }
+
   // ============ LABELS ============
 
   async listLabels(
@@ -1841,6 +1933,8 @@ export class NestrClient {
       group?: string;
       properties?: Record<string, unknown>;
       fields?: Record<string, unknown>[];
+      applicableTo?: string[];
+      userFields?: Record<string, unknown>[];
     }
   ): Promise<Label> {
     return this.fetch<Label>(`/workspaces/${workspaceId}/labels`, {

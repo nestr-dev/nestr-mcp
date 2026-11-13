@@ -291,11 +291,15 @@ The server exposes these tools to AI assistants:
 | `nestr_get_circle` | `GET /workspaces/{id}/circles/{cid}` |
 | `nestr_get_circle_roles` | `GET /workspaces/{id}/circles/{cid}/roles` |
 | `nestr_list_roles` | `GET /workspaces/{id}/roles` |
-| `nestr_list_users` | `GET /workspaces/{id}/users` |
+| `nestr_list_users` | `GET /workspaces/{id}/users` (`label` filters by user label) |
 | `nestr_get_user` | `GET /workspaces/{id}/users/{uid}` |
 | `nestr_add_workspace_user` | `POST /workspaces/{id}/users` |
 | `nestr_list_labels` | `GET /workspaces/{id}/labels` |
 | `nestr_get_label` | `GET /workspaces/{id}/labels/{lid}` |
+| `nestr_add_user_label` | `POST /workspaces/{id}/users/{uid}/labels/{lid}` (optional `fields`; admin by default) |
+| `nestr_update_user_label_fields` | `PATCH /workspaces/{id}/users/{uid}/labels/{lid}` (admin by default) |
+| `nestr_remove_user_label` | `DELETE /workspaces/{id}/users/{uid}/labels/{lid}` (admin by default) |
+| `nestr_get_user_label_activity` | `GET /workspaces/{id}/users/{uid}/labels/activity` (workspace admin only) |
 | `nestr_create_label` | `POST /workspaces/{id}/labels` (workspace-admin only) |
 | `nestr_update_label` | `PATCH /workspaces/{id}/labels/{lid}` (workspace-admin only; send only the fields to change) |
 | `nestr_delete_label` | `DELETE /workspaces/{id}/labels/{lid}` (workspace-admin only; requires `confirm: true`) |
