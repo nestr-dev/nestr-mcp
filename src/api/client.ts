@@ -1708,6 +1708,27 @@ export class NestrClient {
   // Unwrapped to `data`, unlike its DM siblings: the caller reads flags off this
   // (alreadyQueued, statusMessagePosted) and reading them off the envelope silently
   // yielded undefined every time, so the already-queued branch never fired.
+  // An agent run emails workspace members (POST /agents/runs/email). Only a run's own
+  // dispatch token is accepted; Nestr resolves and gates every recipient, fetches a
+  // forwarded email itself, and sends from its own mail.
+  async sendAgentEmail(input: {
+    to: string[];
+    subject: string;
+    body?: string;
+    forward?: { connectionId: string; messageId: string };
+  }): Promise<Record<string, unknown>> {
+    const response = await this.fetch<{ data?: Record<string, unknown> }>("/agents/runs/email", {
+      method: "POST",
+      body: JSON.stringify({
+        to: input.to,
+        subject: input.subject,
+        body: input.body ?? "",
+        ...(input.forward ? { forward: input.forward } : {}),
+      }),
+    });
+    return response?.data ?? {};
+  }
+
   async escalateDMThread(threadId: string, reason?: string): Promise<Record<string, unknown>> {
     const body: Record<string, unknown> = { suppressStatusMessage: true };
     if (reason) body.reason = reason;
