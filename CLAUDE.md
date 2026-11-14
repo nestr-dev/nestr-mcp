@@ -279,7 +279,8 @@ The server exposes these tools to AI assistants:
 | `nestr_get_nest` | `GET /nests/{id}` (supports comma-separated IDs for batch fetch) |
 | `nestr_explain_nest` | `GET /nests/{id}` (single-nest diagnosis: provenance + rights + whoCan) |
 | `nestr_get_nest_children` | `GET /nests/{id}/children` |
-| `nestr_create_nest` | `POST /nests` |
+| `nestr_create_nest` | `POST /nests` (also applies, authors, captures and copies templates) |
+| `nestr_list_templates` | `GET /nests/{id}/templates?label=` |
 | `nestr_update_nest` | `PATCH /nests/{id}` |
 | `nestr_delete_nest` | `DELETE /nests/{id}` |
 | `nestr_add_comment` | `POST /nests/{id}/posts` |
