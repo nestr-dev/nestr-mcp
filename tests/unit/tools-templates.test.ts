@@ -42,6 +42,17 @@ describe("template tools", () => {
     });
   });
 
+  it("keeps the dates and status of the created root, and says what it ignored", async () => {
+    const result = await call("nestr_create_nest", {
+      parentId: "c1", template: "tpl1", due: "2026-11-20", start: "2026-11-16", completed: false,
+      accountabilities: ["Extra"],
+    });
+    expect(sent.body).toEqual({
+      parentId: "c1", template: "tpl1", due: "2026-11-20", start: "2026-11-16", completed: false,
+    });
+    expect(JSON.stringify(result)).toMatch(/Ignored accountabilities/);
+  });
+
   it("captures an item as a template with type and source", async () => {
     await call("nestr_create_nest", {
       parentId: "c1", type: "template", source: "role1", governanceOnly: true,

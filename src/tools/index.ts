@@ -5091,12 +5091,26 @@ async function _handleToolCall(
             ...(parsed.labels !== undefined ? { labels: parsed.labels } : {}),
             ...(parsed.fields !== undefined ? { fields: parsed.fields } : {}),
             ...(parsed.users !== undefined ? { users: parsed.users } : {}),
+            // The created root takes these like any new nest does.
+            ...(parsed.due !== undefined ? { due: parsed.due } : {}),
+            ...(parsed.start !== undefined ? { start: parsed.start } : {}),
+            ...(parsed.allDay !== undefined ? { allDay: parsed.allDay } : {}),
+            ...(parsed.completed !== undefined ? { completed: parsed.completed } : {}),
+            ...(parsed.proxyAssign !== undefined ? { proxyAssign: parsed.proxyAssign } : {}),
           });
-          const message = parsed.dryRun
+          let message = parsed.dryRun
             ? "Dry run: nothing was created"
             : parsed.template && parsed.type !== "template"
               ? "Created from the template"
               : "Template created";
+          // The template supplies the governance; inline lists are not applied on top of it.
+          const ignored = [
+            parsed.accountabilities?.length ? "accountabilities" : null,
+            parsed.domains?.length ? "domains" : null,
+          ].filter(Boolean);
+          if (ignored.length) {
+            message += `. Ignored ${ignored.join(" and ")}: the template supplies them; add more afterwards.`;
+          }
           return formatResult({ message, _id: writtenId(nest), nest });
         }
         if (!parsed.title) {
