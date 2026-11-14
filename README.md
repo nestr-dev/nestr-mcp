@@ -141,7 +141,7 @@ Ask your AI assistant things like:
 | `nestr_add_tension_part` | Add a proposal part (new/changed governance item) |
 | `nestr_modify_tension_part` | Modify a proposal part |
 | `nestr_remove_tension_part` | Remove a proposal part |
-| `nestr_get_tension_part_children` | Get children (accountabilities/domains) of a proposal part |
+| `nestr_get_tension_part_children` | Get children (accountabilities, domains, connectors) of a proposal part |
 | `nestr_create_tension_part_child` | Add a child to a proposal part |
 | `nestr_update_tension_part_child` | Update a proposal part child |
 | `nestr_delete_tension_part_child` | Delete a proposal part child |

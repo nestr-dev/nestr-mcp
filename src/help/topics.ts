@@ -46,7 +46,7 @@ The internal topics below are curated MCP-flavoured guidance — tool call patte
 
   "connector-instruction-approval": `### Connectors held back for instruction approval
 
-A role's connector (Gmail, a CRM, any account bound to one of the role's domains) can be **held back on scheduled runs** — runs nobody started, such as an autonomous agent's recurring check — until someone approves the role's latest instructions. Manual runs, which a person starts, still get it.
+A role's connector (Gmail, a CRM, any account the role reaches through one of its connectors) can be **held back on scheduled runs** — runs nobody started, such as an autonomous agent's recurring check — until someone approves the role's latest instructions. Manual runs, which a person starts, still get it.
 
 **Why it happens.** On a run nobody started, Nestr checks everyone who wrote the instructions the agent will follow (the role's and its skills' and the task's title, description and purpose) against the connector's audience: the people it is shared with. If an edit came from someone outside that audience, or from an author Nestr cannot name, a person in the audience has to approve the new text before the connector is handed over.
 
@@ -63,7 +63,7 @@ A role's connector (Gmail, a CRM, any account bound to one of the role's domains
 
 | Where | What it carries |
 |------|------|
-| \`connector_awaiting_instruction_approval\` hint on \`nestr_get_nest\` / \`nestr_explain_nest\` of the role, a skill, the domain or the task | \`label\`, \`detail\`, \`count\`, \`url\` (the request comment), \`connectors: [{ connectionId, name, nestId, nestTitle, askedAt, commentUrl, approvers, reconnectApproves }]\` |
+| \`connector_awaiting_instruction_approval\` hint on \`nestr_get_nest\` / \`nestr_explain_nest\` of the role, a skill, the connector or the task | \`label\`, \`detail\`, \`count\`, \`url\` (the request comment), \`connectors: [{ connectionId, name, nestId, nestTitle, askedAt, commentUrl, approvers, reconnectApproves }]\` |
 | \`connector_paused_by_instruction_edit\` hint on the response of \`nestr_update_nest\` | which connectors and roles your edit pauses; lifted to the top of the result with a \`tellThePerson\` sentence |
 | \`pendingInstructionApprovals\` on each row of \`nestr_list_connections\` | \`{ nestId, nestTitle, askedAt, commentUrl, canApprove, ... }\` per waiting run, plus an \`instructionApprovalNote\` |
 
@@ -492,7 +492,7 @@ Each hint object has:
 | \`inline_images\` | info | all | Count of images pasted into the text (see below) |
 | \`tabs\` | info | all (single-nest reads) | The nest's own content tabs, each with the URL that opens it |
 | \`settings\` | info | all (single-nest reads) | The settings tabs THIS viewer may open, each with its URL |
-| \`connector_awaiting_instruction_approval\` | warning | role, skill, domain, task | A role connector is held back on scheduled runs until a person in its audience approves the role's latest instructions (see \`connector-instruction-approval\`) |
+| \`connector_awaiting_instruction_approval\` | warning | role, skill, connector, task | A role connector is held back on scheduled runs until a person in its audience approves the role's latest instructions (see \`connector-instruction-approval\`) |
 | \`connector_paused_by_instruction_edit\` | warning | write response (update of a role, skill or task) | Your edit to title/description/purpose will hold a role connector back on scheduled runs; tell the person you are helping, once |
 
 Example response with hints:
@@ -2136,7 +2136,7 @@ If a meeting genuinely seems to want a circle of its own, that is a claim about 
 - \`due\` — the meeting start time as an ISO datetime. A future \`due\` schedules it (the web app shows a countdown and a "Start meeting now" link); omit it to mean now.
 - \`users\` — everyone who should attend: the people and agents energizing roles in the circle, plus circle-lead and rep-link fillers from its sub-circles.
 
-Agenda items are tensions. Put one on the agenda by setting its meeting field (\`fields: { "tension.meeting": <meetingId> }\` with \`nestr_update_nest\`, \`null\` to take it off); a \`meeting\` graph link written directly is refused. An agenda item with no originating role can be a plain child nest of the meeting instead.
+Agenda items are tensions. Put one on the agenda by setting its meeting field (\`fields: { "tension.meeting": <meetingId> }\` with \`nestr_update_nest\`, \`null\` to take it off); a \`meeting\` graph link written directly is refused. An agenda item with no originating role can be a plain child nest of the meeting instead. Deleting a meeting that has not been closed gives its open agenda items back: they leave the agenda and show up again as open tensions. Deleting a meeting that was already closed leaves its items as they are.
 
 ### Before you create one
 
