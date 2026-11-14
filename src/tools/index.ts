@@ -560,7 +560,18 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     bodyParams: new Set([
       "parentId", "title", "description", "purpose", "labels",
       "fields", "users", "accountabilities", "domains", "workspaceId",
+      // Templates: apply, author, capture, copy.
+      "template", "type", "source", "dryRun", "followTemplate",
+      "governanceOnly", "includeUsers", "includeComments",
     ]),
+  },
+  {
+    method: "GET",
+    pattern: /^\/nests\/([^/]+)\/templates\/?$/,
+    tool: "nestr_list_templates",
+    pathParamNames: ["nestId"],
+    bodyParams: new Set([]),
+    queryParams: { label: "label" },
   },
   {
     method: "POST",
@@ -579,6 +590,7 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
       "parentId", "users", "due", "accountabilities", "domains", "connectors",
       "role", // operational output: the role the work is asked of
       "roleId", // election mode
+      "template", // propose from a template
     ]),
   },
   // PATCH /parts (body has _id) — propose a change to an existing item.
@@ -1575,7 +1587,15 @@ export const schemas = {
 
   createNest: z.object({
     parentId: z.string().describe("Parent nest ID (workspace, circle, or project)"),
-    title: z.string().describe("Title of the new nest (plain text, HTML stripped)"),
+    title: z.string().optional().describe("Title of the new nest (plain text, HTML stripped). Required unless you pass template or source."),
+    template: z.string().optional().describe("Create from a template: a template id (or core role key) from nestr_list_templates, which you call first. The template's labels and title are used unless you send your own, so title is optional. The same rights apply as in the app: if you may not create this directly, the 403 says to propose it in a governance tension instead (nestr_add_tension_part with template). The result carries templateReport (created, skipped, connectors: a connector's tool is kept, or cleared when its catalog entry was disabled). Over 300 items it answers at once and finishes in the background: read the created nest with nestr_get_nest until data.templateRun.status is done. With type 'template' it copies the template as a new template."),
+    type: z.enum(["template"]).optional().describe("Only 'template' can be set: it makes a template (admins only), or, under a template, adds to one. Template content is never live work. With source it captures an existing item as a template."),
+    source: z.string().optional().describe("With type 'template': make a template from this existing item (a deep copy of what you may read; credentials are never copied). Admins only. Cannot be combined with template."),
+    dryRun: z.boolean().optional().describe("With template or source: return the templateReport of what would be created and write nothing."),
+    followTemplate: z.boolean().optional().describe("With a core or registered role template: keep the role following its template."),
+    governanceOnly: z.boolean().optional().describe("With source: capture only the governance structure (roles, circles, accountabilities, domains, policies)."),
+    includeUsers: z.boolean().optional().describe("With source: keep who fills roles and is assigned."),
+    includeComments: z.boolean().optional().describe("With source: keep comments."),
     description: z.string().optional().describe("The primary content field — use for project details, task context, acceptance criteria, Definition of Done, and any detailed information. Supports Markdown and HTML."),
     purpose: z.string().optional().describe(PURPOSE_DESC),
     labels: coerceFromJson(z.array(z.string())).optional().describe("Label IDs to apply"),
@@ -1589,6 +1609,20 @@ export const schemas = {
     domains: coerceFromJson(z.array(z.string())).optional().describe("Domain titles for roles/circles. Only used when labels include 'role' or 'circle'. Each string becomes a domain child nest."),
     workspaceId: z.string().optional().describe("Workspace ID. Required when creating roles/circles with accountabilities or domains (used to route to the self-organization API)."),
     proxyAssign: z.string().optional().describe(`${PROXY_ASSIGN_DESC} Not applied when creating a role or circle with accountabilities or domains.`),
+  }).refine(
+    (data) => !!data.title || !!data.template || !!data.source,
+    { message: "title is required unless you create from a template (template) or capture one (type 'template' with source)." }
+  ).refine(
+    (data) => !(data.template && data.source),
+    { message: "Send either template (to make something from a template) or source (to make a template from an item), not both." }
+  ).refine(
+    (data) => !data.source || data.type === "template",
+    { message: "source makes a template, so it needs type: 'template' as well." }
+  ),
+
+  listTemplates: z.object({
+    nestId: z.string().describe("Where you are creating: the circle, role or other nest the new item goes under"),
+    label: z.union([z.string(), z.array(z.string())]).optional().describe("Label ids to narrow by, e.g. 'circleplus-role', or several (a list, or comma-separated)"),
   }),
 
   updateNest: z.object({
@@ -2044,6 +2078,7 @@ export const schemas = {
   addTensionPart: z.object({
     nestId: z.string().describe("ID of the circle or role the tension belongs to"),
     tensionId: z.string().describe("Tension ID"),
+    template: z.string().optional().describe("Propose a new item from a template (an id from nestr_list_templates). Its labels and title are used unless you send your own; its accountabilities and domains land on the proposal, and the rest of the template is added when the proposal is enacted."),
     _id: z.string().optional().describe("ID of an existing governance item to change or remove. Omit to propose a new item."),
     title: z.string().optional().describe("Title for the governance item"),
     labels: coerceFromJson(z.array(z.string())).optional().describe("Item type, e.g. ['role'], ['circle'], ['policy'], ['accountability'], ['domain']"),
@@ -2560,7 +2595,15 @@ export const toolDefinitions = [
       type: "object" as const,
       properties: {
         parentId: { type: "string", description: "Parent nest ID (workspace, circle, or project)" },
-        title: { type: "string", description: "Title of the new nest (plain text, HTML tags stripped)" },
+        title: { type: "string", description: "Title of the new nest (plain text, HTML tags stripped). Required unless you pass template or source." },
+        template: { type: "string", description: "Create from a template: a template id (or core role key) from nestr_list_templates, which you call first. The template's labels and title are used unless you send your own, so title is optional. The same rights apply as in the app: if you may not create this directly, the 403 says to propose it in a governance tension instead (nestr_add_tension_part with template). The result carries templateReport (created, skipped, connectors: a connector's tool is kept, or cleared when its catalog entry was disabled). Over 300 items it answers at once and finishes in the background: read the created nest with nestr_get_nest until data.templateRun.status is done. With type 'template' it copies the template as a new template." },
+        type: { type: "string", enum: ["template"], description: "Only 'template' can be set: it makes a template (admins only), or, under a template, adds to one. Template content is never live work. With source it captures an existing item as a template." },
+        source: { type: "string", description: "With type 'template': make a template from this existing item (a deep copy of what you may read; credentials are never copied). Admins only. Cannot be combined with template." },
+        dryRun: { type: "boolean", description: "With template or source: return the templateReport of what would be created and write nothing." },
+        followTemplate: { type: "boolean", description: "With a core or registered role template: keep the role following its template." },
+        governanceOnly: { type: "boolean", description: "With source: capture only the governance structure." },
+        includeUsers: { type: "boolean", description: "With source: keep who fills roles and is assigned." },
+        includeComments: { type: "boolean", description: "With source: keep comments." },
         description: { type: "string", description: CONTENT_DESC },
         purpose: { type: "string", description: PURPOSE_DESC },
         labels: {
@@ -2609,9 +2652,25 @@ export const toolDefinitions = [
         },
         proxyAssign: { type: "string", description: `${PROXY_ASSIGN_DESC} Not applied when creating a role or circle with accountabilities or domains.` },
       },
-      required: ["parentId", "title"],
+      required: ["parentId"],
     },
     ...mutating,
+  },
+  {
+    name: "nestr_list_templates",
+    description: "The templates you can use when creating something at a nest: exactly what the app offers under 'Apply template' there. Captured templates stored at that nest or above it, and for roles the core and registered roles. Each entry has _id, title, kind, labels, source ('template' or 'core'), scopeId, scopeTitle, nodeCount. Use an _id as template on nestr_create_nest (or nestr_add_tension_part to propose it). Read a template's contents with nestr_get_nest_children on its _id: template content is marked with template: { rootId, kind, scopeId } and is never live work.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        nestId: { type: "string", description: "Where you are creating: the circle, role or other nest the new item goes under" },
+        label: {
+          oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          description: "Label ids to narrow by, e.g. 'circleplus-role', or several",
+        },
+      },
+      required: ["nestId"],
+    },
+    ...readOnly,
   },
   {
     name: "nestr_update_nest",
@@ -3849,6 +3908,7 @@ export const toolDefinitions = [
     inputSchema: {
       type: "object" as const,
       properties: {
+        template: { type: "string", description: "Propose a new item from a template (an id from nestr_list_templates). Its labels and title are used unless you send your own; its accountabilities and domains land on the proposal, and the rest of the template is added when the proposal is enacted." },
         nestId: { type: "string", description: "ID of the circle or role the tension belongs to" },
         tensionId: { type: "string", description: "Tension ID" },
         _id: { type: "string", description: "ID of an existing governance item to change or remove. Omit to propose a new item." },
@@ -5023,6 +5083,52 @@ async function _handleToolCall(
         const parsed = schemas.createNest.parse(args);
         validatePrimeLabels(parsed.labels);
         parsed.labels = ensureMeetingModifier(parsed.labels);
+
+        // Templates go through the same create route, told apart by the body: apply (template),
+        // capture (type 'template' + source), author or copy (type 'template').
+        if (parsed.template || parsed.source || parsed.type) {
+          const nest = await client.createNest({
+            parentId: parsed.parentId,
+            ...(parsed.title !== undefined ? { title: parsed.title } : {}),
+            ...(parsed.template !== undefined ? { template: parsed.template } : {}),
+            ...(parsed.type !== undefined ? { type: parsed.type } : {}),
+            ...(parsed.source !== undefined ? { source: parsed.source } : {}),
+            ...(parsed.dryRun !== undefined ? { dryRun: parsed.dryRun } : {}),
+            ...(parsed.followTemplate !== undefined ? { followTemplate: parsed.followTemplate } : {}),
+            ...(parsed.governanceOnly !== undefined ? { governanceOnly: parsed.governanceOnly } : {}),
+            ...(parsed.includeUsers !== undefined ? { includeUsers: parsed.includeUsers } : {}),
+            ...(parsed.includeComments !== undefined ? { includeComments: parsed.includeComments } : {}),
+            ...(parsed.purpose !== undefined ? { purpose: parsed.purpose } : {}),
+            ...(parsed.description !== undefined ? { description: parsed.description } : {}),
+            ...(parsed.labels !== undefined ? { labels: parsed.labels } : {}),
+            ...(parsed.fields !== undefined ? { fields: parsed.fields } : {}),
+            ...(parsed.users !== undefined ? { users: parsed.users } : {}),
+            // The created root takes these like any new nest does.
+            ...(parsed.due !== undefined ? { due: parsed.due } : {}),
+            ...(parsed.start !== undefined ? { start: parsed.start } : {}),
+            ...(parsed.allDay !== undefined ? { allDay: parsed.allDay } : {}),
+            ...(parsed.completed !== undefined ? { completed: parsed.completed } : {}),
+            ...(parsed.proxyAssign !== undefined ? { proxyAssign: parsed.proxyAssign } : {}),
+          });
+          let message = parsed.dryRun
+            ? "Dry run: nothing was created"
+            : parsed.template && parsed.type !== "template"
+              ? "Created from the template"
+              : "Template created";
+          // The template supplies the governance; inline lists are not applied on top of it.
+          const ignored = [
+            parsed.accountabilities?.length ? "accountabilities" : null,
+            parsed.domains?.length ? "domains" : null,
+          ].filter(Boolean);
+          if (ignored.length) {
+            message += `. Ignored ${ignored.join(" and ")}: the template supplies them; add more afterwards.`;
+          }
+          return formatResult({ message, _id: writtenId(nest), nest });
+        }
+        // The schema already refuses this; the check narrows title to a string for TypeScript.
+        if (!parsed.title) {
+          throw new Error("title is required unless you create from a template or capture one.");
+        }
         const hasGovernanceLabels = parsed.labels?.some(l =>
           ["role", "circle"].includes(l)
         );
@@ -5074,6 +5180,16 @@ async function _handleToolCall(
           proxyAssign: parsed.proxyAssign,
         });
         return formatResult({ message: "Nest created successfully", _id: writtenId(nest), nest });
+      }
+
+      case "nestr_list_templates": {
+        const parsed = schemas.listTemplates.parse(args);
+        const labels = parsed.label === undefined
+          ? []
+          : (Array.isArray(parsed.label) ? parsed.label : parsed.label.split(","))
+            .map((l) => l.trim()).filter(Boolean);
+        const templates = await client.listTemplates(parsed.nestId, labels);
+        return formatResult(templates);
       }
 
       case "nestr_update_nest": {
