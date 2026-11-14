@@ -225,14 +225,14 @@ describe("connector tools", () => {
     });
   });
 
-  it("nestr_bind_connector reports the domain a role binding landed on", async () => {
+  it("nestr_bind_connector reports the connector a role binding landed on", async () => {
     const connection = {
       _id: "conn2",
       workspaceId: "ws1",
-      owner: { type: "role-domain", id: "domain-7" },
+      owner: { type: "role-connector", id: "domain-7" },
       status: "active",
-      domainId: "domain-7",
-      domainCreated: true,
+      connectorNestId: "domain-7",
+      connectorNestCreated: true,
     };
     mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: connection }));
 
@@ -245,10 +245,12 @@ describe("connector tools", () => {
     expect(result.isError).toBeFalsy();
 
     const parsed = parseResult(result.content[0].text);
-    const conn = parsed.connection as { domainId?: string; domainCreated?: boolean };
-    expect(conn.domainId).toBe("domain-7");
-    expect(conn.domainCreated).toBe(true);
-    expect(parsed.message).toMatch(/role's domain/i);
+    const conn = parsed.connection as { connectorNestId?: string; connectorNestCreated?: boolean };
+    expect(conn.connectorNestId).toBe("domain-7");
+    expect(conn.connectorNestCreated).toBe(true);
+    // A role's tool is held by one of its connectors, never by a domain.
+    expect(parsed.message).toMatch(/role's connector/i);
+    expect(parsed.message).not.toMatch(/domain/i);
     // Access alone grants nothing until a person connects an account.
     expect(parsed.message).toMatch(/nestr_get_connect_link/i);
   });
@@ -344,7 +346,7 @@ describe("connector tools", () => {
         connectionId: "conn1",
         connectorId: "c9",
         connectorName: "Ledger API",
-        owner: { type: "role-domain", id: "domain-7" },
+        owner: { type: "role-connector", id: "domain-7" },
         ownerLabel: "Finance Lead (Ops) / Ledger API",
         connectedCount: 1,
         authorizations: [],

@@ -353,7 +353,7 @@ describe("NestrClient", () => {
     const connection = {
       _id: "conn1",
       workspaceId: "ws1",
-      owner: { type: "role-domain", id: "domain-7" },
+      owner: { type: "role-connector", id: "domain-7" },
       status: "active",
       credentialsField: { domainId: "domain-7", fieldId: "domain-7-credentials-connector_credentials", fieldCode: "connector_credentials" },
     };
@@ -362,7 +362,7 @@ describe("NestrClient", () => {
 
     const result = await client.bindConnector("ws1", {
       connectorId: "c9",
-      owner: { type: "role-domain", id: "domain-7" },
+      owner: { type: "role-connector", id: "domain-7" },
     });
 
     const [url, opts] = mockFetch.mock.calls[0];
@@ -370,7 +370,7 @@ describe("NestrClient", () => {
     expect(opts.method).toBe("POST");
     expect(JSON.parse(opts.body)).toEqual({
       connectorId: "c9",
-      owner: { type: "role-domain", id: "domain-7" },
+      owner: { type: "role-connector", id: "domain-7" },
     });
     expect(result).toEqual(connection);
     expect(result.credentialsField?.domainId).toBe("domain-7");
