@@ -17,6 +17,7 @@ import { getCompletableListHtml, appResources } from "./apps/index.js";
 // Skills instructions are now served on-demand via nestr_help tool (see src/help/topics.ts)
 import * as mcpcat from "mcpcat";
 import type { DiagnoseSnapshot } from "./util/diagnose.js";
+import { AGENT_EMAIL_TOOL, agentEmailGate, withoutAgentEmail } from "./api/agent-email-availability.js";
 import { accessFor, errorCodeFor, errorCodeFromResult, errorMessageFor, errorMessageFromResult, WorkspaceResolver } from "./analytics/fields.js";
 
 export interface ToolCallInfo {
@@ -159,14 +160,22 @@ export function createServer(config: NestrMcpServerConfig = {}): Server {
     }
   );
 
+  // nestr_send_email only works in an agent run of a workspace with agent email
+  // on, so it is listed only where Nestr says the session may send (see
+  // api/agent-email-availability.ts). Asked once per server, so once per session.
+  const agentEmailListed = agentEmailGate(client);
+
   // Register tool list handler. On the public surface, advertise only the
   // unauthenticated help tools so guest agents never see workspace tools.
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const tools = config.isPublic
+    let tools = config.isPublic
       ? toolDefinitions.filter((t) => PUBLIC_TOOL_NAMES.has(t.name))
       : config.isReadOnly
         ? toolDefinitions.filter((t) => READONLY_TOOL_NAMES.has(t.name))
         : config.allowLocalFiles ? withLocalFileTools(toolDefinitions) : toolDefinitions;
+    if (tools.some((t) => t.name === AGENT_EMAIL_TOOL) && !(await agentEmailListed())) {
+      tools = withoutAgentEmail(tools);
+    }
     return { tools };
   });
 

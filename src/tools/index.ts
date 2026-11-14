@@ -1486,6 +1486,18 @@ export const schemas = {
     postId: z.string().describe("Post to mark read up to. Everything up to and including it becomes read."),
   }),
 
+  sendEmail: z.object({
+    to: z.array(z.string()).min(1).max(20).describe("Nestr user ids and/or role ids. A role id reaches whoever fills the role now. Never an email address."),
+    subject: z.string().min(1).max(200).describe("Subject line"),
+    body: z.string().max(20000).optional().describe("Plain text. Paragraphs and links are kept; markup is shown as text."),
+    forward: z.object({
+      connectionId: z.string().describe("The mailbox connection the message is in, as this run was given it"),
+      messageId: z.string().describe("The provider's message id (Gmail or Outlook)"),
+    }).optional().describe("Attach an existing email from a connected mailbox, fetched by Nestr, so you never handle its contents or attachments"),
+  }).refine((v) => !!(v.body && v.body.trim()) || !!v.forward, {
+    message: "Give a body, or forward an email (or both).",
+  }),
+
   escalateToSupport: z.object({
     threadId: z.string().describe("Thread id to escalate. It must be a conversation Nestradamus is in."),
     reason: z.string().describe("One or two sentences for whoever picks this up: what is needed and what has been tried."),
@@ -2858,6 +2870,33 @@ export const toolDefinitions = [
         postId: { type: "string", description: "Post to mark read up to" },
       },
       required: ["postId"],
+    },
+    ...mutating,
+  },
+  {
+    name: "nestr_send_email",
+    description: "Agent runs only: email members of your workspace, from Nestr's own mail. Address people by Nestr user id, or a role by its id to reach whoever fills it now; there is no way to type an email address, and people outside the workspace cannot be reached. To hand on an email from a mailbox you read (Gmail or Outlook), pass `forward` with the connection and the message id: Nestr fetches the original and attaches it whole, with its attachments, so never download, decode or re-encode a message yourself, and replies go to its sender. Your `body` is the cover note. The workspace admin has to have switched agent email on, members who turned these emails off are skipped, and there are daily limits; the result lists who was sent to and who was skipped and why. A message is forwarded to the same person only once.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        to: {
+          type: "array",
+          items: { type: "string" },
+          description: "Nestr user ids and/or role ids (at most 20). A role id reaches whoever fills the role now. Never an email address.",
+        },
+        subject: { type: "string", description: "Subject line (at most 200 characters)" },
+        body: { type: "string", description: "Plain text. Paragraphs and links are kept; markup is shown as text. Required unless you forward." },
+        forward: {
+          type: "object",
+          description: "Attach an existing email from a connected mailbox. Nestr fetches it; you only name it.",
+          properties: {
+            connectionId: { type: "string", description: "The mailbox connection the message is in" },
+            messageId: { type: "string", description: "The provider's message id, as the mailbox tools returned it" },
+          },
+          required: ["connectionId", "messageId"],
+        },
+      },
+      required: ["to", "subject"],
     },
     ...mutating,
   },
@@ -5564,6 +5603,22 @@ async function _handleToolCall(
         const parsed = schemas.markPostRead.parse(args);
         const result = await client.markPostRead(parsed.postId);
         return formatResult({ message: "Marked read", read: result });
+      }
+
+      case "nestr_send_email": {
+        const parsed = schemas.sendEmail.parse(args);
+        const result = await client.sendAgentEmail(parsed);
+        const sent = Array.isArray(result.sent) ? result.sent.length : 0;
+        const skipped = Array.isArray(result.skipped) ? result.skipped : [];
+        let message = `Sent to ${sent} ${sent === 1 ? "person" : "people"}.`;
+        if (skipped.length) message += ` ${skipped.length} skipped; see skipped for who and why.`;
+        if (result.attachmentOmitted) {
+          message += " The original was too large to attach, so it went as a note: tell them where to find it.";
+        }
+        if (result.contentWithheld) {
+          message += " This workspace keeps that content out of email, so they got a link to Nestr instead.";
+        }
+        return formatResult({ message, ...result });
       }
 
       case "nestr_escalate_to_support": {

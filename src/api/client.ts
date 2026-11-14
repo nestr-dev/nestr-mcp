@@ -1699,6 +1699,38 @@ export class NestrClient {
     return this.fetch<Record<string, unknown>>(`/posts/${postId}/read`, { method: "POST" });
   }
 
+  /**
+   * Whether this bearer may send agent email at all: a live agent run of a
+   * workspace with "Agents may email members" on. Nestr answers with the same
+   * check the send runs. Used to decide whether to list nestr_send_email.
+   */
+  async isAgentEmailAvailable(): Promise<boolean> {
+    const body = await this.fetch<{ data?: { available?: boolean }; available?: boolean }>("/agents/runs/email");
+    const data = (body as { data?: { available?: boolean } })?.data ?? (body as { available?: boolean });
+    return data?.available === true;
+  }
+
+  // An agent run emails workspace members (POST /agents/runs/email). Only a run's own
+  // dispatch token is accepted; Nestr resolves and gates every recipient, fetches a
+  // forwarded email itself, and sends from its own mail.
+  async sendAgentEmail(input: {
+    to: string[];
+    subject: string;
+    body?: string;
+    forward?: { connectionId: string; messageId: string };
+  }): Promise<Record<string, unknown>> {
+    const response = await this.fetch<{ data?: Record<string, unknown> }>("/agents/runs/email", {
+      method: "POST",
+      body: JSON.stringify({
+        to: input.to,
+        subject: input.subject,
+        body: input.body ?? "",
+        ...(input.forward ? { forward: input.forward } : {}),
+      }),
+    });
+    return response?.data ?? {};
+  }
+
   // suppressStatusMessage always rides along: whoever called this tool is told to say a
   // human is coming, so the canned confirmation on the thread would be the same news
   // twice. It is a request, not an instruction. Nestr grants it only while an agent
