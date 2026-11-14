@@ -37,6 +37,7 @@ import { createServer } from "./server.js";
 import { toolDefinitions, PUBLIC_TOOL_NAMES, READONLY_TOOL_NAMES } from "./tools/index.js";
 import { NestrClient, NestrApiError, tokenFingerprint, unwrapList } from "./api/client.js";
 import { bearerIsReadOnly } from "./api/readonly-bearer.js";
+import { withoutAgentEmail } from "./api/agent-email-availability.js";
 import {
   getProtectedResourceMetadata,
   getAuthorizationServerMetadata,
@@ -1873,7 +1874,8 @@ async function handleMcpPost(req: Request, res: Response, routeOpts: { isReadOnl
     if ((isReadOnly || !authToken) && req.body?.method === "tools/list") {
       res.json({
         jsonrpc: "2.0",
-        result: { tools: isReadOnly ? toolDefinitions.filter((t) => READONLY_TOOL_NAMES.has(t.name)) : toolDefinitions },
+        // No session, so no agent run: the agent-only email tool is never listed here.
+        result: { tools: isReadOnly ? toolDefinitions.filter((t) => READONLY_TOOL_NAMES.has(t.name)) : withoutAgentEmail(toolDefinitions) },
         id: req.body?.id ?? null,
       });
       return;

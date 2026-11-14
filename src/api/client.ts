@@ -1702,6 +1702,17 @@ export class NestrClient {
   // An agent run emails workspace members (POST /agents/runs/email). Only a run's own
   // dispatch token is accepted; Nestr resolves and gates every recipient, fetches a
   // forwarded email itself, and sends from its own mail.
+  /**
+   * Whether this bearer may send agent email at all: a live agent run of a
+   * workspace with "Agents may email members" on. Nestr answers with the same
+   * check the send runs. Used to decide whether to list nestr_send_email.
+   */
+  async isAgentEmailAvailable(): Promise<boolean> {
+    const body = await this.fetch<{ data?: { available?: boolean }; available?: boolean }>("/agents/runs/email");
+    const data = (body as { data?: { available?: boolean } })?.data ?? (body as { available?: boolean });
+    return data?.available === true;
+  }
+
   async sendAgentEmail(input: {
     to: string[];
     subject: string;
