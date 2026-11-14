@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { handleToolCall, toolDefinitions } from "../../src/tools/index.js";
+import { handleToolCall, toolDefinitions, translateEndpoint } from "../../src/tools/index.js";
 import { NestrClient } from "../../src/api/client.js";
 
 // Templates are nests: making or using one goes through nestr_create_nest (POST /nests), told
@@ -93,6 +93,25 @@ describe("template tools", () => {
     await call("nestr_add_tension_part", { nestId: "c1", tensionId: "t1", template: "tpl1" });
     expect(sent.url).toBe("https://api.test.io/api/nests/c1/tensions/t1/parts");
     expect(sent.body).toEqual({ template: "tpl1" });
+  });
+
+  it("keeps template fields in hint suggestions, and maps the discovery route", () => {
+    const create = translateEndpoint({
+      method: "POST",
+      path: "/api/nests/c1/tensions/t1/parts",
+      body_example: { title: "Sales", labels: ["role"], template: "tpl1" },
+    } as never);
+    expect(create?.tool).toBe("nestr_add_tension_part");
+    expect(create?.parametersExample).toMatchObject({ nestId: "c1", tensionId: "t1", template: "tpl1" });
+
+    const apply = translateEndpoint({
+      method: "POST", path: "/api/nests", body_example: { parentId: "c1", template: "tpl1", dryRun: true },
+    } as never);
+    expect(apply?.parametersExample).toEqual({ parentId: "c1", template: "tpl1", dryRun: true });
+
+    const list = translateEndpoint({ method: "GET", path: "/api/nests/c1/templates?label=role" } as never);
+    expect(list?.tool).toBe("nestr_list_templates");
+    expect(list?.parametersExample).toEqual({ nestId: "c1", label: "role" });
   });
 
   it("advertises the new parameters and tool, so a model can find them", () => {

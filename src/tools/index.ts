@@ -560,7 +560,18 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
     bodyParams: new Set([
       "parentId", "title", "description", "purpose", "labels",
       "fields", "users", "accountabilities", "domains", "workspaceId",
+      // Templates: apply, author, capture, copy.
+      "template", "type", "source", "dryRun", "followTemplate",
+      "governanceOnly", "includeUsers", "includeComments",
     ]),
+  },
+  {
+    method: "GET",
+    pattern: /^\/nests\/([^/]+)\/templates\/?$/,
+    tool: "nestr_list_templates",
+    pathParamNames: ["nestId"],
+    bodyParams: new Set([]),
+    queryParams: { label: "label" },
   },
   {
     method: "POST",
@@ -579,6 +590,7 @@ const HINT_ENDPOINT_TOOL_MAPPINGS: readonly EndpointToolMapping[] = [
       "parentId", "users", "due", "accountabilities", "domains", "connectors",
       "role", // operational output: the role the work is asked of
       "roleId", // election mode
+      "template", // propose from a template
     ]),
   },
   // PATCH /parts (body has _id) — propose a change to an existing item.
@@ -5113,6 +5125,7 @@ async function _handleToolCall(
           }
           return formatResult({ message, _id: writtenId(nest), nest });
         }
+        // The schema already refuses this; the check narrows title to a string for TypeScript.
         if (!parsed.title) {
           throw new Error("title is required unless you create from a template or capture one.");
         }
