@@ -23,8 +23,10 @@ export function withoutAgentEmail<T extends { name: string }>(tools: T[]): T[] {
  * One answer per session, asked on the first tools/list. A run is short and its
  * workspace setting rarely changes mid-run, so no list_changed notification is
  * sent; a session that started while the setting was off sees the tool from its
- * next session on. A failed lookup is not remembered, so a transient error only
- * hides the tool for that one listing.
+ * next session on. A definitive refusal (a 4xx, e.g. an older Nestr without the
+ * route) is remembered like a "no", so later listings do not ask again. A
+ * transient failure (network, 5xx, 401 or 429) is not, so it only hides the tool
+ * for that one listing.
  */
 export function agentEmailGate(client: { isAgentEmailAvailable: () => Promise<boolean> }) {
   let answer: boolean | undefined;
@@ -33,7 +35,11 @@ export function agentEmailGate(client: { isAgentEmailAvailable: () => Promise<bo
     try {
       answer = (await client.isAgentEmailAvailable()) === true;
       return answer;
-    } catch {
+    } catch (err) {
+      const status = (err as { status?: unknown })?.status;
+      if (typeof status === "number" && status >= 400 && status < 500 && status !== 401 && status !== 429) {
+        answer = false;
+      }
       return false;
     }
   };

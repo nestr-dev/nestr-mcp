@@ -69,6 +69,28 @@ describe("agentEmailGate", () => {
     expect(await gate()).toBe(true);
   });
 
+  it("remembers a definitive refusal (4xx) so it does not ask again", async () => {
+    const client = answering(async () => { throw new NestrApiError("Not found", 404, "/agents/runs/email"); });
+    const gate = agentEmailGate(client as never);
+    expect(await gate()).toBe(false);
+    expect(await gate()).toBe(false);
+    expect(client.isAgentEmailAvailable).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks again after a 401 or 429, which may pass", async () => {
+    for (const status of [401, 429, 503]) {
+      let calls = 0;
+      const client = answering(async () => {
+        calls += 1;
+        if (calls === 1) throw new NestrApiError("try later", status, "/agents/runs/email");
+        return true;
+      });
+      const gate = agentEmailGate(client as never);
+      expect(await gate()).toBe(false);
+      expect(await gate()).toBe(true);
+    }
+  });
+
   it("treats anything but true as no", async () => {
     const client = answering(async () => "yes" as unknown as boolean);
     expect(await agentEmailGate(client as never)()).toBe(false);

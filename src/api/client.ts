@@ -1699,9 +1699,6 @@ export class NestrClient {
     return this.fetch<Record<string, unknown>>(`/posts/${postId}/read`, { method: "POST" });
   }
 
-  // An agent run emails workspace members (POST /agents/runs/email). Only a run's own
-  // dispatch token is accepted; Nestr resolves and gates every recipient, fetches a
-  // forwarded email itself, and sends from its own mail.
   /**
    * Whether this bearer may send agent email at all: a live agent run of a
    * workspace with "Agents may email members" on. Nestr answers with the same
@@ -1713,6 +1710,9 @@ export class NestrClient {
     return data?.available === true;
   }
 
+  // An agent run emails workspace members (POST /agents/runs/email). Only a run's own
+  // dispatch token is accepted; Nestr resolves and gates every recipient, fetches a
+  // forwarded email itself, and sends from its own mail.
   async sendAgentEmail(input: {
     to: string[];
     subject: string;
