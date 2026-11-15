@@ -17,6 +17,22 @@ import {
 // ─── compactResponse ────────────────────────────────────────────────
 
 describe("compactResponse", () => {
+  it("keeps the template marker and type, so a template's children are not read as live work", () => {
+    const data = [
+      {
+        _id: "n1", title: "Kick-off", type: "template",
+        template: { rootId: "t1", kind: "project", scopeId: "ws1" }, createdAt: "x",
+      },
+      { _id: "n2", title: "Live task", createdAt: "x" },
+    ];
+    const result = compactResponse(data) as any[];
+    expect(result[0].type).toBe("template");
+    expect(result[0].template).toEqual({ rootId: "t1", kind: "project", scopeId: "ws1" });
+    expect(result[0].createdAt).toBeUndefined();
+    expect("type" in result[1]).toBe(false);
+    expect("template" in result[1]).toBe(false);
+  });
+
   it("strips non-compact fields from array items", () => {
     const data = [
       { _id: "1", title: "Task", description: "desc", extraField: "gone", completed: false },

@@ -104,9 +104,12 @@ const COMPACT_FIELDS = {
   // row. Without them a deleted:<range> search answered "which were deleted" but not
   // "when", and a row could not even say it was deleted: an agent asked how many went
   // in a period could filter by date and still not show a single date.
+  // `type` and `template` exist only on a template node (the API marks every node
+  // read through a template root with `template: { rootId, kind, scopeId }`), so they
+  // cost nothing on a live row. Without them a template's children read as live work.
   base: [
     "_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description",
-    "due", "start", "allDay", "users", "hints", "deleted", "deletedAt",
+    "due", "start", "allDay", "users", "hints", "deleted", "deletedAt", "type", "template",
   ],
   // Nest rows only (nest, role, graph). `fields` is where a status, a channel id or
   // any custom value lives. The server sends it on list rows; dropping it here made
