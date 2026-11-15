@@ -89,7 +89,7 @@ This is the single topic where a wrong answer is immediately expensive, immediat
 - Billing is **per user, per month**, with a cheaper annual rate. It is not a flat fee per company, and there is no seat cap that forces a plan change.
 - There is a **free tier for a single user**, and paid tiers above it.
 - **A user is someone with login access.** Agents are not seats: putting an agent in five roles adds no cost, because it is one login. See the managing-users article for who counts.
-- **AI work is metered separately as AI credit**, and that is not the same thing as the subscription. Product support questions — how does Nestr work, where is this setting — are free. Work inside a workspace draws credit. A workspace admin manages the balance, auto top-up and the monthly spend limit under Workspace settings → Workspace plan & billing.
+- **AI work is metered separately as AI credit**, and that is not the same thing as the subscription. Product support questions — how does Nestr work, where is this setting — are free. Work inside a workspace draws credit. A workspace admin manages the balance and auto top-up under Workspace settings → Workspace plan & billing. The optional monthly limit there only caps how much auto top-up may buy in a calendar month; credit the workspace already holds, bought or gifted, can always be used.
 
 **If the search returns nothing**, say you would rather not guess at prices, give the https://nestr.io/pricing link, and offer to bring in a human. An unanswered pricing question costs one link. An invented one costs the deal and the trust.
 

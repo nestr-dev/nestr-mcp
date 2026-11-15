@@ -3907,7 +3907,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_tension_part",
-    description: "Add a part to a tension. A part is either the operational work the tension asks for or a governance change it proposes. Modes: OPERATIONAL OUTPUT (title, description, users, role, and no governance label) is what a work request is made of, and is the common case; new governance item (omit _id, give title plus a governance label such as ['role'] or ['policy']); change one (_id plus the changed fields; the role's accountabilities, domains and connectors are copied in, and a list you send replaces only that list while one you leave out stays as it is); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities/domains untouched). The part you get back has its own _id and a sourceId, the output nest underneath it; nestr_modify_tension_part takes the part _id, not the sourceId. See nestr_help('tension-processing')." + writeReturns("part", "part"),
+    description: "Add a part to a tension. A part is either the operational work the tension asks for or a governance change it proposes. Modes: OPERATIONAL OUTPUT (title, description, users, role, and no governance label) is what a work request is made of, and is the common case; new governance item (omit _id, give title plus a governance label such as ['role'] or ['policy']); change one (_id plus the changed fields; the role's accountabilities, domains and connectors are copied in, and a list you send replaces only that list while one you leave out stays as it is, connectors with their tool); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities, domains and connectors untouched). The part you get back has its own _id and a sourceId, the output nest underneath it; nestr_modify_tension_part takes the part _id, not the sourceId. See nestr_help('tension-processing')." + writeReturns("part", "part"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3935,7 +3935,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_modify_tension_part",
-    description: "Modify an existing proposal part. For individual accountability/domain changes, use the children tools." + writeReturns("part", "part"),
+    description: "Modify an existing proposal part. Each list you send (accountabilities, domains, connectors) replaces only that list: an item you send again is kept, one you leave out of a sent list is proposed for removal, and a list you leave out stays as it is. For individual accountability, domain or connector changes, use the children tools." + writeReturns("part", "part"),
     inputSchema: {
       type: "object" as const,
       properties: {
