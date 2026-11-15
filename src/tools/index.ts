@@ -1503,7 +1503,7 @@ export const schemas = {
     subject: z.string().min(1).max(200).describe("Subject line"),
     body: z.string().max(20000).optional().describe("Plain text. Paragraphs and links are kept; markup is shown as text."),
     forward: z.object({
-      connectionId: z.string().describe("The mailbox connection the message is in, as this run was given it"),
+      connectionId: z.string().optional().describe("The mailbox connection the message is in. Leave it out when this run reads one mailbox; Nestr then uses that one, and if you read several it answers with the list to choose from."),
       messageId: z.string().describe("The provider's message id (Gmail or Outlook)"),
     }).optional().describe("Attach an existing email from a connected mailbox, fetched by Nestr, so you never handle its contents or attachments"),
   }).refine((v) => !!(v.body && v.body.trim()) || !!v.forward, {
@@ -2944,7 +2944,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_send_email",
-    description: "Agent runs only: email members of your workspace, from Nestr's own mail. Address people by Nestr user id, or a role by its id to reach whoever fills it now; there is no way to type an email address, and people outside the workspace cannot be reached. To hand on an email from a mailbox you read (Gmail or Outlook), pass `forward` with the connection and the message id: Nestr fetches the original and attaches it whole, with its attachments, so never download, decode or re-encode a message yourself, and replies go to its sender. Your `body` is the cover note. The workspace admin has to have switched agent email on, members who turned these emails off are skipped, and there are daily limits; the result lists who was sent to and who was skipped and why. A message is forwarded to the same person only once.",
+    description: "Agent runs only: email members of your workspace, from Nestr's own mail. Address people by Nestr user id, or a role by its id to reach whoever fills it now; there is no way to type an email address, and people outside the workspace cannot be reached. To hand on an email from a mailbox you read (Gmail or Outlook), pass `forward` with the message id (and the connection only if you read more than one mailbox; Nestr tells you which ones there are): Nestr fetches the original and attaches it whole, with its attachments, so never download, decode or re-encode a message yourself, and replies go to its sender. Your `body` is the cover note. The workspace admin has to have switched agent email on, members who turned these emails off are skipped, and there are daily limits; the result lists who was sent to and who was skipped and why. A message is forwarded to the same person only once, and the same email goes to a person once per run: if you call again, for example after a timeout, the result lists them under alreadySent, which means they DID get it, so do not send it again.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2959,10 +2959,10 @@ export const toolDefinitions = [
           type: "object",
           description: "Attach an existing email from a connected mailbox. Nestr fetches it; you only name it.",
           properties: {
-            connectionId: { type: "string", description: "The mailbox connection the message is in" },
+            connectionId: { type: "string", description: "The mailbox connection the message is in. Optional when this run reads one mailbox." },
             messageId: { type: "string", description: "The provider's message id, as the mailbox tools returned it" },
           },
-          required: ["connectionId", "messageId"],
+          required: ["messageId"],
         },
       },
       required: ["to", "subject"],
@@ -5737,8 +5737,12 @@ async function _handleToolCall(
         const parsed = schemas.sendEmail.parse(args);
         const result = await client.sendAgentEmail(parsed);
         const sent = Array.isArray(result.sent) ? result.sent.length : 0;
+        const alreadySent = Array.isArray(result.alreadySent) ? result.alreadySent.length : 0;
         const skipped = Array.isArray(result.skipped) ? result.skipped : [];
         let message = `Sent to ${sent} ${sent === 1 ? "person" : "people"}.`;
+        if (alreadySent) {
+          message += ` ${alreadySent} already had this email from an earlier call, so it was not sent to them again; they did get it.`;
+        }
         if (skipped.length) message += ` ${skipped.length} skipped; see skipped for who and why.`;
         if (result.attachmentOmitted) {
           message += " The original was too large to attach, so it went as a note: tell them where to find it.";
