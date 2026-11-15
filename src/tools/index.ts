@@ -104,9 +104,12 @@ const COMPACT_FIELDS = {
   // row. Without them a deleted:<range> search answered "which were deleted" but not
   // "when", and a row could not even say it was deleted: an agent asked how many went
   // in a period could filter by date and still not show a single date.
+  // `type` and `template` exist only on a template node (the API marks every node
+  // read through a template root with `template: { rootId, kind, scopeId }`), so they
+  // cost nothing on a live row. Without them a template's children read as live work.
   base: [
     "_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description",
-    "due", "start", "allDay", "users", "hints", "deleted", "deletedAt",
+    "due", "start", "allDay", "users", "hints", "deleted", "deletedAt", "type", "template",
   ],
   // Nest rows only (nest, role, graph). `fields` is where a status, a channel id or
   // any custom value lives. The server sends it on list rows; dropping it here made
@@ -3904,7 +3907,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_tension_part",
-    description: "Add a part to a tension. A part is either the operational work the tension asks for or a governance change it proposes. Modes: OPERATIONAL OUTPUT (title, description, users, role, and no governance label) is what a work request is made of, and is the common case; new governance item (omit _id, give title plus a governance label such as ['role'] or ['policy']); change one (_id plus the changed fields; the role's accountabilities and domains are copied in, and a list you send replaces only that list while one you leave out stays as it is); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities/domains untouched). The part you get back has its own _id and a sourceId, the output nest underneath it; nestr_modify_tension_part takes the part _id, not the sourceId. See nestr_help('tension-processing')." + writeReturns("part", "part"),
+    description: "Add a part to a tension. A part is either the operational work the tension asks for or a governance change it proposes. Modes: OPERATIONAL OUTPUT (title, description, users, role, and no governance label) is what a work request is made of, and is the common case; new governance item (omit _id, give title plus a governance label such as ['role'] or ['policy']); change one (_id plus the changed fields; the role's accountabilities, domains and connectors are copied in, and a list you send replaces only that list while one you leave out stays as it is); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities/domains untouched). The part you get back has its own _id and a sourceId, the output nest underneath it; nestr_modify_tension_part takes the part _id, not the sourceId. See nestr_help('tension-processing')." + writeReturns("part", "part"),
     inputSchema: {
       type: "object" as const,
       properties: {
