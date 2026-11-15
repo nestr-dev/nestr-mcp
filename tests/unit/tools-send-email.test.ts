@@ -96,6 +96,34 @@ describe("nestr_send_email", () => {
     expect(result.content[0].text).toContain("switched off");
   });
 
+  it("forwards without a connection id, leaving the choice of mailbox to Nestr", async () => {
+    const result = await call({ to: ["u1"], subject: "Fwd", forward: { messageId: "m1" } });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body).forward).toEqual({ messageId: "m1" });
+    const def = toolDefinitions.find((t) => t.name === "nestr_send_email");
+    expect((def!.inputSchema.properties.forward as { required: string[] }).required).toEqual(["messageId"]);
+  });
+
+  // A repeat after a timeout is not a failure: the people listed already got it.
+  it("tells the agent who already had the email, so it does not send again", async () => {
+    const result = await call(
+      { to: ["u1"], subject: "Hi", body: "x" },
+      { sent: [], alreadySent: ["u1"], skipped: [] },
+    );
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.message).toContain("1 already had this email");
+    expect(parsed.alreadySent).toEqual(["u1"]);
+  });
+
+  // Nestr may fetch the original and mail several people in one call, so this
+  // request waits longer than the 30 s every other call gets.
+  it("waits longer than other calls for Nestr to finish sending", async () => {
+    const spy = vi.spyOn(AbortSignal, "timeout");
+    await call({ to: ["u1"], subject: "Hi", body: "x" });
+    expect(spy).toHaveBeenCalledWith(90000);
+    spy.mockRestore();
+  });
+
   it("is advertised as a write with no address parameter", () => {
     const def = toolDefinitions.find((t) => t.name === "nestr_send_email");
     expect(def).toBeDefined();

@@ -877,9 +877,13 @@ export class NestrClient {
     this.onRefreshAttempt = config.onRefreshAttempt;
   }
 
+  // timeoutMs: how long to wait for this request. Most calls answer quickly and
+  // keep the 30 s default; a call that does slow work server-side (fetching a
+  // mailbox message, mailing several people) passes a longer one, so the MCP
+  // does not give up and report a failure while Nestr is still sending.
   private async fetch<T>(
     endpoint: string,
-    options: RequestInit = {},
+    options: RequestInit & { timeoutMs?: number } = {},
     isRetry = false
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
@@ -919,9 +923,10 @@ export class NestrClient {
       `${cidTag()}[Outbound] ${options.method || "GET"} ${endpoint} bearer=${tokenFingerprint(this.apiKey)}${isRetry ? " (retry)" : ""}`,
     );
 
+    const { timeoutMs, ...requestOptions } = options;
     const response = await fetch(url, {
-      ...options,
-      signal: AbortSignal.timeout(30000),
+      ...requestOptions,
+      signal: AbortSignal.timeout(timeoutMs ?? 30000),
       headers: {
         ...headers,
         ...(options.headers as Record<string, string>),
@@ -1743,10 +1748,12 @@ export class NestrClient {
     to: string[];
     subject: string;
     body?: string;
-    forward?: { connectionId: string; messageId: string };
+    forward?: { connectionId?: string; messageId: string };
   }): Promise<Record<string, unknown>> {
     const response = await this.fetch<{ data?: Record<string, unknown> }>("/agents/runs/email", {
       method: "POST",
+      // Nestr may fetch the original and then mail each recipient in turn.
+      timeoutMs: 90000,
       body: JSON.stringify({
         to: input.to,
         subject: input.subject,

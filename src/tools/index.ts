@@ -104,9 +104,12 @@ const COMPACT_FIELDS = {
   // row. Without them a deleted:<range> search answered "which were deleted" but not
   // "when", and a row could not even say it was deleted: an agent asked how many went
   // in a period could filter by date and still not show a single date.
+  // `type` and `template` exist only on a template node (the API marks every node
+  // read through a template root with `template: { rootId, kind, scopeId }`), so they
+  // cost nothing on a live row. Without them a template's children read as live work.
   base: [
     "_id", "title", "purpose", "completed", "labels", "path", "parentId", "ancestors", "description",
-    "due", "start", "allDay", "users", "hints", "deleted", "deletedAt",
+    "due", "start", "allDay", "users", "hints", "deleted", "deletedAt", "type", "template",
   ],
   // Nest rows only (nest, role, graph). `fields` is where a status, a channel id or
   // any custom value lives. The server sends it on list rows; dropping it here made
@@ -1503,7 +1506,7 @@ export const schemas = {
     subject: z.string().min(1).max(200).describe("Subject line"),
     body: z.string().max(20000).optional().describe("Plain text. Paragraphs and links are kept; markup is shown as text."),
     forward: z.object({
-      connectionId: z.string().describe("The mailbox connection the message is in, as this run was given it"),
+      connectionId: z.string().optional().describe("The mailbox connection the message is in. Leave it out when this run reads one mailbox; Nestr then uses that one, and if you read several it answers with the list to choose from."),
       messageId: z.string().describe("The provider's message id (Gmail or Outlook)"),
     }).optional().describe("Attach an existing email from a connected mailbox, fetched by Nestr, so you never handle its contents or attachments"),
   }).refine((v) => !!(v.body && v.body.trim()) || !!v.forward, {
@@ -2944,7 +2947,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_send_email",
-    description: "Agent runs only: email members of your workspace, from Nestr's own mail. Address people by Nestr user id, or a role by its id to reach whoever fills it now; there is no way to type an email address, and people outside the workspace cannot be reached. To hand on an email from a mailbox you read (Gmail or Outlook), pass `forward` with the connection and the message id: Nestr fetches the original and attaches it whole, with its attachments, so never download, decode or re-encode a message yourself, and replies go to its sender. Your `body` is the cover note. The workspace admin has to have switched agent email on, members who turned these emails off are skipped, and there are daily limits; the result lists who was sent to and who was skipped and why. A message is forwarded to the same person only once.",
+    description: "Agent runs only: email members of your workspace, from Nestr's own mail. Address people by Nestr user id, or a role by its id to reach whoever fills it now; there is no way to type an email address, and people outside the workspace cannot be reached. To hand on an email from a mailbox you read (Gmail or Outlook), pass `forward` with the message id (and the connection only if you read more than one mailbox; Nestr tells you which ones there are): Nestr fetches the original and attaches it whole, with its attachments, so never download, decode or re-encode a message yourself, and replies go to its sender. Your `body` is the cover note. The workspace admin has to have switched agent email on, members who turned these emails off are skipped, and there are daily limits; the result lists who was sent to and who was skipped and why. A message is forwarded to the same person only once, and the same email goes to a person once per run: if you call again, for example after a timeout, the result lists them under alreadySent, which means they DID get it, so do not send it again.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -2959,10 +2962,10 @@ export const toolDefinitions = [
           type: "object",
           description: "Attach an existing email from a connected mailbox. Nestr fetches it; you only name it.",
           properties: {
-            connectionId: { type: "string", description: "The mailbox connection the message is in" },
+            connectionId: { type: "string", description: "The mailbox connection the message is in. Optional when this run reads one mailbox." },
             messageId: { type: "string", description: "The provider's message id, as the mailbox tools returned it" },
           },
-          required: ["connectionId", "messageId"],
+          required: ["messageId"],
         },
       },
       required: ["to", "subject"],
@@ -3904,7 +3907,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_tension_part",
-    description: "Add a part to a tension. A part is either the operational work the tension asks for or a governance change it proposes. Modes: OPERATIONAL OUTPUT (title, description, users, role, and no governance label) is what a work request is made of, and is the common case; new governance item (omit _id, give title plus a governance label such as ['role'] or ['policy']); change one (_id plus the changed fields; the role's accountabilities and domains are copied in, and a list you send replaces only that list while one you leave out stays as it is); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities/domains untouched). The part you get back has its own _id and a sourceId, the output nest underneath it; nestr_modify_tension_part takes the part _id, not the sourceId. See nestr_help('tension-processing')." + writeReturns("part", "part"),
+    description: "Add a part to a tension. A part is either the operational work the tension asks for or a governance change it proposes. Modes: OPERATIONAL OUTPUT (title, description, users, role, and no governance label) is what a work request is made of, and is the common case; new governance item (omit _id, give title plus a governance label such as ['role'] or ['policy']); change one (_id plus the changed fields; the role's accountabilities, domains and connectors are copied in, and a list you send replaces only that list while one you leave out stays as it is, connectors with their tool); delete one (_id plus removeNest:true); election (roleId plus users:[userId], optional due, which assigns or reconfirms the filler and leaves accountabilities, domains and connectors untouched). The part you get back has its own _id and a sourceId, the output nest underneath it; nestr_modify_tension_part takes the part _id, not the sourceId. See nestr_help('tension-processing')." + writeReturns("part", "part"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3932,7 +3935,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_modify_tension_part",
-    description: "Modify an existing proposal part. For individual accountability/domain changes, use the children tools." + writeReturns("part", "part"),
+    description: "Modify an existing proposal part. Each list you send (accountabilities, domains, connectors) replaces only that list: an item you send again is kept, one you leave out of a sent list is proposed for removal, and a list you leave out stays as it is. For individual accountability, domain or connector changes, use the children tools." + writeReturns("part", "part"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -5737,8 +5740,12 @@ async function _handleToolCall(
         const parsed = schemas.sendEmail.parse(args);
         const result = await client.sendAgentEmail(parsed);
         const sent = Array.isArray(result.sent) ? result.sent.length : 0;
+        const alreadySent = Array.isArray(result.alreadySent) ? result.alreadySent.length : 0;
         const skipped = Array.isArray(result.skipped) ? result.skipped : [];
         let message = `Sent to ${sent} ${sent === 1 ? "person" : "people"}.`;
+        if (alreadySent) {
+          message += ` ${alreadySent} already had this email from an earlier call, so it was not sent to them again; they did get it.`;
+        }
         if (skipped.length) message += ` ${skipped.length} skipped; see skipped for who and why.`;
         if (result.attachmentOmitted) {
           message += " The original was too large to attach, so it went as a note: tell them where to find it.";
