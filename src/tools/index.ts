@@ -2260,7 +2260,7 @@ export const schemas = {
     name: z.string().optional().describe("The AGENT's own name, as its identity calls it. Cannot be blank."),
     description: z.string().optional().describe("What the agent is LIKE: its character and what it is careful about. Shown as its purpose wherever it is listed. Not its instructions, which belong in a skill on the role."),
     webSearch: z.boolean().optional().describe("Whether the agent may search the web."),
-    status: z.enum(["active", "paused", "disabled"]).optional().describe("active, paused or disabled."),
+    status: z.enum(["active", "disabled"]).optional().describe("active or disabled. disabled stops the agent from starting any run, while it keeps its roles, projects, tasks and schedules; active switches it back on."),
     roleAssignable: z.boolean().optional().describe("false makes it an ASSISTANT that can never be assigned to a role. Refused while it still fills one; the error names the roles, so unassign it there first. true makes an assistant assignable again."),
     agentConfig: coerceFromJson(z.record(z.string(), z.unknown())).optional().describe("Runtime wiring, not persona: { runtimeCallbackUrl (https, or http to a *.svc.cluster.local service), tokenTtlSeconds (30-1800) }. Replaces the stored wiring as a whole."),
     // Strict, as the description promises: a key this tool does not list is
@@ -4241,7 +4241,7 @@ export const toolDefinitions = [
           description: "What the agent is LIKE: its character and what it is careful about. Shown as its purpose wherever it is listed. Not its instructions, which belong in a skill on the role.",
         },
         webSearch: { type: "boolean", description: "Whether the agent may search the web." },
-        status: { type: "string", enum: ["active", "paused", "disabled"], description: "active, paused or disabled." },
+        status: { type: "string", enum: ["active", "disabled"], description: "active or disabled. disabled stops the agent from starting any run, while it keeps its roles, projects, tasks and schedules; active switches it back on." },
         roleAssignable: {
           type: "boolean",
           description: "false makes it an ASSISTANT that can never be assigned to a role. Refused while it still fills one; the error names the roles, so unassign it there first. true makes an assistant assignable again.",
