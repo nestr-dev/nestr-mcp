@@ -226,6 +226,12 @@ export interface Label {
   userFields?: Record<string, unknown>[];
 }
 
+/** A member's user labels and their field values, as the member routes report them. */
+export interface UserLabelState {
+  labels: string[];
+  fields: Record<string, unknown>;
+}
+
 /** Result of adding, removing or editing a user label. */
 export interface UserLabelResult {
   status: string;
@@ -1914,9 +1920,71 @@ export class NestrClient {
 
   // ============ USER LABELS ============
 
-  // The label id goes unencoded, as on the label routes: the API decodes paths with decodeURI, which keeps %3A.
-  private userLabelPath(workspaceId: string, userId: string, labelId: string): string {
-    return `/workspaces/${workspaceId}/users/${encodeURIComponent(userId)}/labels/${labelId}`;
+  // Labels and field values are set on the member itself, as PATCH
+  // /workspaces/:workspaceId/users/:userId with `labels` and `fields`, the same shape a nest
+  // write takes. `labels` is the whole set, so adding or removing one means reading the set
+  // first; setting field values needs no read.
+  private memberPath(workspaceId: string, userId: string): string {
+    return `/workspaces/${workspaceId}/users/${encodeURIComponent(userId)}`;
+  }
+
+  private userLabelShortId(workspaceId: string, labelId: string): string {
+    const prefix = `${workspaceId}:`;
+    return labelId.startsWith(prefix) ? labelId.slice(prefix.length) : labelId;
+  }
+
+  // Fields keyed by code or id become the `<label>.<field>` keys the member route takes.
+  private userLabelFieldBody(short: string, fields: Record<string, unknown>): Record<string, unknown> {
+    const body: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(fields)) {
+      body[key.startsWith(`${short}.`) ? key : `${short}.${key}`] = value;
+    }
+    return body;
+  }
+
+  private async readMemberLabels(workspaceId: string, userId: string): Promise<UserLabelState> {
+    const res = await this.fetch<{ status: string; data: UserLabelState }>(
+      this.memberPath(workspaceId, userId)
+    );
+    return { labels: res.data?.labels ?? [], fields: res.data?.fields ?? {} };
+  }
+
+  private async patchMemberLabels(
+    workspaceId: string,
+    userId: string,
+    body: Record<string, unknown>
+  ): Promise<UserLabelState> {
+    const res = await this.fetch<{ status: string; data: UserLabelState }>(
+      this.memberPath(workspaceId, userId),
+      { method: "PATCH", body: JSON.stringify(body) }
+    );
+    return { labels: res.data?.labels ?? [], fields: res.data?.fields ?? {} };
+  }
+
+  // Key order in a fields object is not meaningful, so it is sorted before comparing.
+  private static stableState(state: UserLabelState): string {
+    const fields = Object.keys(state.fields)
+      .sort()
+      .map((key) => [key, state.fields[key]]);
+    return JSON.stringify({ labels: [...state.labels].sort(), fields });
+  }
+
+  private userLabelResult(
+    userId: string,
+    label: string,
+    before: UserLabelState,
+    after: UserLabelState
+  ): UserLabelResult {
+    return {
+      status: "success",
+      data: {
+        userId,
+        label,
+        changed: NestrClient.stableState(before) !== NestrClient.stableState(after),
+        labels: after.labels,
+        fields: after.fields,
+      },
+    };
   }
 
   /** Put a label on a member, optionally setting its field values. */
@@ -1926,17 +1994,30 @@ export class NestrClient {
     labelId: string,
     fields?: Record<string, unknown>
   ): Promise<UserLabelResult> {
-    return this.fetch<UserLabelResult>(this.userLabelPath(workspaceId, userId, labelId), {
-      method: "POST",
-      ...(fields !== undefined ? { body: JSON.stringify({ fields }) } : {}),
-    });
+    const short = this.userLabelShortId(workspaceId, labelId);
+    const before = await this.readMemberLabels(workspaceId, userId);
+    // A label the member already holds is left exactly as it is, fields included, which is what
+    // the dedicated add route used to answer. Editing values is update_user_label_fields.
+    if (before.labels.includes(short)) {
+      return this.userLabelResult(userId, short, before, before);
+    }
+    const body: Record<string, unknown> = { labels: [...before.labels, short] };
+    if (fields !== undefined) body.fields = this.userLabelFieldBody(short, fields);
+    const after = await this.patchMemberLabels(workspaceId, userId, body);
+    return this.userLabelResult(userId, short, before, after);
   }
 
   /** Take a label off a member. Field values are kept, hidden. */
   async removeUserLabel(workspaceId: string, userId: string, labelId: string): Promise<UserLabelResult> {
-    return this.fetch<UserLabelResult>(this.userLabelPath(workspaceId, userId, labelId), {
-      method: "DELETE",
+    const short = this.userLabelShortId(workspaceId, labelId);
+    const before = await this.readMemberLabels(workspaceId, userId);
+    if (!before.labels.includes(short)) {
+      return this.userLabelResult(userId, short, before, before);
+    }
+    const after = await this.patchMemberLabels(workspaceId, userId, {
+      labels: before.labels.filter((held) => held !== short),
     });
+    return this.userLabelResult(userId, short, before, after);
   }
 
   /** Set field values of a label the member holds. Only the given fields change. */
@@ -1946,10 +2027,12 @@ export class NestrClient {
     labelId: string,
     fields: Record<string, unknown>
   ): Promise<UserLabelResult> {
-    return this.fetch<UserLabelResult>(this.userLabelPath(workspaceId, userId, labelId), {
-      method: "PATCH",
-      body: JSON.stringify({ fields }),
+    const short = this.userLabelShortId(workspaceId, labelId);
+    const before = await this.readMemberLabels(workspaceId, userId);
+    const after = await this.patchMemberLabels(workspaceId, userId, {
+      fields: this.userLabelFieldBody(short, fields),
     });
+    return this.userLabelResult(userId, short, before, after);
   }
 
   /** Audit trail of user label changes on one member, newest first. Admin only. */

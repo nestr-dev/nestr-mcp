@@ -3421,7 +3421,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_add_user_label",
-    description: "Put a user label on a workspace member, optionally setting its field values. The label must apply to users (see nestr_get_label applicableTo). A required field must be given unless a value was kept from an earlier removal. Adding a label already held is a no-op success (changed:false, fields untouched): use nestr_update_user_label_fields to edit." + USER_LABEL_RIGHTS_NOTE + " Returns { message, userLabel }, userLabel being { status, data: { userId, label, changed, labels, fields } }.",
+    description: "Put a user label on a workspace member, optionally setting its field values. The label must apply to users (see nestr_get_label applicableTo). A required field must be given unless a value was kept from an earlier removal. Adding a label already held is a no-op success (changed:false, fields untouched): use nestr_update_user_label_fields to edit. Adding reads the member's current labels first, because a label write sets the whole set, so the token needs read access to the member too." + USER_LABEL_RIGHTS_NOTE + " Returns { message, userLabel }, userLabel being { status, data: { userId, label, changed, labels, fields } }.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3451,7 +3451,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_remove_user_label",
-    description: "Take a user label off a workspace member. A no-op success if they do not hold it. Field values are kept but hidden, and come back if the label is added again." + USER_LABEL_RIGHTS_NOTE + " Returns { message, userLabel }, userLabel being { status, data: { userId, label, changed, labels, fields } }.",
+    description: "Take a user label off a workspace member. A no-op success if they do not hold it. Field values are kept but hidden, and come back if the label is added again. Removing reads the member's current labels first, because a label write sets the whole set, so the token needs read access to the member too." + USER_LABEL_RIGHTS_NOTE + " Returns { message, userLabel }, userLabel being { status, data: { userId, label, changed, labels, fields } }.",
     inputSchema: {
       type: "object" as const,
       properties: {
