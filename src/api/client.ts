@@ -3064,7 +3064,7 @@ export class NestrClient {
       name?: string;
       description?: string;
       webSearch?: boolean;
-      status?: "active" | "paused" | "disabled";
+      status?: "active" | "disabled";
       /** false makes an assistant: never assignable to a role. */
       roleAssignable?: boolean;
       agentConfig?: Record<string, unknown>;

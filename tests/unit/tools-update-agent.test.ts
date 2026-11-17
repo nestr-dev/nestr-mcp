@@ -60,13 +60,13 @@ describe("nestr_update_agent", () => {
       userId: "u1",
       name: "Collab 2",
       webSearch: false,
-      status: "paused",
+      status: "disabled",
       agentConfig: { runtimeCallbackUrl: "https://runtime.example.com/hook" },
     });
     expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({
       name: "Collab 2",
       webSearch: false,
-      status: "paused",
+      status: "disabled",
       agentConfig: { runtimeCallbackUrl: "https://runtime.example.com/hook" },
     });
   });
@@ -102,10 +102,14 @@ describe("nestr_update_agent", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it("refuses a status outside active, paused and disabled before calling the API", async () => {
-    const result = await update({ workspaceId: "ws1", userId: "u1", status: "suspended" });
-    expect(result.isError).toBe(true);
-    expect(parseResult(result.content[0].text).code).toBe("VALIDATION");
+  // 'paused' was offered here and the API stored it without anything reading
+  // it, so an agent "paused" this way kept running. Status is active or disabled.
+  it("refuses a status outside active and disabled before calling the API", async () => {
+    for (const status of ["suspended", "paused"]) {
+      const result = await update({ workspaceId: "ws1", userId: "u1", status });
+      expect(result.isError).toBe(true);
+      expect(parseResult(result.content[0].text).code).toBe("VALIDATION");
+    }
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
