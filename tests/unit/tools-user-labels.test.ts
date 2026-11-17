@@ -12,10 +12,13 @@ function mockResponse(status: number, body: unknown) {
   };
 }
 
-const result = (changed = true) => ({
+// Labels and fields are read from, and written to, the member itself.
+const MEMBER_URL = "https://api.test.io/api/workspaces/ws1/users/u1";
+const member = (labels: string[], fields: Record<string, unknown> = {}) => ({
   status: "success",
-  data: { userId: "u1", label: "legal_rep", changed, labels: ["legal_rep"], fields: { "legal_rep.register": "https://example.com/r/1" } },
+  data: { _id: "u1", username: "a@example.com", labels, fields },
 });
+const REGISTER = "https://example.com/r/1";
 const parse = (text: string) => JSON.parse(text) as Record<string, any>;
 
 describe("user label tools", () => {
@@ -32,50 +35,62 @@ describe("user label tools", () => {
   });
 
   const call = (name: string, args: Record<string, unknown>) => handleToolCall(client, name, args);
-  const sent = () => {
-    const [url, opts] = mockFetch.mock.calls[0];
+  // The write tools read the member's current label set before changing it, so the PATCH is
+  // the second call.
+  const sent = (index = 0) => {
+    const [url, opts] = mockFetch.mock.calls[index];
     return { url, method: opts.method, body: opts.body === undefined ? undefined : JSON.parse(opts.body) };
   };
 
   describe("nestr_add_user_label", () => {
-    it("POSTs the label with its fields", async () => {
-      mockFetch.mockResolvedValue(mockResponse(200, result()));
+    it("adds the label to the member's set, with its fields keyed by label", async () => {
+      mockFetch
+        .mockResolvedValueOnce(mockResponse(200, member(["skill_coding"])))
+        .mockResolvedValueOnce(mockResponse(200, member(["skill_coding", "legal_rep"], { "legal_rep.register": REGISTER })));
       const out = await call("nestr_add_user_label", {
-        workspaceId: "ws1", userId: "u1", labelId: "legal_rep", fields: { register: "https://example.com/r/1" },
+        workspaceId: "ws1", userId: "u1", labelId: "legal_rep", fields: { register: REGISTER },
       });
       expect(out.isError).toBeFalsy();
-      expect(sent()).toEqual({
-        url: "https://api.test.io/api/workspaces/ws1/users/u1/labels/legal_rep",
-        method: "POST",
-        body: { fields: { register: "https://example.com/r/1" } },
+      expect(sent(0)).toEqual({ url: MEMBER_URL, method: undefined, body: undefined });
+      expect(sent(1)).toEqual({
+        url: MEMBER_URL,
+        method: "PATCH",
+        // The whole set, so the label it already held is kept rather than removed.
+        body: { labels: ["skill_coding", "legal_rep"], fields: { "legal_rep.register": REGISTER } },
       });
       expect(parse(out.content[0].text).userLabel.data.changed).toBe(true);
       expect(parse(out.content[0].text).message).toBe("User label added");
     });
 
-    it("says nothing changed when the member already holds the label", async () => {
-      mockFetch.mockResolvedValue(mockResponse(200, result(false)));
+    it("says nothing changed, and writes nothing, when the member already holds the label", async () => {
+      mockFetch.mockResolvedValueOnce(mockResponse(200, member(["legal_rep"], { "legal_rep.register": REGISTER })));
       const out = await call("nestr_add_user_label", { workspaceId: "ws1", userId: "u1", labelId: "legal_rep" });
       expect(parse(out.content[0].text).message).toBe("No change: the member already holds this label");
+      expect(mockFetch, "no write at all, so stored values cannot be disturbed").toHaveBeenCalledTimes(1);
     });
 
-    it("sends no body when no fields are given", async () => {
-      mockFetch.mockResolvedValue(mockResponse(200, result(false)));
+    it("sends the set alone when no fields are given", async () => {
+      mockFetch
+        .mockResolvedValueOnce(mockResponse(200, member([])))
+        .mockResolvedValueOnce(mockResponse(200, member(["skill_coding"])));
       await call("nestr_add_user_label", { workspaceId: "ws1", userId: "u1", labelId: "skill_coding" });
-      expect(sent().method).toBe("POST");
-      expect(sent().body).toBeUndefined();
+      expect(sent(1)).toEqual({ url: MEMBER_URL, method: "PATCH", body: { labels: ["skill_coding"] } });
     });
 
     it("accepts fields as a JSON string", async () => {
-      mockFetch.mockResolvedValue(mockResponse(200, result()));
+      mockFetch
+        .mockResolvedValueOnce(mockResponse(200, member([])))
+        .mockResolvedValueOnce(mockResponse(200, member(["skill_coding"], { "skill_coding.level": "3" })));
       await call("nestr_add_user_label", { workspaceId: "ws1", userId: "u1", labelId: "skill_coding", fields: '{"level":"3"}' });
-      expect(sent().body).toEqual({ fields: { level: "3" } });
+      expect(sent(1).body).toEqual({ labels: ["skill_coding"], fields: { "skill_coding.level": "3" } });
     });
 
-    it("sends a qualified label id with its colon, as the API decodes paths with decodeURI", async () => {
-      mockFetch.mockResolvedValue(mockResponse(200, result()));
+    it("takes a qualified label id and sends the short id the member payload uses", async () => {
+      mockFetch
+        .mockResolvedValueOnce(mockResponse(200, member([])))
+        .mockResolvedValueOnce(mockResponse(200, member(["legal_rep"])));
       await call("nestr_add_user_label", { workspaceId: "ws1", userId: "u1", labelId: "ws1:legal_rep" });
-      expect(sent().url).toBe("https://api.test.io/api/workspaces/ws1/users/u1/labels/ws1:legal_rep");
+      expect(sent(1).body).toEqual({ labels: ["legal_rep"] });
     });
 
     it("passes a 403 through", async () => {
@@ -94,15 +109,17 @@ describe("user label tools", () => {
   });
 
   describe("nestr_update_user_label_fields", () => {
-    it("PATCHes the fields", async () => {
-      mockFetch.mockResolvedValue(mockResponse(200, result()));
+    it("PATCHes the fields, keyed <label>.<field>, and never touches the label set", async () => {
+      mockFetch
+        .mockResolvedValueOnce(mockResponse(200, member(["skill_coding"], { "skill_coding.level": "3" })))
+        .mockResolvedValueOnce(mockResponse(200, member(["skill_coding"], { "skill_coding.level": "4" })));
       await call("nestr_update_user_label_fields", {
         workspaceId: "ws1", userId: "u1", labelId: "skill_coding", fields: { level: "4", notes: null },
       });
-      expect(sent()).toEqual({
-        url: "https://api.test.io/api/workspaces/ws1/users/u1/labels/skill_coding",
+      expect(sent(1)).toEqual({
+        url: MEMBER_URL,
         method: "PATCH",
-        body: { fields: { level: "4", notes: null } },
+        body: { fields: { "skill_coding.level": "4", "skill_coding.notes": null } },
       });
     });
 
@@ -121,15 +138,21 @@ describe("user label tools", () => {
   });
 
   describe("nestr_remove_user_label", () => {
-    it("DELETEs the label from the member", async () => {
-      mockFetch.mockResolvedValue(mockResponse(200, result()));
+    it("sends the set without that label, keeping the others", async () => {
+      mockFetch
+        .mockResolvedValueOnce(mockResponse(200, member(["legal_rep", "skill_coding"])))
+        .mockResolvedValueOnce(mockResponse(200, member(["skill_coding"])));
       const out = await call("nestr_remove_user_label", { workspaceId: "ws1", userId: "u1", labelId: "legal_rep" });
       expect(out.isError).toBeFalsy();
-      expect(sent()).toEqual({
-        url: "https://api.test.io/api/workspaces/ws1/users/u1/labels/legal_rep",
-        method: "DELETE",
-        body: undefined,
-      });
+      expect(sent(1)).toEqual({ url: MEMBER_URL, method: "PATCH", body: { labels: ["skill_coding"] } });
+    });
+
+    it("writes nothing when the member does not hold the label", async () => {
+      mockFetch.mockResolvedValueOnce(mockResponse(200, member(["skill_coding"])));
+      const out = await call("nestr_remove_user_label", { workspaceId: "ws1", userId: "u1", labelId: "legal_rep" });
+      expect(out.isError).toBeFalsy();
+      expect(parse(out.content[0].text).userLabel.data.changed).toBe(false);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
     it("passes a 404 through", async () => {
