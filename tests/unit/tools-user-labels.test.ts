@@ -185,6 +185,15 @@ describe("user label tools", () => {
       expect(sent().url).toBe("https://api.test.io/api/workspaces/ws1/labels/legal_rep/activity?userId=u1");
     });
 
+    // The write tools take either form and send the short id. The API resolves both here too,
+    // but a tool that asked for `ws1:legal_rep` while its siblings ask for `legal_rep` would
+    // leave the four of them depending on that tolerance.
+    it("takes a qualified label id and asks for the short one, as the write tools do", async () => {
+      mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: [entry] }));
+      await call("nestr_get_label_activity", { workspaceId: "ws1", labelId: "ws1:legal_rep" });
+      expect(sent().url).toBe("https://api.test.io/api/workspaces/ws1/labels/legal_rep/activity");
+    });
+
     it("omits the query without options and passes a 403 through", async () => {
       mockFetch.mockResolvedValue(mockResponse(403, { status: "error", error: "not-authorized", message: "Admins only" }));
       const out = await call("nestr_get_label_activity", { workspaceId: "ws1", labelId: "legal_rep" });

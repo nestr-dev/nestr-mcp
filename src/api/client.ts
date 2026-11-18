@@ -2048,8 +2048,11 @@ export class NestrClient {
     if (options?.userId) params.set("userId", options.userId);
     if (options?.limit !== undefined) params.set("limit", options.limit.toString());
     const query = params.toString();
+    // The short id, as the write tools send: the API takes either form, and asking for the one
+    // the label routes hand back keeps the four label tools from relying on that.
+    const short = this.userLabelShortId(workspaceId, labelId);
     return this.fetch<{ status: string; data: UserLabelActivityItem[] }>(
-      `/workspaces/${workspaceId}/labels/${encodeURIComponent(labelId)}/activity${query ? `?${query}` : ""}`
+      `/workspaces/${workspaceId}/labels/${encodeURIComponent(short)}/activity${query ? `?${query}` : ""}`
     );
   }
 
