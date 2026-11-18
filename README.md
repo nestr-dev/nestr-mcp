@@ -168,7 +168,7 @@ Ask your AI assistant things like:
 | `nestr_add_user_label` | Put a user label on a workspace member, optionally with field values |
 | `nestr_update_user_label_fields` | Set field values of a user label a member holds |
 | `nestr_remove_user_label` | Take a user label off a member (values are kept, hidden) |
-| `nestr_get_user_label_activity` | Audit trail of user label changes on a member (workspace admin) |
+| `nestr_get_label_activity` | Audit trail of one user label across the workspace's people, `userId` to narrow it to a member (workspace admin) |
 | `nestr_delete_label` | Delete a workspace label, with `confirm: true` (workspace admin) |
 | `nestr_get_projects` | List projects with status |
 

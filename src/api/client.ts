@@ -249,8 +249,11 @@ export interface UserLabelActivityItem {
   date: string;
   verb: "userLabel.added" | "userLabel.removed" | "userLabel.fieldsUpdated";
   label: string;
+  /** The member the entry is about. */
+  subjectUserId: string;
   actor?: string;
-  userId: string;
+  /** The acting user, absent when a key or the system made the change. */
+  userId?: string;
   apiTokenId?: string;
   clientConsumer?: string;
   agentUserId?: string;
@@ -2035,17 +2038,21 @@ export class NestrClient {
     return this.userLabelResult(userId, short, before, after);
   }
 
-  /** Audit trail of user label changes on one member, newest first. Admin only. */
-  async getUserLabelActivity(
+  /** Audit trail of one user label across the workspace's people, newest first. Admin only. */
+  async getLabelActivity(
     workspaceId: string,
-    userId: string,
-    options?: { limit?: number }
+    labelId: string,
+    options?: { userId?: string; limit?: number }
   ): Promise<{ status: string; data: UserLabelActivityItem[] }> {
     const params = new URLSearchParams();
+    if (options?.userId) params.set("userId", options.userId);
     if (options?.limit !== undefined) params.set("limit", options.limit.toString());
     const query = params.toString();
+    // The short id, as the write tools send: the API takes either form, and asking for the one
+    // the label routes hand back keeps the four label tools from relying on that.
+    const short = this.userLabelShortId(workspaceId, labelId);
     return this.fetch<{ status: string; data: UserLabelActivityItem[] }>(
-      `/workspaces/${workspaceId}/users/${encodeURIComponent(userId)}/labels/activity${query ? `?${query}` : ""}`
+      `/workspaces/${workspaceId}/labels/${encodeURIComponent(short)}/activity${query ? `?${query}` : ""}`
     );
   }
 
