@@ -1934,9 +1934,10 @@ export const schemas = {
     fields: coerceFromJson(z.record(z.string(), z.unknown())).describe(USER_LABEL_FIELDS_DESC),
   }),
 
-  getUserLabelActivity: z.object({
+  getLabelActivity: z.object({
     workspaceId: z.string().describe("Workspace ID"),
-    userId: z.string().describe("User ID of the workspace member"),
+    labelId: labelIdSchema.describe("User label ID, as nestr_list_labels returns it"),
+    userId: z.string().optional().describe("Only the entries about this member"),
     limit: z.number().int().min(1).max(100).optional().describe("Max entries (default 50, max 100)"),
   }),
 
@@ -3464,16 +3465,17 @@ export const toolDefinitions = [
     ...destructive,
   },
   {
-    name: "nestr_get_user_label_activity",
-    description: "Audit trail of user label changes on one member, newest first: verb (userLabel.added, userLabel.removed, userLabel.fieldsUpdated), label, actor, before and after. Workspace admins and workspace API keys without a rights profile only; anyone else gets a 403.",
+    name: "nestr_get_label_activity",
+    description: "Audit trail of one user label across the workspace's people, newest first: who it was added to or removed from and whose field values changed, with verb (userLabel.added, userLabel.removed, userLabel.fieldsUpdated), subjectUserId (the member it is about), actor, before and after. Pass userId to narrow it to one member. Workspace admins and workspace API keys without a rights profile only; anyone else gets a 403.",
     inputSchema: {
       type: "object" as const,
       properties: {
         workspaceId: { type: "string", description: "Workspace ID" },
-        userId: { type: "string", description: "User ID of the workspace member" },
+        labelId: { type: "string", description: "User label ID, as nestr_list_labels returns it" },
+        userId: { type: "string", description: "Only the entries about this member" },
         limit: { type: "number", description: "Max entries (default 50, max 100)" },
       },
-      required: ["workspaceId", "userId"],
+      required: ["workspaceId", "labelId"],
     },
     ...readOnly,
   },
@@ -5623,9 +5625,12 @@ async function _handleToolCall(
         return formatResult({ message: userLabel?.data?.changed === false ? "No change: the member does not hold this label" : "User label removed", userLabel });
       }
 
-      case "nestr_get_user_label_activity": {
-        const parsed = schemas.getUserLabelActivity.parse(args);
-        const activity = await client.getUserLabelActivity(parsed.workspaceId, parsed.userId, { limit: parsed.limit });
+      case "nestr_get_label_activity": {
+        const parsed = schemas.getLabelActivity.parse(args);
+        const activity = await client.getLabelActivity(parsed.workspaceId, parsed.labelId, {
+          userId: parsed.userId,
+          limit: parsed.limit,
+        });
         return formatResult(activity);
       }
 

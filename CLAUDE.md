@@ -297,10 +297,10 @@ The server exposes these tools to AI assistants:
 | `nestr_add_workspace_user` | `POST /workspaces/{id}/users` |
 | `nestr_list_labels` | `GET /workspaces/{id}/labels` |
 | `nestr_get_label` | `GET /workspaces/{id}/labels/{lid}` |
-| `nestr_add_user_label` | `POST /workspaces/{id}/users/{uid}/labels/{lid}` (optional `fields`; admin by default) |
-| `nestr_update_user_label_fields` | `PATCH /workspaces/{id}/users/{uid}/labels/{lid}` (admin by default) |
-| `nestr_remove_user_label` | `DELETE /workspaces/{id}/users/{uid}/labels/{lid}` (admin by default) |
-| `nestr_get_user_label_activity` | `GET /workspaces/{id}/users/{uid}/labels/activity` (workspace admin only) |
+| `nestr_add_user_label` | `PATCH /workspaces/{id}/users/{uid}` with the whole `labels` set and `fields` (admin by default) |
+| `nestr_update_user_label_fields` | the same PATCH, `fields` only (admin by default) |
+| `nestr_remove_user_label` | the same PATCH, with the label left out of `labels` (admin by default) |
+| `nestr_get_label_activity` | `GET /workspaces/{id}/labels/{lid}/activity` (optional `userId`; workspace admin only) |
 | `nestr_create_label` | `POST /workspaces/{id}/labels` (workspace-admin only) |
 | `nestr_update_label` | `PATCH /workspaces/{id}/labels/{lid}` (workspace-admin only; send only the fields to change) |
 | `nestr_delete_label` | `DELETE /workspaces/{id}/labels/{lid}` (workspace-admin only; requires `confirm: true`) |

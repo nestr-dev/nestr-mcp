@@ -162,29 +162,48 @@ describe("user label tools", () => {
     });
   });
 
-  describe("nestr_get_user_label_activity", () => {
-    it("GETs the audit trail with a limit", async () => {
-      mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: [{ _id: "a1", verb: "userLabel.added", label: "legal_rep", userId: "u1" }] }));
-      const out = await call("nestr_get_user_label_activity", { workspaceId: "ws1", userId: "u1", limit: 10 });
+  describe("nestr_get_label_activity", () => {
+    const entry = { _id: "a1", verb: "userLabel.added", label: "legal_rep", subjectUserId: "u1" };
+
+    it("GETs one label's trail with a limit", async () => {
+      mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: [entry] }));
+      const out = await call("nestr_get_label_activity", { workspaceId: "ws1", labelId: "legal_rep", limit: 10 });
       expect(sent()).toEqual({
-        url: "https://api.test.io/api/workspaces/ws1/users/u1/labels/activity?limit=10",
+        url: "https://api.test.io/api/workspaces/ws1/labels/legal_rep/activity?limit=10",
         method: undefined,
         body: undefined,
       });
-      expect(parse(out.content[0].text).data[0].verb).toBe("userLabel.added");
+      const data = parse(out.content[0].text).data;
+      expect(data[0].verb).toBe("userLabel.added");
+      // Whose label changed: the trail covers every member, so the row has to say.
+      expect(data[0].subjectUserId).toBe("u1");
     });
 
-    it("omits the query without a limit and passes a 403 through", async () => {
+    it("narrows the trail to one member", async () => {
+      mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: [entry] }));
+      await call("nestr_get_label_activity", { workspaceId: "ws1", labelId: "legal_rep", userId: "u1" });
+      expect(sent().url).toBe("https://api.test.io/api/workspaces/ws1/labels/legal_rep/activity?userId=u1");
+    });
+
+    it("omits the query without options and passes a 403 through", async () => {
       mockFetch.mockResolvedValue(mockResponse(403, { status: "error", error: "not-authorized", message: "Admins only" }));
-      const out = await call("nestr_get_user_label_activity", { workspaceId: "ws1", userId: "u1" });
-      expect(sent().url).toBe("https://api.test.io/api/workspaces/ws1/users/u1/labels/activity");
+      const out = await call("nestr_get_label_activity", { workspaceId: "ws1", labelId: "legal_rep" });
+      expect(sent().url).toBe("https://api.test.io/api/workspaces/ws1/labels/legal_rep/activity");
       expect(out.isError).toBe(true);
     });
 
     it("rejects a limit above 100", async () => {
-      const out = await call("nestr_get_user_label_activity", { workspaceId: "ws1", userId: "u1", limit: 500 });
+      const out = await call("nestr_get_label_activity", { workspaceId: "ws1", labelId: "legal_rep", limit: 500 });
       expect(out.isError).toBe(true);
       expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    // The per-member tool read the same entries through a path that named no resource. One
+    // tool reads them by label, which is the question an audit asks, with userId to narrow.
+    it("replaces the per-member tool rather than joining it", () => {
+      const names = toolDefinitions.map((tool) => tool.name);
+      expect(names).toContain("nestr_get_label_activity");
+      expect(names).not.toContain("nestr_get_user_label_activity");
     });
   });
 
@@ -260,11 +279,11 @@ describe("user label tools", () => {
       }
       expect(def("nestr_remove_user_label").annotations.destructiveHint).toBe(true);
       expect(READONLY_TOOL_NAMES.has("nestr_remove_user_label")).toBe(false);
-      expect(READONLY_TOOL_NAMES.has("nestr_get_user_label_activity")).toBe(true);
+      expect(READONLY_TOOL_NAMES.has("nestr_get_label_activity")).toBe(true);
     });
 
     it("states the audit route is admin only and writes default to admins", () => {
-      expect(def("nestr_get_user_label_activity").description).toMatch(/admin/i);
+      expect(def("nestr_get_label_activity").description).toMatch(/admin/i);
       expect(def("nestr_add_user_label").description).toMatch(/cannot edit their own/);
     });
 
@@ -277,7 +296,7 @@ describe("user label tools", () => {
     });
 
     it("write tool descriptions contain no em dashes", () => {
-      for (const name of ["nestr_add_user_label", "nestr_update_user_label_fields", "nestr_remove_user_label", "nestr_get_user_label_activity"]) {
+      for (const name of ["nestr_add_user_label", "nestr_update_user_label_fields", "nestr_remove_user_label", "nestr_get_label_activity"]) {
         expect(def(name).description).not.toContain("—");
       }
     });
