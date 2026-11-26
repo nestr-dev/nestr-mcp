@@ -1742,6 +1742,7 @@ export const schemas = {
     unread: z.boolean().optional().describe("true for comments you have not read, false for the ones you have. Omit for all."),
     limit: z.number().optional().describe("Comments per page, default and maximum 50. meta.total_pages says how many pages there are; fetch the rest with page."),
     page: z.number().optional().describe("Page number (1-indexed) for pagination"),
+    sort: z.string().optional().describe(`${SORT_DESCRIPTION} Use -createdAt for newest first.`),
   }),
 
   getCircle: z.object({
@@ -3108,6 +3109,7 @@ export const toolDefinitions = [
         unread: { type: "boolean", description: "true for comments you have not read, false for the ones you have. Omit for all. Combine with depth to sweep a circle for what you have missed." },
         limit: { type: "number", description: "Comments per page, default and maximum 50." },
         page: { type: "number", description: "Page number (1-indexed). meta.total_pages says how many there are. With unread set, meta counts all comments before that filter." },
+        sort: { type: "string", description: "Field to order by, - prefix for descending. -createdAt returns the newest comments first." },
       },
       required: ["nestId"],
     },
@@ -5417,6 +5419,7 @@ async function _handleToolCall(
           unread: parsed.unread,
           limit: parsed.limit,
           page: parsed.page,
+          sort: parsed.sort,
         });
         // enrichHints turns the unread_posts hint's endpoint into a nestr_mark_post_read
         // call. Without it the hint still arrives, but as a raw URL the model has to

@@ -30,13 +30,13 @@ describe("NestrClient", () => {
     };
   }
 
-  it("passes limit and page to the posts route, so a thread can be read past one page", async () => {
+  it("passes limit, page and sort to the posts route, so a thread can be read past one page", async () => {
     mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: [] }));
     const client = createClient();
-    await client.getNestPosts("nest1", { depth: "all", limit: 20, page: 2 });
+    await client.getNestPosts("nest1", { depth: "all", limit: 20, page: 2, sort: "-createdAt" });
 
     const [url] = mockFetch.mock.calls[0];
-    expect(url).toBe("https://api.test.io/api/nests/nest1/posts?depth=all&limit=20&page=2");
+    expect(url).toBe("https://api.test.io/api/nests/nest1/posts?depth=all&limit=20&page=2&sort=-createdAt");
   });
 
   // ─── URL & Headers ──────────────────────────────────────────────
