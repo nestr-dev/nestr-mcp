@@ -5424,7 +5424,7 @@ async function _handleToolCall(
         // enrichHints turns the unread_posts hint's endpoint into a nestr_mark_post_read
         // call. Without it the hint still arrives, but as a raw URL the model has to
         // recognise and hand-assemble.
-        return formatResult(enrichHints(comments));
+        return formatResult({ ...enrichHints(comments), ...pageSignal(comments.meta) });
       }
 
       case "nestr_get_circle": {
