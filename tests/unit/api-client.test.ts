@@ -30,6 +30,15 @@ describe("NestrClient", () => {
     };
   }
 
+  it("passes limit and page to the posts route, so a thread can be read past one page", async () => {
+    mockFetch.mockResolvedValue(mockResponse(200, { status: "success", data: [] }));
+    const client = createClient();
+    await client.getNestPosts("nest1", { depth: "all", limit: 20, page: 2 });
+
+    const [url] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.test.io/api/nests/nest1/posts?depth=all&limit=20&page=2");
+  });
+
   // ─── URL & Headers ──────────────────────────────────────────────
 
   it("constructs correct URL from baseUrl + endpoint", async () => {
