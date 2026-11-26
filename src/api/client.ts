@@ -1601,11 +1601,15 @@ export class NestrClient {
    */
   async getNestPosts(
     nestId: string,
-    options?: { depth?: number | "all"; unread?: boolean }
+    options?: { depth?: number | "all"; unread?: boolean; limit?: number; page?: number; sort?: string }
   ): Promise<PostsEnvelope> {
     const params = new URLSearchParams();
     if (options?.depth !== undefined) params.set("depth", options.depth.toString());
     if (options?.unread !== undefined) params.set("unread", String(options.unread));
+
+    if (options?.limit !== undefined) params.set("limit", String(options.limit));
+    if (options?.page !== undefined) params.set("page", String(options.page));
+    if (options?.sort !== undefined) params.set("sort", options.sort);
 
     const query = params.toString();
     return this.fetch<PostsEnvelope>(`/nests/${nestId}/posts${query ? `?${query}` : ""}`);

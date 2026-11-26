@@ -1740,6 +1740,9 @@ export const schemas = {
     nestId: z.string().describe("Nest ID to get comments from. Pass a workspace ID to gather communication across the whole workspace (combine with depth='all')."),
     depth: z.union([z.number(), z.literal("all")]).optional().describe("How deep below the context nest to look for comments. 0 (default) returns only comments directly on this nest; N includes comments on descendants up to N levels deep; 'all' includes comments on this nest and every descendant. Use 'all' on a workspace or circle nest to analyse large sets of communication in one call."),
     unread: z.boolean().optional().describe("true for comments you have not read, false for the ones you have. Omit for all."),
+    limit: z.number().optional().describe("Comments per page, default and maximum 50. meta.total_pages says how many pages there are; fetch the rest with page."),
+    page: z.number().optional().describe("Page number (1-indexed) for pagination"),
+    sort: z.string().optional().describe(`${SORT_DESCRIPTION} Use -createdAt for newest first.`),
   }),
 
   getCircle: z.object({
@@ -3094,7 +3097,7 @@ export const toolDefinitions = [
   },
   {
     name: "nestr_get_comments",
-    description: "Get comments and discussion history on a nest, including full nested reply threads. By default returns only comments posted directly on the given nest. Widen with depth to also include comments on descendant nests, or pass a workspace/circle nest ID with depth='all' to gather large sets of communication for analysis. Carries an unread_posts hint when you have not read everything; nestr_mark_post_read acknowledges up to a given post, on any nest, not just direct messages.",
+    description: "Get comments and discussion history on a nest, including full nested reply threads. By default returns only comments posted directly on the given nest. Widen with depth to also include comments on descendant nests, or pass a workspace/circle nest ID with depth='all' to gather large sets of communication for analysis. Carries an unread_posts hint when you have not read everything; nestr_mark_post_read acknowledges up to a given post, on any nest, not just direct messages. Returns one page of at most 50 comments, so a single call may not be the whole thread: check meta.total_pages and pass page for the rest. To find comments by label or date across a circle, search with type:comment is usually shorter.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -3104,6 +3107,9 @@ export const toolDefinitions = [
           description: "How deep below the context nest to look for comments. 0 (default) returns only comments directly on this nest; N includes comments on descendants up to N levels deep; 'all' includes comments on this nest and every descendant.",
         },
         unread: { type: "boolean", description: "true for comments you have not read, false for the ones you have. Omit for all. Combine with depth to sweep a circle for what you have missed." },
+        limit: { type: "number", description: "Comments per page, default and maximum 50." },
+        page: { type: "number", description: "Page number (1-indexed). meta.total_pages says how many there are. With unread set, meta counts all comments before that filter." },
+        sort: { type: "string", description: "Field to order by, - prefix for descending. -createdAt returns the newest comments first." },
       },
       required: ["nestId"],
     },
@@ -5411,11 +5417,14 @@ async function _handleToolCall(
         const comments = await client.getNestPosts(parsed.nestId, {
           depth: parsed.depth,
           unread: parsed.unread,
+          limit: parsed.limit,
+          page: parsed.page,
+          sort: parsed.sort,
         });
         // enrichHints turns the unread_posts hint's endpoint into a nestr_mark_post_read
         // call. Without it the hint still arrives, but as a raw URL the model has to
         // recognise and hand-assemble.
-        return formatResult(enrichHints(comments));
+        return formatResult({ ...enrichHints(comments), ...pageSignal(comments.meta) });
       }
 
       case "nestr_get_circle": {
